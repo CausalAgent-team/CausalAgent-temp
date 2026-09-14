@@ -4,7 +4,7 @@
 >
 > **适用范围**：适用于从 `develop@4bea85fdea7292e85577d2b9b3e4c1c763b50829` 创建的新 DeepAgent 功能分支，以及由该分支派生的 MCP 协作分支。本文是实施计划，不代表功能已经实现或验收通过。
 
-**状态**：待实施
+**状态**：P1 共享契约代码实施完成；P0 真实门禁未在本轮复验，P2 及以后未开始
 
 **计划日期**：2026-09-14
 
@@ -12,7 +12,47 @@
 
 **技术设计来源**：[deep-agent-integration-technical-design.md](./deep-agent-integration-technical-design.md)
 
-**当前运行事实**：[agent-runtime.md](./agent-runtime.md)
+**当前运行事实**：[agent-runtime.md](../architecture/agent-runtime.md)
+
+---
+
+## 本轮实施结论（2026-09-14）
+
+### 执行范围与停止点
+
+本轮按用户要求完成到 P1 并停止。实现范围严格限定为不依赖 Deep Agents、LangGraph、MCP 服务、数据库或 worker 运行时的共享领域/传输契约；没有修改 `requirements.txt`、Compose、worker、现有 MCP server、父图、Job/SSE、RAG、前端或数据库。未执行提交、推送、分支切换、删除文件和覆盖工作树操作。
+
+P0 的真实门禁没有被本轮重新认定为通过。技术设计记录了此前独立依赖 dry-run 成功，但当前宿主实际缺少 `deepagents` 和 `langgraph`，也没有 DeepSeek/MCP 运行凭据；因此不能把真实依赖安装、DeepSeek Responses、多 Tool/ToolStrategy、父子图 checkpoint 或 MCP HTTP 链路写成已完成。这个边界不阻止本轮交付纯 P1 契约，但阻止进入 P2 及任何真实运行时验收。
+
+### P1 已实施内容
+
+| 位置 | 已完成内容 |
+|---|---|
+| `Agent/deep_agent_tools/models.py` | `AlgorithmResult`、`AlgorithmResultProvenance`、`ActionAttempt`、`InvocationRecord`、RAG/Web evidence、`McpInvocationContext`、安全诊断、`FinalAnalysisDecision`、标准化图、canonical raw JSON 元数据和三个 reducer。 |
+| `Agent/deep_agent_tools/algorithm_specs.py` | PC、OLC、DirectLiNGAM 三项首版 `AlgorithmSpec`；模型输入 schema、requires/produces、假设、超时、并发键/默认并发、工具 schema 和 canonical SHA-256 `spec_digest`。可信 Job/文件/lease 字段没有进入模型可见 Tool schema。 |
+| `Agent/deep_agent_tools/registry.py` | 静态 capability/tool 索引和一对一 Adapter binding；重复 capability、重复 tool、未知 capability、schema 生成失败在注册期拒绝；不从 MCP `list_tools()` 动态注册。 |
+| `Agent/deep_agent_tools/identity.py` | 固定项目 UUID 命名空间、provider response identity 优先、本地 `message_execution_id` fallback、UUIDv5 invocation identity、`result_ref` 和 MCP context canonical JSON payload。item `id` 未参与逻辑调用键。 |
+| `Agent/deep_agent_tools/algorithm_executor.py` | 传输无关的异步 `AlgorithmExecutor` Protocol、带稳定安全错误码的 executor error，以及 command/context/result 的 capability、spec、input、Job attempt/lease 对账校验。 |
+| `Agent/deep_agent_tools/fake_algorithm_executor.py` | 可观察、确定性、只用于主线测试的 fake executor；支持成功模板、失败注入、调用记录和可信上下文身份检查，不连接 MCP 或数据库。 |
+| `Agent/deep_agent_tools/error_codes.py` | 用户输入、算法不适用/未就绪、执行失败、结果契约错误、MCP 能力/容量/鉴权/lease 等稳定安全错误码；已知服务端结果契约错误不能归类为 `invalid_input`。 |
+| `tests/unit/agent/` | P1 模型、Spec、Registry、identity、reducer、executor 和 schema 快照测试；`snapshots/deep_agent_full_schema_snapshot.json` 保存完整 Pydantic/Tool schema，另有 manifest 哈希快照用于稳定性审查。 |
+
+Reducer 的具体语义已经冻结：AlgorithmResult 和 evidence 以不可变引用去重，同 key 内容不同抛一致性错误；Action Ledger 以 `invocation_id → retry_ordinal → revision` 合并，旧 revision 不覆盖新 revision，同 revision 内容不同抛一致性错误，并保留所有 retry attempt。`AlgorithmResult` 的状态边界也已落到模型校验中：`invalid_input` 不接受已知服务端输出/传输错误码，`execution_failed` 不接受已知用户输入错误码。
+
+### 验证证据与限制
+
+已执行并通过：
+
+```text
+python -m pytest -q tests/unit/agent/test_deep_agent_models.py tests/unit/agent/test_algorithm_specs.py tests/unit/agent/test_algorithm_registry.py tests/unit/agent/test_invocation_identity.py tests/unit/agent/test_action_ledger_reducers.py tests/unit/agent/test_algorithm_executor_contract.py tests/unit/agent/test_deep_agent_schema_snapshots.py
+28 passed
+```
+
+同时尝试运行 `python -m pytest -q tests/unit/agent`，但本地收集阶段因宿主环境缺少既有项目依赖而中断：`langgraph` 缺失导致图/worker 相关测试无法导入，`mysql` 缺失导致 Job 相关测试无法导入，共 16 个收集错误；没有通过临时安装依赖掩盖该限制。Docker CLI 本身可用，但本轮没有借此声称 P0 clean install 或真实 Docker 验收通过。P1 新增测试本身只依赖当前可用的 Pydantic 环境，不代表现有 Agent/Job 全链路已验证。
+
+### 完整实施结论
+
+P1 共享领域/传输契约已经形成可供后续 MCP 子分支和主线 fake executor 复用的代码基点，但当前工作树尚未提交，且 P0 的真实依赖/协议门禁仍是后续进入 P2 的前置条件。P2-M、P2-U、P3、P4、P5、P6 均未实施；真实 `deepseek-v4-flash`、MCP 2.2 Streamable HTTP、PostgreSQL Store/checkpoint、worker fencing、RAG/Web、Finalization、SSE 和用户报告没有完成或验收。本轮目标在 P1 停止，不应把当前状态描述为 Deep Agent 功能可部署或完整功能已完成。
 
 ---
 
@@ -181,16 +221,16 @@ Agent/deep_agent_tools/identity.py
 
 ## 4. 总体实施顺序与门禁
 
-| 阶段 | 内容 | 负责人 | 是否可并行 | 进入下一阶段的门禁 |
-|---|---|---|---|---|
-| P0 | 分支、文档基线、依赖与协议 Spike | 你；MCP Spike 由协作者配合 | 部分 | 真实依赖、DeepSeek、ToolStrategy、MCP HTTP 最小链路通过 |
-| P1 | 共享领域/传输契约 | 你 | 否 | schema snapshot、reducer、identity、fake executor 测试通过并提交 |
-| P2-M | causal-mcp 纵向切片 | MCP 协作者 | 与 P2-U 并行 | MCP 分支独立完成真实算法、并发和故障验收 |
-| P2-U | Deep Agent 基础、Memory、Adapter、RAG/Web | 你 | 与 P2-M 并行 | fake executor 下状态、权限、工具和结构化终态测试通过 |
-| P3 | 合并 MCP 并接入 worker | 你主导，协作者配合 | 否 | 真实 executor 替换 fake 后集成测试通过 |
-| P4 | Finalization/report/events/UI 收口 | 你 | 否 | 三类 outcome、degraded、SSE、主图和 Job 终态通过 |
-| P5 | 真实依赖与恢复验收 | 双方按模块负责 | 可分层 | Docker、MySQL、PostgreSQL、MCP、DeepSeek、RAG/Web 证据齐全 |
-| P6 | 文档、CHANGELOG、版本身份 | 你 | 否 | 当前事实文档与实现一致，验证结果分层记录 |
+| 阶段 | 内容 | 负责人 | 是否可并行 | 进入下一阶段的门禁 | 本轮状态 |
+|---|---|---|---|---|---|
+| P0 | 分支、文档基线、依赖与协议 Spike | 你；MCP Spike 由协作者配合 | 部分 | 真实依赖、DeepSeek、ToolStrategy、MCP HTTP 最小链路通过 | 未在本轮复验；当前环境缺少目标包和凭据 |
+| P1 | 共享领域/传输契约 | 你 | 否 | schema snapshot、reducer、identity、fake executor 测试通过并提交 | 代码和测试已完成；未提交 |
+| P2-M | causal-mcp 纵向切片 | MCP 协作者 | 与 P2-U 并行 | MCP 分支独立完成真实算法、并发和故障验收 | 未开始 |
+| P2-U | Deep Agent 基础、Memory、Adapter、RAG/Web | 你 | 与 P2-M 并行 | fake executor 下状态、权限、工具和结构化终态测试通过 | 未开始 |
+| P3 | 合并 MCP 并接入 worker | 你主导，协作者配合 | 否 | 真实 executor 替换 fake 后集成测试通过 | 未开始 |
+| P4 | Finalization/report/events/UI 收口 | 你 | 否 | 三类 outcome、degraded、SSE、主图和 Job 终态通过 | 未开始 |
+| P5 | 真实依赖与恢复验收 | 双方按模块负责 | 可分层 | Docker、MySQL、PostgreSQL、MCP、DeepSeek、RAG/Web 证据齐全 | 未开始 |
+| P6 | 文档、CHANGELOG、版本身份 | 你 | 否 | 当前事实文档与实现一致，验证结果分层记录 | 未开始 |
 
 任一强制门禁失败时应停在当前阶段解决，不能用后续代码、mock 或文档声明绕过。
 
@@ -203,11 +243,11 @@ Agent/deep_agent_tools/identity.py
 在 DeepAgent 主分支中提交：
 
 ```text
-Document/architecture/deep-agent-integration-plan.md
-Document/architecture/deep-agent-integration-plan.drawio
-Document/architecture/deep-agent-integration-technical-design.md
-Document/architecture/deep-agent-integration-technical-design.drawio
-Document/architecture/deep-agent-implementation-plan.md
+Document/planning/deep-agent-integration-plan.md
+Document/planning/deep-agent-integration-plan.drawio
+Document/planning/deep-agent-integration-technical-design.md
+Document/planning/deep-agent-integration-technical-design.drawio
+Document/planning/deep-agent-implementation-plan.md
 ```
 
 不更新 `Document/README.md` 导航，不提交 `.bkp`，不混入现有 `AGENTS.md` 修改。
@@ -383,6 +423,12 @@ feat(agent):建立 Deep Agent 与 MCP 共享执行契约
 ```
 
 协作成员从该提交创建 `feat(mcp)/causal-mcp-v2`。此后共享契约只通过小型、可审查的契约提交同步，不在两条分支各自修改。
+
+### 6.5 本轮 P1 实施状态
+
+6.1 中列出的八个共享代码文件和 6.3 中列出的测试文件已经落地；快照同时提供完整 Pydantic JSON Schema、完整 Tool schema 以及用于审查的标题/required/properties/SHA-256 manifest。P1 使用 fake executor 和纯 Pydantic reducer 完成，未把 MCP transport、数据库连接、Job authority 或 Deep Agent runtime 偷渡进共享模块。
+
+本轮 P1 定向测试共 28 项通过。由于 P0 的目标依赖未安装，本轮没有在现有 Agent/worker 全量测试收集失败后继续扩展实现，也没有把 `tests/unit/agent` 的既有导入错误标记为 P1 失败；后续进入 P2 前必须先恢复 P0 兼容簇并重新执行全量回归。按协作门禁，当前代码可以作为 MCP 子分支的契约候选基点，但由于本轮未提交，不能把它描述为已经建立了可供协作者直接签出的 commit。
 
 ---
 
@@ -906,8 +952,8 @@ Web 使用真实 SearXNG 验证三来源、snippet、上限、关闭开关、网
 
 | 文档 | 更新内容 |
 |---|---|
-| `Document/architecture/deep-agent-integration-plan.md` | 只在冻结产品决定变化时更新；标记实现进度但不伪造完成 |
-| `Document/architecture/deep-agent-integration-technical-design.md` | 最终类名、配置、默认值、验证结论和偏差 |
+| `Document/planning/deep-agent-integration-plan.md` | 只在冻结产品决定变化时更新；标记实现进度但不伪造完成 |
+| `Document/planning/deep-agent-integration-technical-design.md` | 最终类名、配置、默认值、验证结论和偏差 |
 | `Document/architecture/agent-runtime.md` | 新父图、进程级 MCP pool、Deep Agent、Store、事件和恢复当前事实 |
 | `Document/architecture/job-file-lifecycle.md` | checkpoint State/raw file 与长期 Store 的不同生命周期 |
 | `Document/development/deployment.md` | causal-mcp 镜像、Compose、secret、health、drain/restart 和回退 |

@@ -1,0 +1,1920 @@
+{
+  "models": {
+    "ActionAttempt": {
+      "$defs": {
+        "SafeErrorCode": {
+          "description": "\u9996\u7248\u5141\u8bb8\u8de8\u8fb9\u754c\u4f20\u8f93\u7684\u3001\u65e0\u654f\u611f\u7ec6\u8282\u7684\u9519\u8bef\u7801\u3002",
+          "enum": [
+            "USER_INPUT_FILE_MISSING",
+            "USER_INPUT_SCHEMA_AMBIGUOUS",
+            "USER_INPUT_REQUIRED_FIELD_MISSING",
+            "ALGORITHM_INPUT_INVALID",
+            "ALGORITHM_NOT_APPLICABLE",
+            "ALGORITHM_NOT_READY",
+            "ALGORITHM_EXECUTION_FAILED",
+            "ALGORITHM_TIMED_OUT",
+            "ALGORITHM_RESULT_CONTRACT_INVALID",
+            "UNKNOWN_CAPABILITY",
+            "DUPLICATE_INVOCATION",
+            "LEDGER_REVISION_CONFLICT",
+            "MCP_CAPABILITY_VERSION_UNSUPPORTED",
+            "MCP_CAPACITY_EXHAUSTED",
+            "MCP_AUTH_FAILED",
+            "MCP_CONTEXT_INVALID",
+            "MCP_LEASE_STALE",
+            "MCP_TRANSPORT_FAILED"
+          ],
+          "title": "SafeErrorCode",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "description": "\u4e00\u6b21\u5b9e\u9645\u6267\u884c attempt \u7684\u5355\u8c03 revision \u5feb\u7167\u3002",
+      "properties": {
+        "finished_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Finished At"
+        },
+        "retry_ordinal": {
+          "minimum": 0,
+          "title": "Retry Ordinal",
+          "type": "integer"
+        },
+        "revision": {
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "safe_error_code": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SafeErrorCode"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Safe Error Code"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Started At"
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "running",
+            "succeeded",
+            "failed",
+            "timed_out",
+            "not_ready",
+            "canceled",
+            "discarded"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "retry_ordinal",
+        "revision",
+        "status"
+      ],
+      "title": "ActionAttempt",
+      "type": "object"
+    },
+    "AlgorithmExecutionCommand": {
+      "additionalProperties": false,
+      "description": "\u4f20\u8f93\u65e0\u5173\u7684\u7b97\u6cd5\u6267\u884c\u8bf7\u6c42\uff1b\u53ef\u4fe1\u8eab\u4efd\u4e0d\u7531\u6a21\u578b\u53c2\u6570\u63d0\u4f9b\u3002",
+      "properties": {
+        "capability_id": {
+          "title": "Capability Id",
+          "type": "string"
+        },
+        "capability_version": {
+          "title": "Capability Version",
+          "type": "string"
+        },
+        "input_identity": {
+          "title": "Input Identity",
+          "type": "string"
+        },
+        "invocation_id": {
+          "title": "Invocation Id",
+          "type": "string"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "title": "Parameters",
+          "type": "object"
+        },
+        "provider_call_id": {
+          "title": "Provider Call Id",
+          "type": "string"
+        },
+        "result_index": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Result Index",
+          "type": "integer"
+        },
+        "spec_digest": {
+          "title": "Spec Digest",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeout Seconds"
+        }
+      },
+      "required": [
+        "invocation_id",
+        "capability_id",
+        "capability_version",
+        "spec_digest",
+        "provider_call_id",
+        "input_identity"
+      ],
+      "title": "AlgorithmExecutionCommand",
+      "type": "object"
+    },
+    "AlgorithmResult": {
+      "$defs": {
+        "AlgorithmResultProvenance": {
+          "additionalProperties": false,
+          "description": "\u7ed3\u679c\u5f52\u5c5e\u3001\u8f93\u5165\u8eab\u4efd\u548c spec \u7248\u672c\u7684\u53ef\u4fe1\u8bc1\u660e\u5b57\u6bb5\u3002",
+          "properties": {
+            "algorithm_runner_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Algorithm Runner Version"
+            },
+            "attempt_count": {
+              "minimum": 0,
+              "title": "Attempt Count",
+              "type": "integer"
+            },
+            "capability_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Capability Id"
+            },
+            "capability_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Capability Version"
+            },
+            "input_identity": {
+              "title": "Input Identity",
+              "type": "string"
+            },
+            "invocation_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Invocation Id"
+            },
+            "job_id": {
+              "title": "Job Id",
+              "type": "string"
+            },
+            "lease_epoch": {
+              "minimum": 0,
+              "title": "Lease Epoch",
+              "type": "integer"
+            },
+            "preprocessing_recipe_digest": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Preprocessing Recipe Digest"
+            },
+            "spec_digest": {
+              "title": "Spec Digest",
+              "type": "string"
+            }
+          },
+          "required": [
+            "job_id",
+            "attempt_count",
+            "lease_epoch",
+            "input_identity",
+            "spec_digest"
+          ],
+          "title": "AlgorithmResultProvenance",
+          "type": "object"
+        },
+        "Diagnostics": {
+          "additionalProperties": false,
+          "description": "\u5bf9\u6a21\u578b\u5b89\u5168\u7684\u6267\u884c\u8bca\u65ad\uff1b\u4e0d\u5141\u8bb8\u628a\u539f\u59cb\u5806\u6808\u6216\u6587\u4ef6\u6b63\u6587\u653e\u8fdb\u6765\u3002",
+          "properties": {
+            "assumptions_checked": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Assumptions Checked",
+              "type": "array"
+            },
+            "metrics": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "title": "Metrics",
+              "type": "object"
+            },
+            "safe_error_code": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SafeErrorCode"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Safe Error Code"
+            },
+            "sample_count": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Sample Count"
+            },
+            "summary": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Summary"
+            },
+            "variable_count": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Variable Count"
+            }
+          },
+          "title": "Diagnostics",
+          "type": "object"
+        },
+        "GraphEdge": {
+          "additionalProperties": false,
+          "description": "\u6807\u51c6\u5316\u56fe\u4e2d\u7684\u4e00\u6761\u6709\u5411\u6216\u90e8\u5206\u5b9a\u5411\u8fb9\u3002",
+          "properties": {
+            "edge_type": {
+              "default": "directed",
+              "title": "Edge Type",
+              "type": "string"
+            },
+            "source": {
+              "title": "Source",
+              "type": "string"
+            },
+            "target": {
+              "title": "Target",
+              "type": "string"
+            },
+            "weight": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Weight"
+            }
+          },
+          "required": [
+            "source",
+            "target"
+          ],
+          "title": "GraphEdge",
+          "type": "object"
+        },
+        "SafeErrorCode": {
+          "description": "\u9996\u7248\u5141\u8bb8\u8de8\u8fb9\u754c\u4f20\u8f93\u7684\u3001\u65e0\u654f\u611f\u7ec6\u8282\u7684\u9519\u8bef\u7801\u3002",
+          "enum": [
+            "USER_INPUT_FILE_MISSING",
+            "USER_INPUT_SCHEMA_AMBIGUOUS",
+            "USER_INPUT_REQUIRED_FIELD_MISSING",
+            "ALGORITHM_INPUT_INVALID",
+            "ALGORITHM_NOT_APPLICABLE",
+            "ALGORITHM_NOT_READY",
+            "ALGORITHM_EXECUTION_FAILED",
+            "ALGORITHM_TIMED_OUT",
+            "ALGORITHM_RESULT_CONTRACT_INVALID",
+            "UNKNOWN_CAPABILITY",
+            "DUPLICATE_INVOCATION",
+            "LEDGER_REVISION_CONFLICT",
+            "MCP_CAPABILITY_VERSION_UNSUPPORTED",
+            "MCP_CAPACITY_EXHAUSTED",
+            "MCP_AUTH_FAILED",
+            "MCP_CONTEXT_INVALID",
+            "MCP_LEASE_STALE",
+            "MCP_TRANSPORT_FAILED"
+          ],
+          "title": "SafeErrorCode",
+          "type": "string"
+        },
+        "SafeWarning": {
+          "additionalProperties": false,
+          "description": "\u53ef\u8fdb\u5165 State/\u62a5\u544a\u7684\u53d7\u63a7 warning\u3002",
+          "properties": {
+            "code": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SafeErrorCode"
+                },
+                {
+                  "type": "string"
+                }
+              ],
+              "title": "Code"
+            },
+            "message": {
+              "title": "Message",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "title": "SafeWarning",
+          "type": "object"
+        },
+        "StandardizedGraph": {
+          "additionalProperties": false,
+          "description": "Adapter \u8f93\u51fa\u7684\u6700\u5c0f\u7edf\u4e00\u56fe\u5916\u58f3\u3002\n\n\u5177\u4f53\u7b97\u6cd5\u53ef\u4ee5\u5728 diagnostics \u4e2d\u4fdd\u7559\u989d\u5916\u8bf4\u660e\uff0c\u4f46\u4e3b\u56fe\u7684\u8282\u70b9\u3001\u8fb9\u548c\u8bed\u4e49\n\u5fc5\u987b\u7ecf\u8fc7 Adapter \u7684\u786c\u5951\u7ea6\u6821\u9a8c\u540e\u624d\u80fd\u8fdb\u5165 ``AlgorithmResult``\u3002",
+          "properties": {
+            "edges": {
+              "items": {
+                "$ref": "#/$defs/GraphEdge"
+              },
+              "title": "Edges",
+              "type": "array"
+            },
+            "graph_semantics": {
+              "title": "Graph Semantics",
+              "type": "string"
+            },
+            "nodes": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Nodes",
+              "type": "array"
+            }
+          },
+          "required": [
+            "graph_semantics"
+          ],
+          "title": "StandardizedGraph",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Adapter \u5bf9\u5916\u53d1\u5e03\u7684\u7edf\u4e00\u7b97\u6cd5\u7ed3\u679c\u3002",
+      "properties": {
+        "capability_id": {
+          "title": "Capability Id",
+          "type": "string"
+        },
+        "capability_version": {
+          "title": "Capability Version",
+          "type": "string"
+        },
+        "diagnostics": {
+          "$ref": "#/$defs/Diagnostics"
+        },
+        "graph_semantics": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Graph Semantics"
+        },
+        "input_identity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Identity"
+        },
+        "invocation_id": {
+          "title": "Invocation Id",
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/AlgorithmResultProvenance"
+        },
+        "provider_call_id": {
+          "title": "Provider Call Id",
+          "type": "string"
+        },
+        "raw_result_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Raw Result Ref"
+        },
+        "raw_result_serialization_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Raw Result Serialization Version"
+        },
+        "raw_result_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Raw Result Sha256"
+        },
+        "raw_result_size_bytes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Raw Result Size Bytes"
+        },
+        "result_ref": {
+          "title": "Result Ref",
+          "type": "string"
+        },
+        "standardized_graph": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StandardizedGraph"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "enum": [
+            "valid",
+            "invalid_input",
+            "not_applicable",
+            "not_ready",
+            "execution_failed",
+            "timed_out"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary"
+        },
+        "warnings": {
+          "items": {
+            "$ref": "#/$defs/SafeWarning"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "result_ref",
+        "invocation_id",
+        "provider_call_id",
+        "capability_id",
+        "capability_version",
+        "status",
+        "provenance"
+      ],
+      "title": "AlgorithmResult",
+      "type": "object"
+    },
+    "AlgorithmResultProvenance": {
+      "additionalProperties": false,
+      "description": "\u7ed3\u679c\u5f52\u5c5e\u3001\u8f93\u5165\u8eab\u4efd\u548c spec \u7248\u672c\u7684\u53ef\u4fe1\u8bc1\u660e\u5b57\u6bb5\u3002",
+      "properties": {
+        "algorithm_runner_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Algorithm Runner Version"
+        },
+        "attempt_count": {
+          "minimum": 0,
+          "title": "Attempt Count",
+          "type": "integer"
+        },
+        "capability_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Capability Id"
+        },
+        "capability_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Capability Version"
+        },
+        "input_identity": {
+          "title": "Input Identity",
+          "type": "string"
+        },
+        "invocation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Invocation Id"
+        },
+        "job_id": {
+          "title": "Job Id",
+          "type": "string"
+        },
+        "lease_epoch": {
+          "minimum": 0,
+          "title": "Lease Epoch",
+          "type": "integer"
+        },
+        "preprocessing_recipe_digest": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Preprocessing Recipe Digest"
+        },
+        "spec_digest": {
+          "title": "Spec Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "job_id",
+        "attempt_count",
+        "lease_epoch",
+        "input_identity",
+        "spec_digest"
+      ],
+      "title": "AlgorithmResultProvenance",
+      "type": "object"
+    },
+    "DataProfile": {
+      "additionalProperties": false,
+      "description": "\u5916\u5c42\u51c6\u5165\u9636\u6bb5\u751f\u6210\u3001\u4f9b Agent \u9009\u62e9\u7b97\u6cd5\u4f7f\u7528\u7684\u6570\u636e\u753b\u50cf\u3002",
+      "properties": {
+        "categorical_columns": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Categorical Columns",
+          "type": "array"
+        },
+        "column_count": {
+          "minimum": 0,
+          "title": "Column Count",
+          "type": "integer"
+        },
+        "column_names": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Column Names",
+          "type": "array"
+        },
+        "numeric_columns": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Numeric Columns",
+          "type": "array"
+        },
+        "row_count": {
+          "minimum": 0,
+          "title": "Row Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "row_count",
+        "column_count"
+      ],
+      "title": "DataProfile",
+      "type": "object"
+    },
+    "Diagnostics": {
+      "$defs": {
+        "SafeErrorCode": {
+          "description": "\u9996\u7248\u5141\u8bb8\u8de8\u8fb9\u754c\u4f20\u8f93\u7684\u3001\u65e0\u654f\u611f\u7ec6\u8282\u7684\u9519\u8bef\u7801\u3002",
+          "enum": [
+            "USER_INPUT_FILE_MISSING",
+            "USER_INPUT_SCHEMA_AMBIGUOUS",
+            "USER_INPUT_REQUIRED_FIELD_MISSING",
+            "ALGORITHM_INPUT_INVALID",
+            "ALGORITHM_NOT_APPLICABLE",
+            "ALGORITHM_NOT_READY",
+            "ALGORITHM_EXECUTION_FAILED",
+            "ALGORITHM_TIMED_OUT",
+            "ALGORITHM_RESULT_CONTRACT_INVALID",
+            "UNKNOWN_CAPABILITY",
+            "DUPLICATE_INVOCATION",
+            "LEDGER_REVISION_CONFLICT",
+            "MCP_CAPABILITY_VERSION_UNSUPPORTED",
+            "MCP_CAPACITY_EXHAUSTED",
+            "MCP_AUTH_FAILED",
+            "MCP_CONTEXT_INVALID",
+            "MCP_LEASE_STALE",
+            "MCP_TRANSPORT_FAILED"
+          ],
+          "title": "SafeErrorCode",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "description": "\u5bf9\u6a21\u578b\u5b89\u5168\u7684\u6267\u884c\u8bca\u65ad\uff1b\u4e0d\u5141\u8bb8\u628a\u539f\u59cb\u5806\u6808\u6216\u6587\u4ef6\u6b63\u6587\u653e\u8fdb\u6765\u3002",
+      "properties": {
+        "assumptions_checked": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Assumptions Checked",
+          "type": "array"
+        },
+        "metrics": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": "Metrics",
+          "type": "object"
+        },
+        "safe_error_code": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SafeErrorCode"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Safe Error Code"
+        },
+        "sample_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sample Count"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary"
+        },
+        "variable_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Variable Count"
+        }
+      },
+      "title": "Diagnostics",
+      "type": "object"
+    },
+    "EvidenceResult": {
+      "additionalProperties": false,
+      "description": "RAG evidence \u7684\u4e0d\u53ef\u53d8 State \u8bb0\u5f55\u3002",
+      "properties": {
+        "degradation_flags": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Degradation Flags",
+          "type": "array"
+        },
+        "evidence_ref": {
+          "title": "Evidence Ref",
+          "type": "string"
+        },
+        "locator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locator"
+        },
+        "release_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Release Id"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        },
+        "snippet": {
+          "title": "Snippet",
+          "type": "string"
+        },
+        "source_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Title"
+        },
+        "source_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Url"
+        }
+      },
+      "required": [
+        "evidence_ref",
+        "snippet"
+      ],
+      "title": "EvidenceResult",
+      "type": "object"
+    },
+    "FinalAnalysisDecision": {
+      "$defs": {
+        "ResultAssessment": {
+          "additionalProperties": false,
+          "properties": {
+            "disposition": {
+              "enum": [
+                "primary",
+                "supporting",
+                "discarded"
+              ],
+              "title": "Disposition",
+              "type": "string"
+            },
+            "rationale": {
+              "title": "Rationale",
+              "type": "string"
+            },
+            "result_ref": {
+              "title": "Result Ref",
+              "type": "string"
+            }
+          },
+          "required": [
+            "result_ref",
+            "disposition",
+            "rationale"
+          ],
+          "title": "ResultAssessment",
+          "type": "object"
+        },
+        "RevisionProposal": {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "enum": [
+                "retain",
+                "orient",
+                "reverse",
+                "remove",
+                "uncertain"
+              ],
+              "title": "Action",
+              "type": "string"
+            },
+            "evidence_refs": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "title": "Evidence Refs",
+              "type": "array"
+            },
+            "rationale": {
+              "title": "Rationale",
+              "type": "string"
+            },
+            "result_ref": {
+              "title": "Result Ref",
+              "type": "string"
+            }
+          },
+          "required": [
+            "result_ref",
+            "action",
+            "rationale"
+          ],
+          "title": "RevisionProposal",
+          "type": "object"
+        },
+        "ScientificConflict": {
+          "additionalProperties": false,
+          "properties": {
+            "conflict_id": {
+              "title": "Conflict Id",
+              "type": "string"
+            },
+            "resolution": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Resolution"
+            },
+            "result_refs": {
+              "default": [],
+              "items": {
+                "type": "string"
+              },
+              "title": "Result Refs",
+              "type": "array"
+            },
+            "summary": {
+              "title": "Summary",
+              "type": "string"
+            }
+          },
+          "required": [
+            "conflict_id",
+            "summary"
+          ],
+          "title": "ScientificConflict",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "ToolStrategy \u7684\u9759\u6001\u7ec8\u6001\u5951\u7ea6\uff1b\u52a8\u6001\u5f52\u5c5e\u7531\u540e\u7eed FinalizationGate \u6821\u9a8c\u3002",
+      "properties": {
+        "confidence": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Confidence",
+          "type": "string"
+        },
+        "confidence_basis": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Confidence Basis",
+          "type": "array"
+        },
+        "conflict_status": {
+          "enum": [
+            "none",
+            "resolved",
+            "unresolved"
+          ],
+          "title": "Conflict Status",
+          "type": "string"
+        },
+        "conflicts": {
+          "items": {
+            "$ref": "#/$defs/ScientificConflict"
+          },
+          "title": "Conflicts",
+          "type": "array"
+        },
+        "outcome": {
+          "enum": [
+            "evidence_only",
+            "algorithm_supported",
+            "no_valid_algorithm"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "primary_result_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Primary Result Ref"
+        },
+        "result_assessments": {
+          "items": {
+            "$ref": "#/$defs/ResultAssessment"
+          },
+          "title": "Result Assessments",
+          "type": "array"
+        },
+        "revision_proposals": {
+          "items": {
+            "$ref": "#/$defs/RevisionProposal"
+          },
+          "title": "Revision Proposals",
+          "type": "array"
+        },
+        "selection_rationale": {
+          "title": "Selection Rationale",
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "conflict_status",
+        "selection_rationale",
+        "confidence"
+      ],
+      "title": "FinalAnalysisDecision",
+      "type": "object"
+    },
+    "GraphEdge": {
+      "additionalProperties": false,
+      "description": "\u6807\u51c6\u5316\u56fe\u4e2d\u7684\u4e00\u6761\u6709\u5411\u6216\u90e8\u5206\u5b9a\u5411\u8fb9\u3002",
+      "properties": {
+        "edge_type": {
+          "default": "directed",
+          "title": "Edge Type",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "target": {
+          "title": "Target",
+          "type": "string"
+        },
+        "weight": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Weight"
+        }
+      },
+      "required": [
+        "source",
+        "target"
+      ],
+      "title": "GraphEdge",
+      "type": "object"
+    },
+    "InvocationRecord": {
+      "$defs": {
+        "ActionAttempt": {
+          "additionalProperties": false,
+          "description": "\u4e00\u6b21\u5b9e\u9645\u6267\u884c attempt \u7684\u5355\u8c03 revision \u5feb\u7167\u3002",
+          "properties": {
+            "finished_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Finished At"
+            },
+            "retry_ordinal": {
+              "minimum": 0,
+              "title": "Retry Ordinal",
+              "type": "integer"
+            },
+            "revision": {
+              "minimum": 0,
+              "title": "Revision",
+              "type": "integer"
+            },
+            "safe_error_code": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SafeErrorCode"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Safe Error Code"
+            },
+            "started_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Started At"
+            },
+            "status": {
+              "enum": [
+                "queued",
+                "running",
+                "succeeded",
+                "failed",
+                "timed_out",
+                "not_ready",
+                "canceled",
+                "discarded"
+              ],
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          "required": [
+            "retry_ordinal",
+            "revision",
+            "status"
+          ],
+          "title": "ActionAttempt",
+          "type": "object"
+        },
+        "SafeErrorCode": {
+          "description": "\u9996\u7248\u5141\u8bb8\u8de8\u8fb9\u754c\u4f20\u8f93\u7684\u3001\u65e0\u654f\u611f\u7ec6\u8282\u7684\u9519\u8bef\u7801\u3002",
+          "enum": [
+            "USER_INPUT_FILE_MISSING",
+            "USER_INPUT_SCHEMA_AMBIGUOUS",
+            "USER_INPUT_REQUIRED_FIELD_MISSING",
+            "ALGORITHM_INPUT_INVALID",
+            "ALGORITHM_NOT_APPLICABLE",
+            "ALGORITHM_NOT_READY",
+            "ALGORITHM_EXECUTION_FAILED",
+            "ALGORITHM_TIMED_OUT",
+            "ALGORITHM_RESULT_CONTRACT_INVALID",
+            "UNKNOWN_CAPABILITY",
+            "DUPLICATE_INVOCATION",
+            "LEDGER_REVISION_CONFLICT",
+            "MCP_CAPABILITY_VERSION_UNSUPPORTED",
+            "MCP_CAPACITY_EXHAUSTED",
+            "MCP_AUTH_FAILED",
+            "MCP_CONTEXT_INVALID",
+            "MCP_LEASE_STALE",
+            "MCP_TRANSPORT_FAILED"
+          ],
+          "title": "SafeErrorCode",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "description": "\u4e00\u4e2a\u903b\u8f91 function call \u53ca\u5176\u5168\u90e8 retry/revision \u5386\u53f2\u3002",
+      "properties": {
+        "attempts": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ActionAttempt"
+          },
+          "title": "Attempts",
+          "type": "object"
+        },
+        "final_status": {
+          "enum": [
+            "pending",
+            "succeeded",
+            "failed",
+            "timed_out",
+            "not_ready",
+            "canceled",
+            "discarded"
+          ],
+          "title": "Final Status",
+          "type": "string"
+        },
+        "invocation_id": {
+          "title": "Invocation Id",
+          "type": "string"
+        },
+        "provider_call_id": {
+          "title": "Provider Call Id",
+          "type": "string"
+        },
+        "provider_item_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider Item Id"
+        },
+        "provider_response_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider Response Id"
+        },
+        "response_identity": {
+          "title": "Response Identity",
+          "type": "string"
+        },
+        "response_identity_source": {
+          "enum": [
+            "provider_response_id",
+            "message_execution_id"
+          ],
+          "title": "Response Identity Source",
+          "type": "string"
+        },
+        "result_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Result Ref"
+        },
+        "tool_name": {
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "invocation_id",
+        "response_identity",
+        "response_identity_source",
+        "provider_call_id",
+        "tool_name",
+        "final_status"
+      ],
+      "title": "InvocationRecord",
+      "type": "object"
+    },
+    "McpInvocationContext": {
+      "additionalProperties": false,
+      "description": "worker \u6ce8\u5165\u3001MCP \u9a8c\u7b7e\u5e76\u518d\u6b21\u67e5\u5e93\u7684\u53ef\u4fe1\u8c03\u7528\u4e0a\u4e0b\u6587\u3002",
+      "properties": {
+        "attempt_count": {
+          "minimum": 0,
+          "title": "Attempt Count",
+          "type": "integer"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "input_snapshot_digest": {
+          "title": "Input Snapshot Digest",
+          "type": "string"
+        },
+        "invocation_id": {
+          "title": "Invocation Id",
+          "type": "string"
+        },
+        "issued_at": {
+          "format": "date-time",
+          "title": "Issued At",
+          "type": "string"
+        },
+        "job_id": {
+          "title": "Job Id",
+          "type": "string"
+        },
+        "key_id": {
+          "title": "Key Id",
+          "type": "string"
+        },
+        "lease_epoch": {
+          "minimum": 0,
+          "title": "Lease Epoch",
+          "type": "integer"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "user_id": {
+          "exclusiveMinimum": 0,
+          "title": "User Id",
+          "type": "integer"
+        },
+        "worker_id": {
+          "title": "Worker Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "invocation_id",
+        "job_id",
+        "session_id",
+        "user_id",
+        "attempt_count",
+        "lease_epoch",
+        "worker_id",
+        "input_snapshot_digest",
+        "issued_at",
+        "expires_at",
+        "key_id"
+      ],
+      "title": "McpInvocationContext",
+      "type": "object"
+    },
+    "RawResultMetadata": {
+      "additionalProperties": false,
+      "description": "canonical raw JSON \u7684\u53ef\u5ba1\u8ba1\u5143\u6570\u636e\u3002",
+      "properties": {
+        "raw_result_ref": {
+          "title": "Raw Result Ref",
+          "type": "string"
+        },
+        "raw_result_serialization_version": {
+          "title": "Raw Result Serialization Version",
+          "type": "string"
+        },
+        "raw_result_sha256": {
+          "title": "Raw Result Sha256",
+          "type": "string"
+        },
+        "raw_result_size_bytes": {
+          "minimum": 0,
+          "title": "Raw Result Size Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "raw_result_ref",
+        "raw_result_sha256",
+        "raw_result_size_bytes",
+        "raw_result_serialization_version"
+      ],
+      "title": "RawResultMetadata",
+      "type": "object"
+    },
+    "ResultAssessment": {
+      "additionalProperties": false,
+      "properties": {
+        "disposition": {
+          "enum": [
+            "primary",
+            "supporting",
+            "discarded"
+          ],
+          "title": "Disposition",
+          "type": "string"
+        },
+        "rationale": {
+          "title": "Rationale",
+          "type": "string"
+        },
+        "result_ref": {
+          "title": "Result Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result_ref",
+        "disposition",
+        "rationale"
+      ],
+      "title": "ResultAssessment",
+      "type": "object"
+    },
+    "RevisionProposal": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": [
+            "retain",
+            "orient",
+            "reverse",
+            "remove",
+            "uncertain"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "evidence_refs": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "rationale": {
+          "title": "Rationale",
+          "type": "string"
+        },
+        "result_ref": {
+          "title": "Result Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result_ref",
+        "action",
+        "rationale"
+      ],
+      "title": "RevisionProposal",
+      "type": "object"
+    },
+    "SafeWarning": {
+      "$defs": {
+        "SafeErrorCode": {
+          "description": "\u9996\u7248\u5141\u8bb8\u8de8\u8fb9\u754c\u4f20\u8f93\u7684\u3001\u65e0\u654f\u611f\u7ec6\u8282\u7684\u9519\u8bef\u7801\u3002",
+          "enum": [
+            "USER_INPUT_FILE_MISSING",
+            "USER_INPUT_SCHEMA_AMBIGUOUS",
+            "USER_INPUT_REQUIRED_FIELD_MISSING",
+            "ALGORITHM_INPUT_INVALID",
+            "ALGORITHM_NOT_APPLICABLE",
+            "ALGORITHM_NOT_READY",
+            "ALGORITHM_EXECUTION_FAILED",
+            "ALGORITHM_TIMED_OUT",
+            "ALGORITHM_RESULT_CONTRACT_INVALID",
+            "UNKNOWN_CAPABILITY",
+            "DUPLICATE_INVOCATION",
+            "LEDGER_REVISION_CONFLICT",
+            "MCP_CAPABILITY_VERSION_UNSUPPORTED",
+            "MCP_CAPACITY_EXHAUSTED",
+            "MCP_AUTH_FAILED",
+            "MCP_CONTEXT_INVALID",
+            "MCP_LEASE_STALE",
+            "MCP_TRANSPORT_FAILED"
+          ],
+          "title": "SafeErrorCode",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "description": "\u53ef\u8fdb\u5165 State/\u62a5\u544a\u7684\u53d7\u63a7 warning\u3002",
+      "properties": {
+        "code": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SafeErrorCode"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Code"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "SafeWarning",
+      "type": "object"
+    },
+    "ScientificConflict": {
+      "additionalProperties": false,
+      "properties": {
+        "conflict_id": {
+          "title": "Conflict Id",
+          "type": "string"
+        },
+        "resolution": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resolution"
+        },
+        "result_refs": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Result Refs",
+          "type": "array"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "conflict_id",
+        "summary"
+      ],
+      "title": "ScientificConflict",
+      "type": "object"
+    },
+    "StandardizedGraph": {
+      "$defs": {
+        "GraphEdge": {
+          "additionalProperties": false,
+          "description": "\u6807\u51c6\u5316\u56fe\u4e2d\u7684\u4e00\u6761\u6709\u5411\u6216\u90e8\u5206\u5b9a\u5411\u8fb9\u3002",
+          "properties": {
+            "edge_type": {
+              "default": "directed",
+              "title": "Edge Type",
+              "type": "string"
+            },
+            "source": {
+              "title": "Source",
+              "type": "string"
+            },
+            "target": {
+              "title": "Target",
+              "type": "string"
+            },
+            "weight": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Weight"
+            }
+          },
+          "required": [
+            "source",
+            "target"
+          ],
+          "title": "GraphEdge",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Adapter \u8f93\u51fa\u7684\u6700\u5c0f\u7edf\u4e00\u56fe\u5916\u58f3\u3002\n\n\u5177\u4f53\u7b97\u6cd5\u53ef\u4ee5\u5728 diagnostics \u4e2d\u4fdd\u7559\u989d\u5916\u8bf4\u660e\uff0c\u4f46\u4e3b\u56fe\u7684\u8282\u70b9\u3001\u8fb9\u548c\u8bed\u4e49\n\u5fc5\u987b\u7ecf\u8fc7 Adapter \u7684\u786c\u5951\u7ea6\u6821\u9a8c\u540e\u624d\u80fd\u8fdb\u5165 ``AlgorithmResult``\u3002",
+      "properties": {
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/GraphEdge"
+          },
+          "title": "Edges",
+          "type": "array"
+        },
+        "graph_semantics": {
+          "title": "Graph Semantics",
+          "type": "string"
+        },
+        "nodes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Nodes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "graph_semantics"
+      ],
+      "title": "StandardizedGraph",
+      "type": "object"
+    },
+    "WebEvidenceResult": {
+      "additionalProperties": false,
+      "description": "Web evidence \u5728\u901a\u7528\u8bc1\u636e\u5916\u589e\u52a0 provider \u72b6\u6001\u548c\u6293\u53d6\u65f6\u95f4\u3002",
+      "properties": {
+        "degradation_flags": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Degradation Flags",
+          "type": "array"
+        },
+        "evidence_ref": {
+          "title": "Evidence Ref",
+          "type": "string"
+        },
+        "fetched_at": {
+          "format": "date-time",
+          "title": "Fetched At",
+          "type": "string"
+        },
+        "locator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locator"
+        },
+        "provider_status": {
+          "title": "Provider Status",
+          "type": "string"
+        },
+        "release_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Release Id"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        },
+        "snippet": {
+          "title": "Snippet",
+          "type": "string"
+        },
+        "source_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Title"
+        },
+        "source_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Url"
+        }
+      },
+      "required": [
+        "evidence_ref",
+        "snippet",
+        "provider_status",
+        "fetched_at"
+      ],
+      "title": "WebEvidenceResult",
+      "type": "object"
+    }
+  },
+  "schema_version": "p1-v1",
+  "tools": [
+    {
+      "capability_id": "causal.direct_lingam",
+      "spec_digest": "718ac64c3efe7790b5bda8a2b700e850cfa554500ad11a095d8fba9450898915",
+      "tool": {
+        "description": "\u5728\u8fde\u7eed\u6570\u503c\u6570\u636e\u4e0a\u4f7f\u7528 DirectLiNGAM \u4f30\u8ba1\u6709\u5411\u65e0\u73af\u56e0\u679c\u7ed3\u6784\u3002\u9002\u7528\u4e8e\u7ebf\u6027\u3001\u975e\u9ad8\u65af\u3001\u8bef\u5dee\u72ec\u7acb\u4e14\u6ca1\u6709\u6f5c\u5728\u6df7\u6742\u7684\u573a\u666f\u3002",
+        "name": "causal_direct_lingam",
+        "parameters": {
+          "additionalProperties": false,
+          "description": "DirectLiNGAM \u5f53\u524d\u6ca1\u6709\u53ef\u7531\u6a21\u578b\u6539\u53d8\u7684\u516c\u5f00\u53c2\u6570\u3002",
+          "properties": {},
+          "title": "CausalDirectLiNGAMInput",
+          "type": "object"
+        }
+      }
+    },
+    {
+      "capability_id": "causal.olc",
+      "spec_digest": "d3e6d8dff2d8ebfea6e4e3c293a2f69f914a7926fb508c12d1f0176208fbf257",
+      "tool": {
+        "description": "\u5728\u8fde\u7eed\u8868\u683c\u6570\u636e\u4e0a\u4f7f\u7528 OLC \u5904\u7406\u53ef\u80fd\u5b58\u5728\u6f5c\u5728\u6df7\u6742\u7684\u56e0\u679c\u53d1\u73b0\u3002\u5b83\u4e0d\u9002\u7528\u4e8e\u79bb\u6563\u53d8\u91cf\u3001\u975e\u5e38\u5c0f\u7684\u6837\u672c\u6216\u53ef\u4ee5\u660e\u786e\u6392\u9664\u6f5c\u5728\u6df7\u6742\u7684\u573a\u666f\u3002",
+        "name": "causal_olc",
+        "parameters": {
+          "additionalProperties": false,
+          "description": "OLC \u7684\u6a21\u578b\u53ef\u89c1\u663e\u8457\u6027\u53c2\u6570\u3002",
+          "properties": {
+            "alpha": {
+              "default": 0.05,
+              "exclusiveMaximum": 1.0,
+              "exclusiveMinimum": 0.0,
+              "title": "Alpha",
+              "type": "number"
+            },
+            "beta": {
+              "default": 0.01,
+              "exclusiveMaximum": 1.0,
+              "exclusiveMinimum": 0.0,
+              "title": "Beta",
+              "type": "number"
+            }
+          },
+          "title": "CausalOlcInput",
+          "type": "object"
+        }
+      }
+    },
+    {
+      "capability_id": "causal.pc",
+      "spec_digest": "2be84a02ec63d244fbc0533f130fdf5c3f7ea1f43364414d9a3bb8d4c56036db",
+      "tool": {
+        "description": "\u5728\u8868\u683c\u6570\u636e\u4e0a\u4f7f\u7528 PC \u65b9\u6cd5\u53d1\u73b0\u6761\u4ef6\u72ec\u7acb\u7ed3\u6784\u5e76\u751f\u6210\u90e8\u5206\u6709\u5411\u56fe\u3002\u9002\u7528\u4e8e\u4e00\u822c\u89c2\u6d4b\u56e0\u679c\u53d1\u73b0\uff1b\u9700\u8981\u6570\u503c\u6216\u53ef\u786e\u5b9a\u6027\u7f16\u7801\u7684\u8868\u683c\u6570\u636e\uff0c\u4e0d\u5e94\u5728\u660e\u663e\u5b58\u5728\u6f5c\u5728\u6df7\u6742\u4e14\u9700\u8981\u4e13\u95e8\u5904\u7406\u65f6\u4f5c\u4e3a\u552f\u4e00\u65b9\u6cd5\u3002",
+        "name": "causal_pc",
+        "parameters": {
+          "additionalProperties": false,
+          "description": "PC \u7684\u6a21\u578b\u53ef\u89c1\u79d1\u5b66\u53c2\u6570\uff1bJob/\u6587\u4ef6/lease \u4e0d\u5728\u6b64 schema \u4e2d\u3002",
+          "properties": {
+            "alpha": {
+              "default": 0.05,
+              "exclusiveMaximum": 1.0,
+              "exclusiveMinimum": 0.0,
+              "title": "Alpha",
+              "type": "number"
+            }
+          },
+          "title": "CausalPcInput",
+          "type": "object"
+        }
+      }
+    }
+  ]
+}
