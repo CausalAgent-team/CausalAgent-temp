@@ -362,11 +362,17 @@ class EvidenceResult(ContractModel):
     """RAG evidence 的不可变 State 记录。"""
 
     evidence_ref: str
+    evidence_id: str | None = None
     snippet: str
     source_title: str | None = None
     source_url: str | None = None
     locator: str | None = None
+    modality: str | None = None
     score: float | None = None
+    dense_score: float | None = None
+    sparse_score: float | None = None
+    rerank_score: float | None = None
+    sufficiency: str | None = None
     release_id: str | None = None
     degradation_flags: tuple[str, ...] = ()
 
@@ -374,6 +380,11 @@ class EvidenceResult(ContractModel):
     @classmethod
     def validate_evidence_strings(cls, value: str, info: Any) -> str:
         return _non_blank(value, field_name=info.field_name)
+
+    @field_validator("evidence_id", "modality", "sufficiency")
+    @classmethod
+    def validate_optional_evidence_strings(cls, value: str | None, info: Any) -> str | None:
+        return None if value is None else _non_blank(value, field_name=info.field_name)
 
 
 class WebEvidenceResult(EvidenceResult):

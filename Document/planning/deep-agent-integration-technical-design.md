@@ -500,6 +500,8 @@ class ProjectDeepAgentState(DeepAgentState):
 
 一个 Job 只有一个 Action Ledger，但其中可包含多个以 `invocation_id` 为 key 的 `InvocationRecord`；每个逻辑调用又包含一个或多个 attempt。Ledger 必须记录每一次实际尝试，包括最终成功前发生的连接失败、容量拒绝、算法错误、超时和恢复重算。`final_status` 是 invocation 汇总状态，不能覆盖 `attempts` 历史。不能使用 list append 作为执行事实 reducer，否则 checkpoint replay 会重复记录；也不能只在最终失败时记录，否则无法区分“从未开始”“失败后成功”和“响应丢失后重算”。
 
+实现口径补充（2026-09-14）：单次 Tool graph step 只向 checkpoint 提交该 attempt 的 terminal revision，terminal record 同时保留 `started_at/finished_at`，并与 ToolMessage、AlgorithmResult 或 evidence 通过同一个 `Command` 更新。这里的“只提交 terminal”是对 checkpoint 写放大的约束，不是删除失败尝试；后续同一 invocation 的重试仍以更高 `retry_ordinal/revision` 单调合并并保留历史。queued/running 如需用户可见实时进度，由事件适配器发出，不作为额外 checkpoint revision。可预期算法失败必须转换为 `AlgorithmResult.status=execution_failed`，同时写入 failed Ledger 后返回模型继续分析；租约失效、取消和运行资格撤销仍属于控制流异常，不得伪装成普通算法失败。
+
 ### 6.4 FinalAnalysisDecision
 
 ```python

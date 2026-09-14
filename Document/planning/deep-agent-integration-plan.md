@@ -391,6 +391,8 @@ raw 虚拟文件仍属于 graph State，并随父图 PostgreSQL checkpoint 持�
 
 invocation identity 使用 UUIDv5：协议层的 `provider_response_id` 取 DeepSeek response 顶层 `id`，`provider_call_id` 取 function-call item 的 `call_id`；function-call item 自身的 `id` 只是可选追踪字段 `provider_item_id`，不能与用于 Tool output 配对的 `call_id` 混为一谈。UUIDv5 名称使用 `job_id:response_identity:provider_call_id`，其中 `response_identity` 优先取 `provider_response_id`；若适配层没有保留它，就在模型节点提交 checkpoint 前生成并持久化本地 `message_execution_id`，同时记录 `response_identity_source`，不能把本地值伪装成供应商 ID。阶段 0 必须用真实 DeepSeek Responses API 验证三个协议字段经 `ChatOpenAI` 后分别落到哪些 `AIMessage`/tool-call 字段，不能在验证前把 `response_metadata["id"]`、`AIMessage.id` 或 `tool_call["id"]` 任一候选直接写成协议事实。当前旧 adapter 重建 `AIMessage` 时会丢失 `id/response_metadata`，且仓库里存在静态 call id，因此新路径不得复用该 normalizer。相同逻辑调用的传输重试和恢复重算复用 invocation identity，只增加 attempt；模型后续主动再调用则形成新 invocation。
 
+2026-09-14 实施一致性说明：P2-U 已把 Algorithm、RAG 与 Web 三类本地 Tool 统一接入 `ToolRuntime → Command → State reducer`。每次模型响应后的 middleware 会在 Tool 执行前持久化新的 `message_execution_id` fallback；Tool 不再接受模型参数或静态字符串构造调用身份。每次 Tool step 在一个 `Command` 中提交匹配 `tool_call_id` 的 `ToolMessage`、领域结果/evidence 和 terminal `InvocationRecord`。checkpoint 只保存单调 terminal revision，不额外追加 queued/running 快照；queued/running 的实时进度仍由后续公共事件适配层负责。这不改变 AlgorithmResult、Action Ledger 或 Job 的产品状态语义。真实 DeepSeek `response.id`、function-call `call_id` 到 LangChain 字段的映射仍必须通过阶段 0/P3 真实协议验证，当前 ToolNode 单元测试不能替代该门禁。
+
 ### 7.4 重跑、切换、主结果和科学修订建议
 
 结果是否足以支持当前任务、是否需要重跑、切换或并行比较，以及多个有效结果是否构成实质冲突，由 Deep Agent 结合用户目标、算法假设、diagnostics、图结构和证据判断。它可以直接再次调用同一 Tool 表示重跑，或调用其他 Tool 表示切换/比较，不需要额外的“重跑决策节点”。

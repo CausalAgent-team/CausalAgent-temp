@@ -3,7 +3,7 @@
     "ActionAttempt": {
       "$defs": {
         "SafeErrorCode": {
-          "description": "\u9996\u7248\u5141\u8bb8\u8de8\u8fb9\u754c\u4f20\u8f93\u7684\u3001\u65e0\u654f\u611f\u7ec6\u8282\u7684\u9519\u8bef\u7801\u3002",
+          "description": "首版允许跨边界传输的、无敏感细节的错误码。",
           "enum": [
             "USER_INPUT_FILE_MISSING",
             "USER_INPUT_SCHEMA_AMBIGUOUS",
@@ -29,8 +29,45 @@
         }
       },
       "additionalProperties": false,
-      "description": "\u4e00\u6b21\u5b9e\u9645\u6267\u884c attempt \u7684\u5355\u8c03 revision \u5feb\u7167\u3002",
+      "description": "一次实际执行 attempt 的单调 revision 快照。",
       "properties": {
+        "retry_ordinal": {
+          "minimum": 0,
+          "title": "Retry Ordinal",
+          "type": "integer"
+        },
+        "revision": {
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "running",
+            "succeeded",
+            "failed",
+            "timed_out",
+            "not_ready",
+            "canceled",
+            "discarded"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Started At"
+        },
         "finished_at": {
           "anyOf": [
             {
@@ -43,16 +80,6 @@
           ],
           "default": null,
           "title": "Finished At"
-        },
-        "retry_ordinal": {
-          "minimum": 0,
-          "title": "Retry Ordinal",
-          "type": "integer"
-        },
-        "revision": {
-          "minimum": 0,
-          "title": "Revision",
-          "type": "integer"
         },
         "safe_error_code": {
           "anyOf": [
@@ -68,33 +95,6 @@
           ],
           "default": null,
           "title": "Safe Error Code"
-        },
-        "started_at": {
-          "anyOf": [
-            {
-              "format": "date-time",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Started At"
-        },
-        "status": {
-          "enum": [
-            "queued",
-            "running",
-            "succeeded",
-            "failed",
-            "timed_out",
-            "not_ready",
-            "canceled",
-            "discarded"
-          ],
-          "title": "Status",
-          "type": "string"
         }
       },
       "required": [
@@ -107,8 +107,12 @@
     },
     "AlgorithmExecutionCommand": {
       "additionalProperties": false,
-      "description": "\u4f20\u8f93\u65e0\u5173\u7684\u7b97\u6cd5\u6267\u884c\u8bf7\u6c42\uff1b\u53ef\u4fe1\u8eab\u4efd\u4e0d\u7531\u6a21\u578b\u53c2\u6570\u63d0\u4f9b\u3002",
+      "description": "传输无关的算法执行请求；可信身份不由模型参数提供。",
       "properties": {
+        "invocation_id": {
+          "title": "Invocation Id",
+          "type": "string"
+        },
         "capability_id": {
           "title": "Capability Id",
           "type": "string"
@@ -117,12 +121,16 @@
           "title": "Capability Version",
           "type": "string"
         },
-        "input_identity": {
-          "title": "Input Identity",
+        "spec_digest": {
+          "title": "Spec Digest",
           "type": "string"
         },
-        "invocation_id": {
-          "title": "Invocation Id",
+        "provider_call_id": {
+          "title": "Provider Call Id",
+          "type": "string"
+        },
+        "input_identity": {
+          "title": "Input Identity",
           "type": "string"
         },
         "parameters": {
@@ -130,19 +138,11 @@
           "title": "Parameters",
           "type": "object"
         },
-        "provider_call_id": {
-          "title": "Provider Call Id",
-          "type": "string"
-        },
         "result_index": {
           "default": 0,
           "minimum": 0,
           "title": "Result Index",
           "type": "integer"
-        },
-        "spec_digest": {
-          "title": "Spec Digest",
-          "type": "string"
         },
         "timeout_seconds": {
           "anyOf": [
@@ -173,9 +173,31 @@
       "$defs": {
         "AlgorithmResultProvenance": {
           "additionalProperties": false,
-          "description": "\u7ed3\u679c\u5f52\u5c5e\u3001\u8f93\u5165\u8eab\u4efd\u548c spec \u7248\u672c\u7684\u53ef\u4fe1\u8bc1\u660e\u5b57\u6bb5\u3002",
+          "description": "结果归属、输入身份和 spec 版本的可信证明字段。",
           "properties": {
-            "algorithm_runner_version": {
+            "job_id": {
+              "title": "Job Id",
+              "type": "string"
+            },
+            "attempt_count": {
+              "minimum": 0,
+              "title": "Attempt Count",
+              "type": "integer"
+            },
+            "lease_epoch": {
+              "minimum": 0,
+              "title": "Lease Epoch",
+              "type": "integer"
+            },
+            "input_identity": {
+              "title": "Input Identity",
+              "type": "string"
+            },
+            "spec_digest": {
+              "title": "Spec Digest",
+              "type": "string"
+            },
+            "invocation_id": {
               "anyOf": [
                 {
                   "type": "string"
@@ -185,12 +207,7 @@
                 }
               ],
               "default": null,
-              "title": "Algorithm Runner Version"
-            },
-            "attempt_count": {
-              "minimum": 0,
-              "title": "Attempt Count",
-              "type": "integer"
+              "title": "Invocation Id"
             },
             "capability_id": {
               "anyOf": [
@@ -216,31 +233,6 @@
               "default": null,
               "title": "Capability Version"
             },
-            "input_identity": {
-              "title": "Input Identity",
-              "type": "string"
-            },
-            "invocation_id": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "title": "Invocation Id"
-            },
-            "job_id": {
-              "title": "Job Id",
-              "type": "string"
-            },
-            "lease_epoch": {
-              "minimum": 0,
-              "title": "Lease Epoch",
-              "type": "integer"
-            },
             "preprocessing_recipe_digest": {
               "anyOf": [
                 {
@@ -253,9 +245,17 @@
               "default": null,
               "title": "Preprocessing Recipe Digest"
             },
-            "spec_digest": {
-              "title": "Spec Digest",
-              "type": "string"
+            "algorithm_runner_version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Algorithm Runner Version"
             }
           },
           "required": [
@@ -270,8 +270,46 @@
         },
         "Diagnostics": {
           "additionalProperties": false,
-          "description": "\u5bf9\u6a21\u578b\u5b89\u5168\u7684\u6267\u884c\u8bca\u65ad\uff1b\u4e0d\u5141\u8bb8\u628a\u539f\u59cb\u5806\u6808\u6216\u6587\u4ef6\u6b63\u6587\u653e\u8fdb\u6765\u3002",
+          "description": "对模型安全的执行诊断；不允许把原始堆栈或文件正文放进来。",
           "properties": {
+            "summary": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Summary"
+            },
+            "sample_count": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Sample Count"
+            },
+            "variable_count": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Variable Count"
+            },
             "assumptions_checked": {
               "items": {
                 "type": "string"
@@ -316,44 +354,6 @@
               ],
               "default": null,
               "title": "Safe Error Code"
-            },
-            "sample_count": {
-              "anyOf": [
-                {
-                  "minimum": 0,
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "title": "Sample Count"
-            },
-            "summary": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "title": "Summary"
-            },
-            "variable_count": {
-              "anyOf": [
-                {
-                  "minimum": 0,
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "title": "Variable Count"
             }
           },
           "title": "Diagnostics",
@@ -361,19 +361,19 @@
         },
         "GraphEdge": {
           "additionalProperties": false,
-          "description": "\u6807\u51c6\u5316\u56fe\u4e2d\u7684\u4e00\u6761\u6709\u5411\u6216\u90e8\u5206\u5b9a\u5411\u8fb9\u3002",
+          "description": "标准化图中的一条有向或部分定向边。",
           "properties": {
-            "edge_type": {
-              "default": "directed",
-              "title": "Edge Type",
-              "type": "string"
-            },
             "source": {
               "title": "Source",
               "type": "string"
             },
             "target": {
               "title": "Target",
+              "type": "string"
+            },
+            "edge_type": {
+              "default": "directed",
+              "title": "Edge Type",
               "type": "string"
             },
             "weight": {
@@ -397,7 +397,7 @@
           "type": "object"
         },
         "SafeErrorCode": {
-          "description": "\u9996\u7248\u5141\u8bb8\u8de8\u8fb9\u754c\u4f20\u8f93\u7684\u3001\u65e0\u654f\u611f\u7ec6\u8282\u7684\u9519\u8bef\u7801\u3002",
+          "description": "首版允许跨边界传输的、无敏感细节的错误码。",
           "enum": [
             "USER_INPUT_FILE_MISSING",
             "USER_INPUT_SCHEMA_AMBIGUOUS",
@@ -423,7 +423,7 @@
         },
         "SafeWarning": {
           "additionalProperties": false,
-          "description": "\u53ef\u8fdb\u5165 State/\u62a5\u544a\u7684\u53d7\u63a7 warning\u3002",
+          "description": "可进入 State/报告的受控 warning。",
           "properties": {
             "code": {
               "anyOf": [
@@ -450,15 +450,8 @@
         },
         "StandardizedGraph": {
           "additionalProperties": false,
-          "description": "Adapter \u8f93\u51fa\u7684\u6700\u5c0f\u7edf\u4e00\u56fe\u5916\u58f3\u3002\n\n\u5177\u4f53\u7b97\u6cd5\u53ef\u4ee5\u5728 diagnostics \u4e2d\u4fdd\u7559\u989d\u5916\u8bf4\u660e\uff0c\u4f46\u4e3b\u56fe\u7684\u8282\u70b9\u3001\u8fb9\u548c\u8bed\u4e49\n\u5fc5\u987b\u7ecf\u8fc7 Adapter \u7684\u786c\u5951\u7ea6\u6821\u9a8c\u540e\u624d\u80fd\u8fdb\u5165 ``AlgorithmResult``\u3002",
+          "description": "Adapter 输出的最小统一图外壳。\n\n具体算法可以在 diagnostics 中保留额外说明，但主图的节点、边和语义\n必须经过 Adapter 的硬契约校验后才能进入 ``AlgorithmResult``。",
           "properties": {
-            "edges": {
-              "items": {
-                "$ref": "#/$defs/GraphEdge"
-              },
-              "title": "Edges",
-              "type": "array"
-            },
             "graph_semantics": {
               "title": "Graph Semantics",
               "type": "string"
@@ -468,6 +461,13 @@
                 "type": "string"
               },
               "title": "Nodes",
+              "type": "array"
+            },
+            "edges": {
+              "items": {
+                "$ref": "#/$defs/GraphEdge"
+              },
+              "title": "Edges",
               "type": "array"
             }
           },
@@ -479,8 +479,20 @@
         }
       },
       "additionalProperties": false,
-      "description": "Adapter \u5bf9\u5916\u53d1\u5e03\u7684\u7edf\u4e00\u7b97\u6cd5\u7ed3\u679c\u3002",
+      "description": "Adapter 对外发布的统一算法结果。",
       "properties": {
+        "result_ref": {
+          "title": "Result Ref",
+          "type": "string"
+        },
+        "invocation_id": {
+          "title": "Invocation Id",
+          "type": "string"
+        },
+        "provider_call_id": {
+          "title": "Provider Call Id",
+          "type": "string"
+        },
         "capability_id": {
           "title": "Capability Id",
           "type": "string"
@@ -489,8 +501,28 @@
           "title": "Capability Version",
           "type": "string"
         },
-        "diagnostics": {
-          "$ref": "#/$defs/Diagnostics"
+        "status": {
+          "enum": [
+            "valid",
+            "invalid_input",
+            "not_applicable",
+            "not_ready",
+            "execution_failed",
+            "timed_out"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "standardized_graph": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StandardizedGraph"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "graph_semantics": {
           "anyOf": [
@@ -504,7 +536,7 @@
           "default": null,
           "title": "Graph Semantics"
         },
-        "input_identity": {
+        "summary": {
           "anyOf": [
             {
               "type": "string"
@@ -514,18 +546,17 @@
             }
           ],
           "default": null,
-          "title": "Input Identity"
+          "title": "Summary"
         },
-        "invocation_id": {
-          "title": "Invocation Id",
-          "type": "string"
+        "diagnostics": {
+          "$ref": "#/$defs/Diagnostics"
         },
-        "provenance": {
-          "$ref": "#/$defs/AlgorithmResultProvenance"
-        },
-        "provider_call_id": {
-          "title": "Provider Call Id",
-          "type": "string"
+        "warnings": {
+          "items": {
+            "$ref": "#/$defs/SafeWarning"
+          },
+          "title": "Warnings",
+          "type": "array"
         },
         "raw_result_ref": {
           "anyOf": [
@@ -538,18 +569,6 @@
           ],
           "default": null,
           "title": "Raw Result Ref"
-        },
-        "raw_result_serialization_version": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Raw Result Serialization Version"
         },
         "raw_result_sha256": {
           "anyOf": [
@@ -576,34 +595,7 @@
           "default": null,
           "title": "Raw Result Size Bytes"
         },
-        "result_ref": {
-          "title": "Result Ref",
-          "type": "string"
-        },
-        "standardized_graph": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/StandardizedGraph"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "status": {
-          "enum": [
-            "valid",
-            "invalid_input",
-            "not_applicable",
-            "not_ready",
-            "execution_failed",
-            "timed_out"
-          ],
-          "title": "Status",
-          "type": "string"
-        },
-        "summary": {
+        "raw_result_serialization_version": {
           "anyOf": [
             {
               "type": "string"
@@ -613,14 +605,22 @@
             }
           ],
           "default": null,
-          "title": "Summary"
+          "title": "Raw Result Serialization Version"
         },
-        "warnings": {
-          "items": {
-            "$ref": "#/$defs/SafeWarning"
-          },
-          "title": "Warnings",
-          "type": "array"
+        "input_identity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Identity"
+        },
+        "provenance": {
+          "$ref": "#/$defs/AlgorithmResultProvenance"
         }
       },
       "required": [
@@ -637,9 +637,31 @@
     },
     "AlgorithmResultProvenance": {
       "additionalProperties": false,
-      "description": "\u7ed3\u679c\u5f52\u5c5e\u3001\u8f93\u5165\u8eab\u4efd\u548c spec \u7248\u672c\u7684\u53ef\u4fe1\u8bc1\u660e\u5b57\u6bb5\u3002",
+      "description": "结果归属、输入身份和 spec 版本的可信证明字段。",
       "properties": {
-        "algorithm_runner_version": {
+        "job_id": {
+          "title": "Job Id",
+          "type": "string"
+        },
+        "attempt_count": {
+          "minimum": 0,
+          "title": "Attempt Count",
+          "type": "integer"
+        },
+        "lease_epoch": {
+          "minimum": 0,
+          "title": "Lease Epoch",
+          "type": "integer"
+        },
+        "input_identity": {
+          "title": "Input Identity",
+          "type": "string"
+        },
+        "spec_digest": {
+          "title": "Spec Digest",
+          "type": "string"
+        },
+        "invocation_id": {
           "anyOf": [
             {
               "type": "string"
@@ -649,12 +671,7 @@
             }
           ],
           "default": null,
-          "title": "Algorithm Runner Version"
-        },
-        "attempt_count": {
-          "minimum": 0,
-          "title": "Attempt Count",
-          "type": "integer"
+          "title": "Invocation Id"
         },
         "capability_id": {
           "anyOf": [
@@ -680,31 +697,6 @@
           "default": null,
           "title": "Capability Version"
         },
-        "input_identity": {
-          "title": "Input Identity",
-          "type": "string"
-        },
-        "invocation_id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Invocation Id"
-        },
-        "job_id": {
-          "title": "Job Id",
-          "type": "string"
-        },
-        "lease_epoch": {
-          "minimum": 0,
-          "title": "Lease Epoch",
-          "type": "integer"
-        },
         "preprocessing_recipe_digest": {
           "anyOf": [
             {
@@ -717,9 +709,17 @@
           "default": null,
           "title": "Preprocessing Recipe Digest"
         },
-        "spec_digest": {
-          "title": "Spec Digest",
-          "type": "string"
+        "algorithm_runner_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Algorithm Runner Version"
         }
       },
       "required": [
@@ -734,15 +734,12 @@
     },
     "DataProfile": {
       "additionalProperties": false,
-      "description": "\u5916\u5c42\u51c6\u5165\u9636\u6bb5\u751f\u6210\u3001\u4f9b Agent \u9009\u62e9\u7b97\u6cd5\u4f7f\u7528\u7684\u6570\u636e\u753b\u50cf\u3002",
+      "description": "外层准入阶段生成、供 Agent 选择算法使用的数据画像。",
       "properties": {
-        "categorical_columns": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "title": "Categorical Columns",
-          "type": "array"
+        "row_count": {
+          "minimum": 0,
+          "title": "Row Count",
+          "type": "integer"
         },
         "column_count": {
           "minimum": 0,
@@ -765,10 +762,13 @@
           "title": "Numeric Columns",
           "type": "array"
         },
-        "row_count": {
-          "minimum": 0,
-          "title": "Row Count",
-          "type": "integer"
+        "categorical_columns": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Categorical Columns",
+          "type": "array"
         }
       },
       "required": [
@@ -781,7 +781,7 @@
     "Diagnostics": {
       "$defs": {
         "SafeErrorCode": {
-          "description": "\u9996\u7248\u5141\u8bb8\u8de8\u8fb9\u754c\u4f20\u8f93\u7684\u3001\u65e0\u654f\u611f\u7ec6\u8282\u7684\u9519\u8bef\u7801\u3002",
+          "description": "首版允许跨边界传输的、无敏感细节的错误码。",
           "enum": [
             "USER_INPUT_FILE_MISSING",
             "USER_INPUT_SCHEMA_AMBIGUOUS",
@@ -807,8 +807,46 @@
         }
       },
       "additionalProperties": false,
-      "description": "\u5bf9\u6a21\u578b\u5b89\u5168\u7684\u6267\u884c\u8bca\u65ad\uff1b\u4e0d\u5141\u8bb8\u628a\u539f\u59cb\u5806\u6808\u6216\u6587\u4ef6\u6b63\u6587\u653e\u8fdb\u6765\u3002",
+      "description": "对模型安全的执行诊断；不允许把原始堆栈或文件正文放进来。",
       "properties": {
+        "summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary"
+        },
+        "sample_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sample Count"
+        },
+        "variable_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Variable Count"
+        },
         "assumptions_checked": {
           "items": {
             "type": "string"
@@ -853,44 +891,6 @@
           ],
           "default": null,
           "title": "Safe Error Code"
-        },
-        "sample_count": {
-          "anyOf": [
-            {
-              "minimum": 0,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Sample Count"
-        },
-        "summary": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Summary"
-        },
-        "variable_count": {
-          "anyOf": [
-            {
-              "minimum": 0,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Variable Count"
         }
       },
       "title": "Diagnostics",
@@ -898,21 +898,13 @@
     },
     "EvidenceResult": {
       "additionalProperties": false,
-      "description": "RAG evidence \u7684\u4e0d\u53ef\u53d8 State \u8bb0\u5f55\u3002",
+      "description": "RAG evidence 的不可变 State 记录。",
       "properties": {
-        "degradation_flags": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "title": "Degradation Flags",
-          "type": "array"
-        },
         "evidence_ref": {
           "title": "Evidence Ref",
           "type": "string"
         },
-        "locator": {
+        "evidence_id": {
           "anyOf": [
             {
               "type": "string"
@@ -922,31 +914,7 @@
             }
           ],
           "default": null,
-          "title": "Locator"
-        },
-        "release_id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Release Id"
-        },
-        "score": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Score"
+          "title": "Evidence Id"
         },
         "snippet": {
           "title": "Snippet",
@@ -975,6 +943,110 @@
           ],
           "default": null,
           "title": "Source Url"
+        },
+        "locator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locator"
+        },
+        "modality": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modality"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        },
+        "dense_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dense Score"
+        },
+        "sparse_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sparse Score"
+        },
+        "rerank_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rerank Score"
+        },
+        "sufficiency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sufficiency"
+        },
+        "release_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Release Id"
+        },
+        "degradation_flags": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Degradation Flags",
+          "type": "array"
         }
       },
       "required": [
@@ -989,6 +1061,10 @@
         "ResultAssessment": {
           "additionalProperties": false,
           "properties": {
+            "result_ref": {
+              "title": "Result Ref",
+              "type": "string"
+            },
             "disposition": {
               "enum": [
                 "primary",
@@ -1000,10 +1076,6 @@
             },
             "rationale": {
               "title": "Rationale",
-              "type": "string"
-            },
-            "result_ref": {
-              "title": "Result Ref",
               "type": "string"
             }
           },
@@ -1018,6 +1090,10 @@
         "RevisionProposal": {
           "additionalProperties": false,
           "properties": {
+            "result_ref": {
+              "title": "Result Ref",
+              "type": "string"
+            },
             "action": {
               "enum": [
                 "retain",
@@ -1029,6 +1105,10 @@
               "title": "Action",
               "type": "string"
             },
+            "rationale": {
+              "title": "Rationale",
+              "type": "string"
+            },
             "evidence_refs": {
               "default": [],
               "items": {
@@ -1036,14 +1116,6 @@
               },
               "title": "Evidence Refs",
               "type": "array"
-            },
-            "rationale": {
-              "title": "Rationale",
-              "type": "string"
-            },
-            "result_ref": {
-              "title": "Result Ref",
-              "type": "string"
             }
           },
           "required": [
@@ -1061,18 +1133,6 @@
               "title": "Conflict Id",
               "type": "string"
             },
-            "resolution": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "title": "Resolution"
-            },
             "result_refs": {
               "default": [],
               "items": {
@@ -1084,6 +1144,18 @@
             "summary": {
               "title": "Summary",
               "type": "string"
+            },
+            "resolution": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Resolution"
             }
           },
           "required": [
@@ -1095,40 +1167,8 @@
         }
       },
       "additionalProperties": false,
-      "description": "ToolStrategy \u7684\u9759\u6001\u7ec8\u6001\u5951\u7ea6\uff1b\u52a8\u6001\u5f52\u5c5e\u7531\u540e\u7eed FinalizationGate \u6821\u9a8c\u3002",
+      "description": "ToolStrategy 的静态终态契约；动态归属由后续 FinalizationGate 校验。",
       "properties": {
-        "confidence": {
-          "enum": [
-            "low",
-            "medium",
-            "high"
-          ],
-          "title": "Confidence",
-          "type": "string"
-        },
-        "confidence_basis": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Confidence Basis",
-          "type": "array"
-        },
-        "conflict_status": {
-          "enum": [
-            "none",
-            "resolved",
-            "unresolved"
-          ],
-          "title": "Conflict Status",
-          "type": "string"
-        },
-        "conflicts": {
-          "items": {
-            "$ref": "#/$defs/ScientificConflict"
-          },
-          "title": "Conflicts",
-          "type": "array"
-        },
         "outcome": {
           "enum": [
             "evidence_only",
@@ -1157,6 +1197,22 @@
           "title": "Result Assessments",
           "type": "array"
         },
+        "conflict_status": {
+          "enum": [
+            "none",
+            "resolved",
+            "unresolved"
+          ],
+          "title": "Conflict Status",
+          "type": "string"
+        },
+        "conflicts": {
+          "items": {
+            "$ref": "#/$defs/ScientificConflict"
+          },
+          "title": "Conflicts",
+          "type": "array"
+        },
         "revision_proposals": {
           "items": {
             "$ref": "#/$defs/RevisionProposal"
@@ -1167,6 +1223,22 @@
         "selection_rationale": {
           "title": "Selection Rationale",
           "type": "string"
+        },
+        "confidence": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Confidence",
+          "type": "string"
+        },
+        "confidence_basis": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Confidence Basis",
+          "type": "array"
         }
       },
       "required": [
@@ -1180,19 +1252,19 @@
     },
     "GraphEdge": {
       "additionalProperties": false,
-      "description": "\u6807\u51c6\u5316\u56fe\u4e2d\u7684\u4e00\u6761\u6709\u5411\u6216\u90e8\u5206\u5b9a\u5411\u8fb9\u3002",
+      "description": "标准化图中的一条有向或部分定向边。",
       "properties": {
-        "edge_type": {
-          "default": "directed",
-          "title": "Edge Type",
-          "type": "string"
-        },
         "source": {
           "title": "Source",
           "type": "string"
         },
         "target": {
           "title": "Target",
+          "type": "string"
+        },
+        "edge_type": {
+          "default": "directed",
+          "title": "Edge Type",
           "type": "string"
         },
         "weight": {
@@ -1219,8 +1291,45 @@
       "$defs": {
         "ActionAttempt": {
           "additionalProperties": false,
-          "description": "\u4e00\u6b21\u5b9e\u9645\u6267\u884c attempt \u7684\u5355\u8c03 revision \u5feb\u7167\u3002",
+          "description": "一次实际执行 attempt 的单调 revision 快照。",
           "properties": {
+            "retry_ordinal": {
+              "minimum": 0,
+              "title": "Retry Ordinal",
+              "type": "integer"
+            },
+            "revision": {
+              "minimum": 0,
+              "title": "Revision",
+              "type": "integer"
+            },
+            "status": {
+              "enum": [
+                "queued",
+                "running",
+                "succeeded",
+                "failed",
+                "timed_out",
+                "not_ready",
+                "canceled",
+                "discarded"
+              ],
+              "title": "Status",
+              "type": "string"
+            },
+            "started_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Started At"
+            },
             "finished_at": {
               "anyOf": [
                 {
@@ -1233,16 +1342,6 @@
               ],
               "default": null,
               "title": "Finished At"
-            },
-            "retry_ordinal": {
-              "minimum": 0,
-              "title": "Retry Ordinal",
-              "type": "integer"
-            },
-            "revision": {
-              "minimum": 0,
-              "title": "Revision",
-              "type": "integer"
             },
             "safe_error_code": {
               "anyOf": [
@@ -1258,33 +1357,6 @@
               ],
               "default": null,
               "title": "Safe Error Code"
-            },
-            "started_at": {
-              "anyOf": [
-                {
-                  "format": "date-time",
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": null,
-              "title": "Started At"
-            },
-            "status": {
-              "enum": [
-                "queued",
-                "running",
-                "succeeded",
-                "failed",
-                "timed_out",
-                "not_ready",
-                "canceled",
-                "discarded"
-              ],
-              "title": "Status",
-              "type": "string"
             }
           },
           "required": [
@@ -1296,7 +1368,7 @@
           "type": "object"
         },
         "SafeErrorCode": {
-          "description": "\u9996\u7248\u5141\u8bb8\u8de8\u8fb9\u754c\u4f20\u8f93\u7684\u3001\u65e0\u654f\u611f\u7ec6\u8282\u7684\u9519\u8bef\u7801\u3002",
+          "description": "首版允许跨边界传输的、无敏感细节的错误码。",
           "enum": [
             "USER_INPUT_FILE_MISSING",
             "USER_INPUT_SCHEMA_AMBIGUOUS",
@@ -1322,14 +1394,55 @@
         }
       },
       "additionalProperties": false,
-      "description": "\u4e00\u4e2a\u903b\u8f91 function call \u53ca\u5176\u5168\u90e8 retry/revision \u5386\u53f2\u3002",
+      "description": "一个逻辑 function call 及其全部 retry/revision 历史。",
       "properties": {
-        "attempts": {
-          "additionalProperties": {
-            "$ref": "#/$defs/ActionAttempt"
-          },
-          "title": "Attempts",
-          "type": "object"
+        "invocation_id": {
+          "title": "Invocation Id",
+          "type": "string"
+        },
+        "response_identity": {
+          "title": "Response Identity",
+          "type": "string"
+        },
+        "response_identity_source": {
+          "enum": [
+            "provider_response_id",
+            "message_execution_id"
+          ],
+          "title": "Response Identity Source",
+          "type": "string"
+        },
+        "provider_response_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider Response Id"
+        },
+        "provider_item_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider Item Id"
+        },
+        "provider_call_id": {
+          "title": "Provider Call Id",
+          "type": "string"
+        },
+        "tool_name": {
+          "title": "Tool Name",
+          "type": "string"
         },
         "final_status": {
           "enum": [
@@ -1344,50 +1457,6 @@
           "title": "Final Status",
           "type": "string"
         },
-        "invocation_id": {
-          "title": "Invocation Id",
-          "type": "string"
-        },
-        "provider_call_id": {
-          "title": "Provider Call Id",
-          "type": "string"
-        },
-        "provider_item_id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Provider Item Id"
-        },
-        "provider_response_id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Provider Response Id"
-        },
-        "response_identity": {
-          "title": "Response Identity",
-          "type": "string"
-        },
-        "response_identity_source": {
-          "enum": [
-            "provider_response_id",
-            "message_execution_id"
-          ],
-          "title": "Response Identity Source",
-          "type": "string"
-        },
         "result_ref": {
           "anyOf": [
             {
@@ -1400,9 +1469,12 @@
           "default": null,
           "title": "Result Ref"
         },
-        "tool_name": {
-          "title": "Tool Name",
-          "type": "string"
+        "attempts": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ActionAttempt"
+          },
+          "title": "Attempts",
+          "type": "object"
         }
       },
       "required": [
@@ -1418,43 +1490,15 @@
     },
     "McpInvocationContext": {
       "additionalProperties": false,
-      "description": "worker \u6ce8\u5165\u3001MCP \u9a8c\u7b7e\u5e76\u518d\u6b21\u67e5\u5e93\u7684\u53ef\u4fe1\u8c03\u7528\u4e0a\u4e0b\u6587\u3002",
+      "description": "worker 注入、MCP 验签并再次查库的可信调用上下文。",
       "properties": {
-        "attempt_count": {
-          "minimum": 0,
-          "title": "Attempt Count",
-          "type": "integer"
-        },
-        "expires_at": {
-          "format": "date-time",
-          "title": "Expires At",
-          "type": "string"
-        },
-        "input_snapshot_digest": {
-          "title": "Input Snapshot Digest",
-          "type": "string"
-        },
         "invocation_id": {
           "title": "Invocation Id",
-          "type": "string"
-        },
-        "issued_at": {
-          "format": "date-time",
-          "title": "Issued At",
           "type": "string"
         },
         "job_id": {
           "title": "Job Id",
           "type": "string"
-        },
-        "key_id": {
-          "title": "Key Id",
-          "type": "string"
-        },
-        "lease_epoch": {
-          "minimum": 0,
-          "title": "Lease Epoch",
-          "type": "integer"
         },
         "session_id": {
           "title": "Session Id",
@@ -1465,8 +1509,36 @@
           "title": "User Id",
           "type": "integer"
         },
+        "attempt_count": {
+          "minimum": 0,
+          "title": "Attempt Count",
+          "type": "integer"
+        },
+        "lease_epoch": {
+          "minimum": 0,
+          "title": "Lease Epoch",
+          "type": "integer"
+        },
         "worker_id": {
           "title": "Worker Id",
+          "type": "string"
+        },
+        "input_snapshot_digest": {
+          "title": "Input Snapshot Digest",
+          "type": "string"
+        },
+        "issued_at": {
+          "format": "date-time",
+          "title": "Issued At",
+          "type": "string"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "key_id": {
+          "title": "Key Id",
           "type": "string"
         }
       },
@@ -1488,14 +1560,10 @@
     },
     "RawResultMetadata": {
       "additionalProperties": false,
-      "description": "canonical raw JSON \u7684\u53ef\u5ba1\u8ba1\u5143\u6570\u636e\u3002",
+      "description": "canonical raw JSON 的可审计元数据。",
       "properties": {
         "raw_result_ref": {
           "title": "Raw Result Ref",
-          "type": "string"
-        },
-        "raw_result_serialization_version": {
-          "title": "Raw Result Serialization Version",
           "type": "string"
         },
         "raw_result_sha256": {
@@ -1506,6 +1574,10 @@
           "minimum": 0,
           "title": "Raw Result Size Bytes",
           "type": "integer"
+        },
+        "raw_result_serialization_version": {
+          "title": "Raw Result Serialization Version",
+          "type": "string"
         }
       },
       "required": [
@@ -1520,6 +1592,10 @@
     "ResultAssessment": {
       "additionalProperties": false,
       "properties": {
+        "result_ref": {
+          "title": "Result Ref",
+          "type": "string"
+        },
         "disposition": {
           "enum": [
             "primary",
@@ -1531,10 +1607,6 @@
         },
         "rationale": {
           "title": "Rationale",
-          "type": "string"
-        },
-        "result_ref": {
-          "title": "Result Ref",
           "type": "string"
         }
       },
@@ -1549,6 +1621,10 @@
     "RevisionProposal": {
       "additionalProperties": false,
       "properties": {
+        "result_ref": {
+          "title": "Result Ref",
+          "type": "string"
+        },
         "action": {
           "enum": [
             "retain",
@@ -1560,6 +1636,10 @@
           "title": "Action",
           "type": "string"
         },
+        "rationale": {
+          "title": "Rationale",
+          "type": "string"
+        },
         "evidence_refs": {
           "default": [],
           "items": {
@@ -1567,14 +1647,6 @@
           },
           "title": "Evidence Refs",
           "type": "array"
-        },
-        "rationale": {
-          "title": "Rationale",
-          "type": "string"
-        },
-        "result_ref": {
-          "title": "Result Ref",
-          "type": "string"
         }
       },
       "required": [
@@ -1588,7 +1660,7 @@
     "SafeWarning": {
       "$defs": {
         "SafeErrorCode": {
-          "description": "\u9996\u7248\u5141\u8bb8\u8de8\u8fb9\u754c\u4f20\u8f93\u7684\u3001\u65e0\u654f\u611f\u7ec6\u8282\u7684\u9519\u8bef\u7801\u3002",
+          "description": "首版允许跨边界传输的、无敏感细节的错误码。",
           "enum": [
             "USER_INPUT_FILE_MISSING",
             "USER_INPUT_SCHEMA_AMBIGUOUS",
@@ -1614,7 +1686,7 @@
         }
       },
       "additionalProperties": false,
-      "description": "\u53ef\u8fdb\u5165 State/\u62a5\u544a\u7684\u53d7\u63a7 warning\u3002",
+      "description": "可进入 State/报告的受控 warning。",
       "properties": {
         "code": {
           "anyOf": [
@@ -1646,18 +1718,6 @@
           "title": "Conflict Id",
           "type": "string"
         },
-        "resolution": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Resolution"
-        },
         "result_refs": {
           "default": [],
           "items": {
@@ -1669,6 +1729,18 @@
         "summary": {
           "title": "Summary",
           "type": "string"
+        },
+        "resolution": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resolution"
         }
       },
       "required": [
@@ -1682,19 +1754,19 @@
       "$defs": {
         "GraphEdge": {
           "additionalProperties": false,
-          "description": "\u6807\u51c6\u5316\u56fe\u4e2d\u7684\u4e00\u6761\u6709\u5411\u6216\u90e8\u5206\u5b9a\u5411\u8fb9\u3002",
+          "description": "标准化图中的一条有向或部分定向边。",
           "properties": {
-            "edge_type": {
-              "default": "directed",
-              "title": "Edge Type",
-              "type": "string"
-            },
             "source": {
               "title": "Source",
               "type": "string"
             },
             "target": {
               "title": "Target",
+              "type": "string"
+            },
+            "edge_type": {
+              "default": "directed",
+              "title": "Edge Type",
               "type": "string"
             },
             "weight": {
@@ -1719,15 +1791,8 @@
         }
       },
       "additionalProperties": false,
-      "description": "Adapter \u8f93\u51fa\u7684\u6700\u5c0f\u7edf\u4e00\u56fe\u5916\u58f3\u3002\n\n\u5177\u4f53\u7b97\u6cd5\u53ef\u4ee5\u5728 diagnostics \u4e2d\u4fdd\u7559\u989d\u5916\u8bf4\u660e\uff0c\u4f46\u4e3b\u56fe\u7684\u8282\u70b9\u3001\u8fb9\u548c\u8bed\u4e49\n\u5fc5\u987b\u7ecf\u8fc7 Adapter \u7684\u786c\u5951\u7ea6\u6821\u9a8c\u540e\u624d\u80fd\u8fdb\u5165 ``AlgorithmResult``\u3002",
+      "description": "Adapter 输出的最小统一图外壳。\n\n具体算法可以在 diagnostics 中保留额外说明，但主图的节点、边和语义\n必须经过 Adapter 的硬契约校验后才能进入 ``AlgorithmResult``。",
       "properties": {
-        "edges": {
-          "items": {
-            "$ref": "#/$defs/GraphEdge"
-          },
-          "title": "Edges",
-          "type": "array"
-        },
         "graph_semantics": {
           "title": "Graph Semantics",
           "type": "string"
@@ -1737,6 +1802,13 @@
             "type": "string"
           },
           "title": "Nodes",
+          "type": "array"
+        },
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/GraphEdge"
+          },
+          "title": "Edges",
           "type": "array"
         }
       },
@@ -1748,26 +1820,13 @@
     },
     "WebEvidenceResult": {
       "additionalProperties": false,
-      "description": "Web evidence \u5728\u901a\u7528\u8bc1\u636e\u5916\u589e\u52a0 provider \u72b6\u6001\u548c\u6293\u53d6\u65f6\u95f4\u3002",
+      "description": "Web evidence 在通用证据外增加 provider 状态和抓取时间。",
       "properties": {
-        "degradation_flags": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "title": "Degradation Flags",
-          "type": "array"
-        },
         "evidence_ref": {
           "title": "Evidence Ref",
           "type": "string"
         },
-        "fetched_at": {
-          "format": "date-time",
-          "title": "Fetched At",
-          "type": "string"
-        },
-        "locator": {
+        "evidence_id": {
           "anyOf": [
             {
               "type": "string"
@@ -1777,35 +1836,7 @@
             }
           ],
           "default": null,
-          "title": "Locator"
-        },
-        "provider_status": {
-          "title": "Provider Status",
-          "type": "string"
-        },
-        "release_id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Release Id"
-        },
-        "score": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Score"
+          "title": "Evidence Id"
         },
         "snippet": {
           "title": "Snippet",
@@ -1834,6 +1865,119 @@
           ],
           "default": null,
           "title": "Source Url"
+        },
+        "locator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locator"
+        },
+        "modality": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modality"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        },
+        "dense_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dense Score"
+        },
+        "sparse_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sparse Score"
+        },
+        "rerank_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rerank Score"
+        },
+        "sufficiency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sufficiency"
+        },
+        "release_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Release Id"
+        },
+        "degradation_flags": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Degradation Flags",
+          "type": "array"
+        },
+        "provider_status": {
+          "title": "Provider Status",
+          "type": "string"
+        },
+        "fetched_at": {
+          "format": "date-time",
+          "title": "Fetched At",
+          "type": "string"
         }
       },
       "required": [
@@ -1852,11 +1996,11 @@
       "capability_id": "causal.direct_lingam",
       "spec_digest": "718ac64c3efe7790b5bda8a2b700e850cfa554500ad11a095d8fba9450898915",
       "tool": {
-        "description": "\u5728\u8fde\u7eed\u6570\u503c\u6570\u636e\u4e0a\u4f7f\u7528 DirectLiNGAM \u4f30\u8ba1\u6709\u5411\u65e0\u73af\u56e0\u679c\u7ed3\u6784\u3002\u9002\u7528\u4e8e\u7ebf\u6027\u3001\u975e\u9ad8\u65af\u3001\u8bef\u5dee\u72ec\u7acb\u4e14\u6ca1\u6709\u6f5c\u5728\u6df7\u6742\u7684\u573a\u666f\u3002",
         "name": "causal_direct_lingam",
+        "description": "在连续数值数据上使用 DirectLiNGAM 估计有向无环因果结构。适用于线性、非高斯、误差独立且没有潜在混杂的场景。",
         "parameters": {
           "additionalProperties": false,
-          "description": "DirectLiNGAM \u5f53\u524d\u6ca1\u6709\u53ef\u7531\u6a21\u578b\u6539\u53d8\u7684\u516c\u5f00\u53c2\u6570\u3002",
+          "description": "DirectLiNGAM 当前没有可由模型改变的公开参数。",
           "properties": {},
           "title": "CausalDirectLiNGAMInput",
           "type": "object"
@@ -1867,11 +2011,11 @@
       "capability_id": "causal.olc",
       "spec_digest": "d3e6d8dff2d8ebfea6e4e3c293a2f69f914a7926fb508c12d1f0176208fbf257",
       "tool": {
-        "description": "\u5728\u8fde\u7eed\u8868\u683c\u6570\u636e\u4e0a\u4f7f\u7528 OLC \u5904\u7406\u53ef\u80fd\u5b58\u5728\u6f5c\u5728\u6df7\u6742\u7684\u56e0\u679c\u53d1\u73b0\u3002\u5b83\u4e0d\u9002\u7528\u4e8e\u79bb\u6563\u53d8\u91cf\u3001\u975e\u5e38\u5c0f\u7684\u6837\u672c\u6216\u53ef\u4ee5\u660e\u786e\u6392\u9664\u6f5c\u5728\u6df7\u6742\u7684\u573a\u666f\u3002",
         "name": "causal_olc",
+        "description": "在连续表格数据上使用 OLC 处理可能存在潜在混杂的因果发现。它不适用于离散变量、非常小的样本或可以明确排除潜在混杂的场景。",
         "parameters": {
           "additionalProperties": false,
-          "description": "OLC \u7684\u6a21\u578b\u53ef\u89c1\u663e\u8457\u6027\u53c2\u6570\u3002",
+          "description": "OLC 的模型可见显著性参数。",
           "properties": {
             "alpha": {
               "default": 0.05,
@@ -1897,11 +2041,11 @@
       "capability_id": "causal.pc",
       "spec_digest": "2be84a02ec63d244fbc0533f130fdf5c3f7ea1f43364414d9a3bb8d4c56036db",
       "tool": {
-        "description": "\u5728\u8868\u683c\u6570\u636e\u4e0a\u4f7f\u7528 PC \u65b9\u6cd5\u53d1\u73b0\u6761\u4ef6\u72ec\u7acb\u7ed3\u6784\u5e76\u751f\u6210\u90e8\u5206\u6709\u5411\u56fe\u3002\u9002\u7528\u4e8e\u4e00\u822c\u89c2\u6d4b\u56e0\u679c\u53d1\u73b0\uff1b\u9700\u8981\u6570\u503c\u6216\u53ef\u786e\u5b9a\u6027\u7f16\u7801\u7684\u8868\u683c\u6570\u636e\uff0c\u4e0d\u5e94\u5728\u660e\u663e\u5b58\u5728\u6f5c\u5728\u6df7\u6742\u4e14\u9700\u8981\u4e13\u95e8\u5904\u7406\u65f6\u4f5c\u4e3a\u552f\u4e00\u65b9\u6cd5\u3002",
         "name": "causal_pc",
+        "description": "在表格数据上使用 PC 方法发现条件独立结构并生成部分有向图。适用于一般观测因果发现；需要数值或可确定性编码的表格数据，不应在明显存在潜在混杂且需要专门处理时作为唯一方法。",
         "parameters": {
           "additionalProperties": false,
-          "description": "PC \u7684\u6a21\u578b\u53ef\u89c1\u79d1\u5b66\u53c2\u6570\uff1bJob/\u6587\u4ef6/lease \u4e0d\u5728\u6b64 schema \u4e2d\u3002",
+          "description": "PC 的模型可见科学参数；Job/文件/lease 不在此 schema 中。",
           "properties": {
             "alpha": {
               "default": 0.05,

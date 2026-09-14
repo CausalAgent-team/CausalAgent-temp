@@ -67,12 +67,33 @@ from .registry import (
     UnknownCapabilityError,
     build_default_registry,
 )
+from .dependency_planner import (
+    DependencyPlan,
+    DependencyPlanningError,
+    PlannedToolCall,
+    ToolCallRequest,
+    ToolExecutionOutcome,
+    build_dependency_plan,
+    execute_dependency_plan,
+)
+from .algorithm_tools import AlgorithmTool, build_algorithm_tools
+from .rag_evidence_tool import (
+    RagEvidenceQuery,
+    RagEvidenceTool,
+    build_default_rag_evidence_tool,
+)
+from .web_evidence_tool import (
+    WebEvidenceQuery,
+    WebEvidenceTool,
+    build_default_web_evidence_tool,
+)
 
 __all__ = [
     "ActionAttempt",
     "AlgorithmExecutionCommand",
     "AlgorithmExecutor",
     "AlgorithmExecutorError",
+    "AlgorithmTool",
     "AlgorithmRegistry",
     "AlgorithmResult",
     "AlgorithmResultProvenance",
@@ -85,6 +106,8 @@ __all__ = [
     "DataProfile",
     "DEFAULT_ALGORITHM_SPECS",
     "Diagnostics",
+    "DependencyPlan",
+    "DependencyPlanningError",
     "DIRECT_LINGAM_SPEC",
     "EvidenceResult",
     "FakeAlgorithmExecutor",
@@ -106,15 +129,27 @@ __all__ = [
     "SafeWarning",
     "ScientificConflict",
     "StandardizedGraph",
+    "PlannedToolCall",
+    "RagEvidenceQuery",
+    "RagEvidenceTool",
+    "ToolCallRequest",
+    "ToolExecutionOutcome",
+    "WebEvidenceQuery",
+    "WebEvidenceTool",
     "USER_INPUT_ERROR_CODES",
     "UnknownCapabilityError",
     "WebEvidenceResult",
     "build_default_registry",
+    "build_algorithm_tools",
+    "build_default_rag_evidence_tool",
+    "build_default_web_evidence_tool",
+    "build_dependency_plan",
     "build_invocation_id",
     "build_logical_call_key",
     "build_raw_result_metadata",
     "build_result_ref",
     "canonical_json_bytes",
+    "execute_dependency_plan",
     "canonical_mcp_context_payload",
     "is_server_output_error",
     "is_user_input_error",
@@ -125,4 +160,3 @@ __all__ = [
     "resolve_response_identity",
     "validate_executor_result",
 ]
-
