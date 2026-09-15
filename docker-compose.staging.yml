@@ -109,6 +109,46 @@ services:
       mysql-primary: {condition: service_healthy}
       postgres-checkpoint: {condition: service_healthy}
 
+  causal-mcp:
+    image: ${STAGING_MCP_IMAGE:?STAGING_MCP_IMAGE must be an immutable image digest}
+    command: python -m Agent.CausalAgentMCP.app
+    environment:
+      MYSQL_HOST: mysql-primary
+      MYSQL_WRITE_HOST: mysql-primary
+      MYSQL_READ_HOSTS: ""
+      MYSQL_PORT: "3306"
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-rag_eval_staging}
+      MYSQL_USER: ${MYSQL_USER:?MYSQL_USER is required}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+      MYSQL_WRITE_USER: ${MYSQL_WRITE_USER:?MYSQL_WRITE_USER is required}
+      MYSQL_WRITE_PASSWORD: ${MYSQL_WRITE_PASSWORD:?MYSQL_WRITE_PASSWORD is required}
+      MYSQL_READ_USER: ${MYSQL_READ_USER:?MYSQL_READ_USER is required}
+      MYSQL_READ_PASSWORD: ${MYSQL_READ_PASSWORD:?MYSQL_READ_PASSWORD is required}
+      CAUSAL_MCP_SERVICE_TOKEN: ${CAUSAL_MCP_SERVICE_TOKEN:?CAUSAL_MCP_SERVICE_TOKEN is required}
+      CAUSAL_MCP_SIGNING_KEY_CURRENT: ${CAUSAL_MCP_SIGNING_KEY_CURRENT:?CAUSAL_MCP_SIGNING_KEY_CURRENT is required}
+      CAUSAL_MCP_SIGNING_KEY_PREVIOUS: ${CAUSAL_MCP_SIGNING_KEY_PREVIOUS:-}
+      CAUSAL_MCP_SIGNING_KEY_ID: ${CAUSAL_MCP_SIGNING_KEY_ID:-current}
+      CAUSAL_MCP_PROCESS_WORKERS: ${CAUSAL_MCP_PROCESS_WORKERS:-2}
+      CAUSAL_MCP_QUEUE_CAPACITY: ${CAUSAL_MCP_QUEUE_CAPACITY:-4}
+      CAUSAL_MCP_ENQUEUE_TIMEOUT_SECONDS: ${CAUSAL_MCP_ENQUEUE_TIMEOUT_SECONDS:-5}
+      CAUSAL_MCP_ALGORITHM_DEADLINE_SECONDS: ${CAUSAL_MCP_ALGORITHM_DEADLINE_SECONDS:-600}
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    networks: [rag_eval_staging]
+    depends_on:
+      mysql-primary: {condition: service_healthy}
+      db-bootstrap: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+
   app:
     image: ${STAGING_APP_IMAGE:?STAGING_APP_IMAGE must be an immutable image digest}
     command: ["sh", "-c", "python scripts/staging_environment_guard.py && exec gunicorn --bind 0.0.0.0:5001 --workers 1 --threads 12 --timeout 120 CausalAgent:app"]
