@@ -6,6 +6,7 @@ import asyncio
 from typing import Any, AsyncIterator
 
 from langchain_core.messages import HumanMessage
+from langgraph.errors import NodeCancelledError
 from langgraph.types import Command
 
 from app.agent.checkpoint_recovery import checkpoint_identity
@@ -30,6 +31,15 @@ def _snapshot_interrupts(snapshot: Any) -> list[Any]:
         for task in (getattr(snapshot, "tasks", None) or ())
         for item in (getattr(task, "interrupts", None) or ())
     ]
+
+
+def _raise_wrapped_cancellation(error: BaseException) -> None:
+    """Restore worker cancellation semantics after LangGraph wraps node cancellation."""
+
+    if isinstance(error, NodeCancelledError) and isinstance(
+        error.__cause__, asyncio.CancelledError
+    ):
+        raise error.__cause__
 
 
 def _interrupt_id(interrupt_obj: Any) -> str:
@@ -296,6 +306,7 @@ async def ai_call_stream(
     except JobExecutionRevoked:
         raise
     except Exception as exc:
+        _raise_wrapped_cancellation(exc)
         if execution_guard is not None:
             await execution_guard.check_after_call()
         yield {
