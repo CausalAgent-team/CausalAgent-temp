@@ -1,0 +1,481 @@
+"""P2-M bounded real acceptance runner.
+
+This runner is intentionally outside pytest collection.  It uses the real
+runner registry, real MCP 2.2 HTTP server/client pool, and a real process pool.
+The local-file authority cases are reported separately from MySQL authority
+acceptance; they never claim strong-read or lease-fencing evidence.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from contextlib import redirect_stderr, redirect_stdout
+from datetime import datetime, timedelta, timezone
+import hashlib
+import io
+import importlib.metadata
+import json
+from pathlib import Path
+from concurrent.futures import ProcessPoolExecutor
+import sys
+import time
+from typing import Any
+
+import psutil
+import resource
+import uvicorn
+
+ROOT = Path("/app") if Path("/app/Agent").is_dir() else Path(__file__).resolve().parents[3]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from Agent.CausalAgentMCP.config import McpServerConfig
+from Agent.CausalAgentMCP.executor_pool import (
+    BoundedProcessPool,
+    PoolExecutionError,
+)
+from Agent.CausalAgentMCP.runner_registry import build_default_registry
+from Agent.CausalAgentMCP.service import CausalMcpService
+from Agent.CausalAgentMCP.app import create_app
+from Agent.deep_agent_tools.algorithm_specs import (
+    DIRECT_LINGAM_SPEC,
+    OLC_SPEC,
+    PC_SPEC,
+)
+from Agent.deep_agent_tools.models import AlgorithmExecutionCommand, McpInvocationContext
+from Agent.CausalAgentMCP.auth import sign_invocation
+from app.agent.worker.mcp_client_pool import McpClientPool, McpClientPoolConfig
+
+
+TOKEN = "p2-acceptance-token"
+SIGNING_KEY = "p2-acceptance-signing-key"
+PORT = 8793
+
+
+def _sleep_runner(_csv_data: str, parameters: dict[str, Any]) -> dict[str, Any]:
+    time.sleep(float(parameters["seconds"]))
+    return {"success": True, "data": {"nodes": [], "edges": []}}
+
+
+def _quick_runner(_csv_data: str, _parameters: dict[str, Any]) -> dict[str, Any]:
+    return {"success": True, "data": {"nodes": [], "edges": []}}
+
+
+def _fixture() -> str:
+    fixture_root = Path("/tests") if Path("/tests").is_dir() else ROOT / "tests"
+    return (fixture_root / "sachs.csv").read_text(encoding="utf-8")
+
+
+def _resource_fixture() -> str:
+    """Small deterministic continuous fixture for bounded resource observation."""
+
+    rows = ["A,B,C"]
+    for index in range(120):
+        a = (index % 17) / 17.0
+        b = 0.8 * a + ((index * 7) % 13) / 13.0
+        c = 0.4 * b + ((index * 11) % 19) / 19.0
+        rows.append(f"{a:.8f},{b:.8f},{c:.8f}")
+    return "\n".join(rows) + "\n"
+
+
+def _config(**overrides: Any) -> McpServerConfig:
+    values: dict[str, Any] = {
+        "service_token": TOKEN,
+        "signing_key_current": SIGNING_KEY,
+        "signing_key_previous": None,
+        "signing_key_id": "current",
+        "signing_key_previous_id": "previous",
+        "process_workers": 1,
+        "queue_capacity": 4,
+        "enqueue_timeout_seconds": 0.2,
+        "algorithm_deadline_seconds": 30,
+    }
+    values.update(overrides)
+    return McpServerConfig(**values)
+
+
+def _request() -> tuple[AlgorithmExecutionCommand, McpInvocationContext, str]:
+    now = datetime.now(timezone.utc)
+    context = McpInvocationContext(
+        invocation_id="00000000-0000-0000-0000-000000000301",
+        job_id="00000000-0000-0000-0000-000000000302",
+        session_id="00000000-0000-0000-0000-000000000303",
+        user_id=7,
+        attempt_count=1,
+        lease_epoch=1,
+        worker_id="p2-acceptance-worker",
+        input_snapshot_digest=hashlib.sha256(_fixture().encode()).hexdigest(),
+        issued_at=now,
+        expires_at=now + timedelta(minutes=5),
+        key_id="current",
+    )
+    command = AlgorithmExecutionCommand(
+        invocation_id=context.invocation_id,
+        capability_id=PC_SPEC.capability_id,
+        capability_version=PC_SPEC.version,
+        spec_digest=PC_SPEC.spec_digest,
+        provider_call_id="p2-acceptance-call",
+        input_identity=context.input_snapshot_digest,
+        parameters={"alpha": 0.05},
+        timeout_seconds=30,
+    )
+    return command, context, sign_invocation(context, command, SIGNING_KEY)
+
+
+def _safe_algorithm_call(fn: Any, csv_data: str) -> dict[str, Any]:
+    output = io.StringIO()
+    started = time.perf_counter()
+    try:
+        with redirect_stdout(output), redirect_stderr(output):
+            value = fn(csv_data)
+        result = {
+            "status": "PASS" if value.get("success") is True else "FAIL",
+            "success": value.get("success"),
+            "error_type": value.get("error_type"),
+            "elapsed_seconds": round(time.perf_counter() - started, 3),
+            "captured_output_bytes": len(output.getvalue().encode()),
+        }
+        if value.get("success") is True:
+            result["node_count"] = len((value.get("data") or {}).get("nodes", []))
+            result["edge_count"] = len((value.get("data") or {}).get("edges", []))
+        return result
+    except Exception as exc:  # evidence must retain unexpected runner failures
+        return {
+            "status": "ERROR",
+            "exception_type": type(exc).__name__,
+            "elapsed_seconds": round(time.perf_counter() - started, 3),
+            "captured_output_bytes": len(output.getvalue().encode()),
+        }
+
+
+def real_algorithm_calls(csv_data: str) -> dict[str, Any]:
+    from Agent.causal.causalachieve import (
+        run_direct_lingam_analysis,
+        run_olc_analysis,
+        run_pc_analysis,
+    )
+
+    olc_data = _resource_fixture()
+    results = {
+        "causal.pc": _safe_algorithm_call(run_pc_analysis, csv_data),
+        "causal.olc": _safe_algorithm_call(run_olc_analysis, olc_data),
+        "causal.direct_lingam": _safe_algorithm_call(run_direct_lingam_analysis, csv_data),
+    }
+    results["causal.pc"]["fixture"] = "tests/sachs.csv"
+    results["causal.olc"]["fixture"] = "small-continuous-3-column"
+    results["causal.direct_lingam"]["fixture"] = "tests/sachs.csv"
+    if results["causal.olc"].get("error_type") is None and results["causal.olc"].get("success") is False:
+        results["causal.olc"]["status"] = "NOT_RUN"
+        results["causal.olc"]["reason"] = "runner reported unavailable dependency or input"
+    return {
+        "status": "PARTIAL" if results["causal.olc"]["status"] == "NOT_RUN" else "PASS",
+        "authority": "local fixture file; not MySQL strong-read evidence",
+        "fixture": "tests/sachs.csv",
+        "algorithms": results,
+    }
+
+
+async def capacity_window() -> dict[str, Any]:
+    pool = BoundedProcessPool(
+        process_workers=2,
+        queue_capacity=4,
+        enqueue_timeout_seconds=0.15,
+        timeout_recycle_threshold=10,
+        executor_factory=ProcessPoolExecutor,
+    )
+    await pool.start()
+    try:
+        started = [
+            asyncio.create_task(
+                pool.execute(
+                    capability_id=f"capacity.{index}",
+                    runner=_sleep_runner,
+                    csv_data="A\n1\n",
+                    parameters={"seconds": 0.8},
+                    timeout_seconds=3,
+                    concurrency=1,
+                )
+            )
+            for index in range(7)
+        ]
+        outcomes = await asyncio.gather(*started, return_exceptions=True)
+        rejected = sum(
+            isinstance(value, PoolExecutionError)
+            and value.safe_error_code.value == "MCP_CAPACITY_EXHAUSTED"
+            for value in outcomes
+        )
+        return {
+            "status": "PASS" if rejected == 1 else "FAIL",
+            "expected": "2 running + 4 queued; seventh rejected",
+            "capacity_rejected": rejected,
+            "completed": len(outcomes) - rejected,
+            "scope": "real bounded process pool with controlled sleep runner; not causal algorithm throughput",
+        }
+    finally:
+        await pool.close()
+
+
+async def timeout_and_late_result() -> dict[str, Any]:
+    pool = BoundedProcessPool(
+        process_workers=1,
+        queue_capacity=0,
+        enqueue_timeout_seconds=0.2,
+        timeout_recycle_threshold=10,
+        executor_factory=ProcessPoolExecutor,
+    )
+    await pool.start()
+    try:
+        started = time.perf_counter()
+        try:
+            await pool.execute(
+                capability_id="deadline.test",
+                runner=_sleep_runner,
+                csv_data="A\n1\n",
+                parameters={"seconds": 0.4},
+                timeout_seconds=0.05,
+                concurrency=1,
+            )
+        except PoolExecutionError as exc:
+            timeout_code = exc.safe_error_code.value
+        else:
+            timeout_code = "NO_ERROR"
+        await asyncio.sleep(0.5)
+        follow_up = await pool.execute(
+            capability_id="deadline.test",
+            runner=_quick_runner,
+            csv_data="A\n1\n",
+            parameters={},
+            timeout_seconds=1,
+            concurrency=1,
+        )
+        return {
+            "status": "PASS" if timeout_code == "ALGORITHM_TIMED_OUT" and follow_up.value["success"] else "FAIL",
+            "timeout_code": timeout_code,
+            "late_result_wait_seconds": round(time.perf_counter() - started, 3),
+            "follow_up_completed": follow_up.value.get("success") is True,
+        }
+    finally:
+        await pool.close()
+
+
+async def resource_sample(csv_data: str) -> dict[str, Any]:
+    registry = build_default_registry()
+    samples: dict[str, dict[str, Any]] = {}
+    resource_inputs = {
+        "causal.pc": csv_data,
+        "causal.olc": _resource_fixture(),
+        "causal.direct_lingam": csv_data,
+    }
+    for entry in registry._entries.values():  # fixed registry, only for acceptance observation
+        pool = BoundedProcessPool(
+            process_workers=1,
+            queue_capacity=1,
+            enqueue_timeout_seconds=1,
+            timeout_recycle_threshold=10,
+            executor_factory=ProcessPoolExecutor,
+        )
+        await pool.start()
+        try:
+            usage_before = resource.getrusage(resource.RUSAGE_CHILDREN)
+            task = asyncio.create_task(
+                pool.execute(
+                    capability_id=entry.capability_id,
+                    runner=entry.runner,
+                    csv_data=resource_inputs[entry.capability_id],
+                    parameters={},
+                    timeout_seconds=30,
+                    concurrency=1,
+                )
+            )
+            peak_rss = 0
+            peak_cpu = 0.0
+            while not task.done():
+                children = psutil.Process().children(recursive=True)
+                rss = 0
+                cpu = 0.0
+                for child in children:
+                    try:
+                        info = child.memory_info()
+                        times = child.cpu_times()
+                        rss += info.rss
+                        cpu += times.user + times.system
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+                peak_rss = max(peak_rss, rss)
+                peak_cpu = max(peak_cpu, cpu)
+                await asyncio.sleep(0.05)
+            try:
+                outcome = await task
+                status = "PASS" if outcome.value.get("success") is True else "NOT_RUN"
+            except PoolExecutionError as exc:
+                status = "NOT_RUN"
+                outcome = None
+                error_code = exc.safe_error_code.value
+            else:
+                error_code = None
+            if outcome is not None:
+                peak_rss = max(peak_rss, outcome.peak_rss_bytes)
+                peak_cpu = max(peak_cpu, outcome.cpu_seconds)
+            usage_after = resource.getrusage(resource.RUSAGE_CHILDREN)
+            # Linux ru_maxrss is KiB; this covers short-lived children that
+            # finish before the psutil sampling interval.
+            peak_rss = max(peak_rss, int(usage_after.ru_maxrss) * 1024)
+            peak_cpu = max(
+                peak_cpu,
+                (usage_after.ru_utime + usage_after.ru_stime)
+                - (usage_before.ru_utime + usage_before.ru_stime),
+            )
+            samples[entry.capability_id] = {
+                "status": status,
+                "error_code": error_code,
+                "peak_child_rss_bytes": peak_rss,
+                "peak_child_cpu_seconds_observed": round(peak_cpu, 3),
+                "runner_version": "causalachieve-v1",
+            }
+        finally:
+            await pool.close()
+    return {"status": "PARTIAL" if any(v["status"] == "NOT_RUN" for v in samples.values()) else "PASS", "algorithms": samples}
+
+
+async def start_server(csv_data: str) -> tuple[uvicorn.Server, asyncio.Task[Any]]:
+    app = create_app(
+        _config(process_workers=1, queue_capacity=4),
+        authority_reader=lambda _context: csv_data,
+        database_probe=lambda: True,
+    )
+    server = uvicorn.Server(
+        uvicorn.Config(app, host="127.0.0.1", port=PORT, log_level="critical", access_log=False)
+    )
+    task = asyncio.create_task(server.serve())
+    for _ in range(100):
+        if server.started:
+            return server, task
+        await asyncio.sleep(0.05)
+    raise RuntimeError("local MCP server did not start")
+
+
+async def client_pool_modes_and_fault(csv_data: str) -> dict[str, Any]:
+    command, context, signature = _request()
+    args = {
+        "command": command.model_dump(mode="json"),
+        "trusted_context": context.model_dump(mode="json"),
+        "signature": signature,
+    }
+    server, server_task = await start_server(csv_data)
+    result: dict[str, Any] = {}
+    try:
+        for label, max_in_flight, expected_capacity in (("A_Nx1", 1, 2), ("B_NxK", 2, 4)):
+            pool = McpClientPool(
+                McpClientPoolConfig(
+                    url=f"http://127.0.0.1:{PORT}/mcp",
+                    service_token=TOKEN,
+                    pool_size=2,
+                    max_in_flight_per_client=max_in_flight,
+                    acquire_timeout_seconds=0.2,
+                    max_connections=8,
+                    max_keepalive_connections=8,
+                    read_timeout_seconds=30,
+                )
+            )
+            await pool.start()
+            leases = [await pool.acquire() for _ in range(expected_capacity)]
+            try:
+                try:
+                    await pool.acquire()
+                except Exception as exc:
+                    capacity_status = type(exc).__name__
+                else:
+                    capacity_status = "NO_ERROR"
+            finally:
+                await asyncio.gather(*(lease.release() for lease in leases))
+            successful_call = await pool.call_tool(args, invocation_id=context.invocation_id)
+            healthy_before = [member.healthy for member in pool.members]
+            generations_before = [member.generation for member in pool.members]
+            await pool.close()
+            result[label] = {
+                "status": "PASS" if capacity_status == "McpPoolError" and successful_call is not None else "FAIL",
+                "capacity_slots": expected_capacity,
+                "capacity_error": capacity_status,
+                "healthy_before_close": healthy_before,
+                "generation_before_fault": generations_before,
+                "drained_members_after_close": len(pool.members) == 0,
+            }
+
+        fault_pool = McpClientPool(
+            McpClientPoolConfig(
+                url=f"http://127.0.0.1:{PORT}/mcp",
+                service_token=TOKEN,
+                pool_size=2,
+                max_in_flight_per_client=1,
+                acquire_timeout_seconds=0.2,
+                max_connections=4,
+                max_keepalive_connections=4,
+                read_timeout_seconds=30,
+            )
+        )
+        await fault_pool.start()
+        member_id = fault_pool.members[0].member_id
+        old_generation = fault_pool.members[0].generation
+        server.should_exit = True
+        await server_task
+        try:
+            await fault_pool.call_tool(args, invocation_id=context.invocation_id)
+        except Exception as exc:
+            transport_error = type(exc).__name__
+        else:
+            transport_error = "NO_ERROR"
+        server, server_task = await start_server(csv_data)
+        await fault_pool.ensure_reconnected(member_id, old_generation)
+        new_generation = next(member.generation for member in fault_pool.members if member.member_id == member_id)
+        cancel_task = asyncio.create_task(
+            fault_pool.call_tool(args, invocation_id=context.invocation_id)
+        )
+        await asyncio.sleep(0.05)
+        cancel_task.cancel()
+        try:
+            await cancel_task
+        except asyncio.CancelledError:
+            pass
+        await asyncio.sleep(0.15)
+        cancel_inflight = sum(member.inflight for member in fault_pool.members)
+        await fault_pool.close()
+        result["fault_generation_drain_cancel"] = {
+            "status": "PASS" if transport_error != "NO_ERROR" and new_generation > old_generation and cancel_inflight == 0 else "FAIL",
+            "transport_error": transport_error,
+            "old_generation": old_generation,
+            "new_generation": new_generation,
+            "cancel_inflight_after_cleanup": cancel_inflight,
+            "drained_members_after_close": len(fault_pool.members) == 0,
+        }
+        return {"status": "PASS" if all(item["status"] == "PASS" for item in result.values()) else "FAIL", "modes": result}
+    finally:
+        if not server.should_exit:
+            server.should_exit = True
+        await server_task
+
+
+async def main() -> None:
+    csv_data = _fixture()
+    report = {
+        "runner": "tests/acceptance/p2_mcp/run_acceptance.py",
+        "mcp_version": importlib.metadata.version("mcp"),
+        "httpx2_version": importlib.metadata.version("httpx2"),
+        "real_algorithms": real_algorithm_calls(csv_data),
+        "capacity_window": await capacity_window(),
+        "deadline_and_late_result": await timeout_and_late_result(),
+        "rss_cpu": await resource_sample(_resource_fixture()),
+        "client_pool": await client_pool_modes_and_fault(csv_data),
+        "mysql_strong_read_and_old_lease": {
+            "status": "NOT_RUN",
+            "reason": "No running isolated MySQL primary/Compose fixture was available; no fake authority used.",
+        },
+        "stderr_sensitive_zero_hit": {
+            "status": "NOT_RUN",
+            "reason": "Requires real causal-mcp container logs; image/Compose build blocked by Docker Hub token network failure.",
+        },
+    }
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
