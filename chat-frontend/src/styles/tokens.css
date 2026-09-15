@@ -1,0 +1,18 @@
+:root {
+  --color-page: #f7f8fa;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f0f2f5;
+  --color-border: #dfe3e8;
+  --color-text: #1f2937;
+  --color-text-muted: #6b7280;
+  --color-primary: #2563eb;
+  --color-primary-hover: #1d4ed8;
+  --color-danger: #dc2626;
+  --color-focus: #93c5fd;
+  --sidebar-width: 292px;
+  --content-width: 880px;
+  --content-gap: 24px;
+  --input-radius: 18px;
+  --motion-duration: 300ms;
+  --shadow-card: 0 10px 30px rgb(15 23 42 / 8%);
+}

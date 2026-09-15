@@ -52,12 +52,25 @@ COPY admin-frontend/ ./
 RUN npm run build
 
 
+FROM node:24-alpine AS chat-builder
+
+WORKDIR /frontend
+
+COPY chat-frontend/package.json chat-frontend/package-lock.json ./
+RUN npm ci
+
+COPY chat-frontend/ ./
+RUN npm run build
+
+
 FROM python-deps AS runtime
 
 COPY . .
 COPY --from=admin-builder /frontend/dist /opt/causalagent-admin
+COPY --from=chat-builder /frontend/dist /opt/causalagent-chat
 
-ENV ADMIN_FRONTEND_DIST_DIR=/opt/causalagent-admin
+ENV ADMIN_FRONTEND_DIST_DIR=/opt/causalagent-admin \
+    CHAT_FRONTEND_DIST_DIR=/opt/causalagent-chat
 
 EXPOSE 5001
 

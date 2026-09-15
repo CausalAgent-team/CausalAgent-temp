@@ -73,6 +73,10 @@ admin-frontend/node_modules/
 admin-frontend/dist/
 admin-frontend/test-results/
 admin-frontend/playwright-report/
+chat-frontend/node_modules/
+chat-frontend/dist/
+chat-frontend/test-results/
+chat-frontend/playwright-report/
 
 
 # --- 数据文件和大文件 ---
