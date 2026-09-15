@@ -171,6 +171,7 @@ async def ai_call_stream(
     initial_input_record: dict[str, Any] | None = None,
     execution_guard: JobExecutionGuard | None = None,
     web_search_enabled: bool = False,
+    agent_runtime_context: AgentRunContext | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """在显式传入的 graph 上执行一次调用并产出公开事件。"""
     if graph is None:
@@ -245,7 +246,7 @@ async def ai_call_stream(
         "subgraphs": True,
         "version": "v2",
     }
-    stream_kwargs["context"] = AgentRunContext(
+    stream_kwargs["context"] = agent_runtime_context or AgentRunContext(
         execution_guard=execution_guard,
         web_search_enabled=web_search_enabled,
     )

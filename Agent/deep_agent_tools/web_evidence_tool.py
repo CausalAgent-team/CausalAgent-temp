@@ -113,9 +113,10 @@ class WebEvidenceTool:
         *,
         query_en: str | None = None,
         max_results: int = 9,
+        enabled: bool | None = None,
     ) -> dict[str, Any]:
         request = WebEvidenceQuery(query=query, query_en=query_en, max_results=max_results)
-        if not self._enabled():
+        if not (self._enabled() if enabled is None else enabled):
             return {
                 "status": "disabled",
                 "query": request.query,
@@ -212,10 +213,16 @@ class WebEvidenceTool:
             identity = resolve_runtime_invocation(runtime)
             await identity.runtime_context.ensure_active()
             started_at = datetime.now(timezone.utc)
+            runtime_enabled = getattr(
+                identity.runtime_context,
+                "web_search_enabled",
+                None,
+            )
             payload = await self.get_evidence(
                 query,
                 query_en=query_en,
                 max_results=max_results,
+                enabled=runtime_enabled if isinstance(runtime_enabled, bool) else None,
             )
             status = str(payload.get("status") or "protocol_error")
             attempt_status = (

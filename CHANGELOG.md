@@ -1319,3 +1319,6 @@
   - 【边界与风险】：MySQL 使用最小隔离 schema；算法调用、`2 running + 4 queued`、RSS/CPU 为受控 fixture/容器基线，不构成生产容量或性能承诺；真实容器调用已验证健康、鉴权和结构化响应，但极小输入仍返回 `execution_failed`，完整 P3 worker HTTP 接入、迁移链路和生产规模验收尚未完成。
   - 【主线合并收口】：保留 DeepAgent 主线 State/Context/Graph 权威实现，补齐三阶段 lease fencing、异步 strong read、`/ready` 健康门禁、PC 参数透传、容量信号量释放、旧进程代际终止后回收和成功/失败目录事件；修复全量测试中的 RAG module stub 污染。
   - 【合并验证】：重建 Python 3.11 测试镜像后全量 unit `515 passed`；Agent/部署/migration/日志定向 integration `44 passed, 3 skipped`，开发 Compose 静态展开通过；既有 admin deployment 两项失败仍独立保留，不计入 MCP/DeepAgent 完成证据。
+  - 【P3 worker 与父图接入】：在普通 merge 合入 MCP 协作代码后，接入进程级 MCP client pool、真实 executor、官方 PostgreSQL Store 装配、静态 Algorithm Registry、Deep Agent 子图及外层 `agent → fold/preprocess → deep_agent → finalization_gate → report` 路径；生产路径不按 slot 启动 stdio session。
+  - 【P4 结果与事件收口】：加入 AlgorithmSpec 驱动的同响应 ToolNode dispatch、RAG evidence 惰性初始化、FinalizationGate 一次修正与二次 degraded 报告、公共 Tool result 安全字段和 `finalization_status`；未删除旧兼容文件或重要产物。
+  - 【本轮验证与边界】：P3/P4 定向测试 `42 passed`，Docker Python 3.11 全量 unit `528 passed`，全量 integration `59 passed, 4 skipped, 2 failed`（两项既有 admin deployment 环境断言）；开发/staging/prod Compose 静态校验通过，真实 MCP、PostgreSQL Store/checkpoint、DeepSeek、RAG/Web、完整 Job/SSE 和生产观测仍未验收。

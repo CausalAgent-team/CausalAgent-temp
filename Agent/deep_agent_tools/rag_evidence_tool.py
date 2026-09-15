@@ -24,6 +24,24 @@ class EvidenceRetriever(Protocol):
         ...
 
 
+@dataclass
+class _LazyEvidenceRetriever:
+    """延迟创建正式 RAG Service，避免 worker 启动时加载索引和 embedding。"""
+
+    factory: Callable[[], EvidenceRetriever]
+    _service: EvidenceRetriever | None = None
+
+    def get_evidence(
+        self,
+        query: str,
+        *,
+        max_contexts: int | None = None,
+    ) -> Mapping[str, Any]:
+        if self._service is None:
+            self._service = self.factory()
+        return self._service.get_evidence(query, max_contexts=max_contexts)
+
+
 class _RagEvidenceInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -230,11 +248,7 @@ def build_default_rag_evidence_tool(*, service: EvidenceRetriever | None = None)
     """惰性绑定当前 RagService；不会在模块 import 时初始化索引或模型。"""
 
     if service is None:
-        from Agent.knowledge_base.rag_service import UnavailableRagService
         from Agent.knowledge_base.query_rag import _get_rag_service
 
-        try:
-            service = _get_rag_service()
-        except Exception:
-            service = UnavailableRagService()
+        service = _LazyEvidenceRetriever(factory=_get_rag_service)
     return RagEvidenceTool(service)

@@ -38,4 +38,4 @@ Flask 在确定 request ID 后立即绑定运行日志上下文，只有主库�
 
 普通用户 Job SSE 使用 `text/event-stream`，事件由 MySQL `analysis_job_events` 按递增事件 ID 读取。客户端可通过 `Last-Event-ID` 或 `last_event_id` 查询参数续传；服务端发送 `id`、`event` 和 JSON `data`，定期发送 `heartbeat` 保活。
 
-公共事件必须经过脱敏适配器：只暴露公开文字、阶段和稳定状态，移除内部 `attempt` 等字段，不暴露原始 prompt、ToolMessage、完整工具结果、图状态、文件内容或隐藏推理。终态事件或 `interrupt` 到达后连接结束，页面刷新后应通过活动 Job 接口和最后事件 ID恢复状态。
+公共事件必须经过脱敏适配器：只暴露公开文字、阶段和稳定状态，移除内部 `attempt` 等字段；`tool_call_result` 只允许公开工具名、摘要、`succeeded/not_ready/timed_out/failed` 状态和格式受限的 `safe_error_code`。不暴露原始 prompt、ToolMessage、完整工具结果、图状态、文件内容、provider ID、result reference 或隐藏推理。`final_result.data.finalization_status` 仅允许 `valid`/`degraded`，由程序 Gate 生成；终态事件或 `interrupt` 到达后连接结束，页面刷新后应通过活动 Job 接口和最后事件 ID恢复状态。

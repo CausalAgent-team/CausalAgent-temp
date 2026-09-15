@@ -65,7 +65,7 @@ class TrustedJobIdentity:
         self,
         *,
         invocation_id: str,
-        key_id: str = "deep-agent-runtime",
+        key_id: str = "current",
         ttl_seconds: int = 900,
         now: datetime | None = None,
     ) -> McpInvocationContext:
@@ -101,12 +101,16 @@ class AgentRunContext:
     """
 
     execution_guard: Any | None
-    trusted_identity: TrustedJobIdentity
-    algorithm_executor: Any
+    trusted_identity: TrustedJobIdentity | None = None
+    algorithm_executor: Any | None = None
     rag_executor: Any | None = None
     web_executor: Any | None = None
     filesystem_backend: Any | None = None
-    web_search_enabled: bool = False
+    # ``None`` means the caller did not provide a per-Job decision.  Production
+    # worker invocations always bind a concrete bool; keeping the compatibility
+    # default tri-state prevents isolated Tool tests from silently changing
+    # their explicitly constructed WebEvidenceTool behavior.
+    web_search_enabled: bool | None = None
 
     async def ensure_active(self) -> None:
         """在跨边界调用前复用已有 JobExecutionGuard 的资格检查。"""
@@ -124,7 +128,9 @@ class AgentRunContext:
     def assert_state_safe(self, state: object) -> None:
         """拒绝把本 runtime context 直接放入 State。"""
 
-        if state is self or state is self.algorithm_executor:
+        if state is self or (
+            self.algorithm_executor is not None and state is self.algorithm_executor
+        ):
             raise TypeError("runtime context objects must not enter graph state")
         if isinstance(state, dict):
             forbidden = {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import json
 from typing import Annotated, Any, TypedDict
 
 from Agent.deep_agent_tools.models import (
@@ -33,6 +34,7 @@ class DeepAgentState(_OfficialDeepAgentState, total=False):
     analysis_question: str
     analysis_parameters: dict[str, Any]
     file_summary: dict[str, Any]
+    missing_values_present: bool
     message_execution_id: str
     provider_response_id: str | None
     algorithm_results: Annotated[dict[str, Any], merge_algorithm_results]
@@ -62,6 +64,7 @@ class ParentStateUpdate(TypedDict, total=False):
     deep_agent_web_evidence: dict[str, WebEvidenceResult]
     deep_agent_decision: FinalAnalysisDecision | None
     deep_agent_structured_response: FinalAnalysisDecision | None
+    deep_agent_messages: list[Any]
 
 
 def _as_data_profile(value: object, parent_state: Mapping[str, Any]) -> DataProfile:
@@ -69,6 +72,37 @@ def _as_data_profile(value: object, parent_state: Mapping[str, Any]) -> DataProf
         return value.model_copy(deep=True)
     if isinstance(value, Mapping):
         return DataProfile.model_validate(value)
+
+    analysis_parameters = parent_state.get("analysis_parameters")
+    if isinstance(analysis_parameters, Mapping):
+        columns = tuple(
+            str(column)
+            for column in analysis_parameters.get("columns", ())
+            if str(column)
+        )
+        column_profiles = analysis_parameters.get("column_profiles")
+        if isinstance(column_profiles, Mapping):
+            numeric_columns = tuple(
+                column
+                for column in columns
+                if isinstance(column_profiles.get(column), Mapping)
+                and column_profiles[column].get("inferred_type") == "continuous"
+            )
+            categorical_columns = tuple(
+                column for column in columns if column not in numeric_columns
+            )
+        else:
+            numeric_columns = ()
+            categorical_columns = ()
+        rows = analysis_parameters.get("n_rows") or 0
+        if columns or rows:
+            return DataProfile(
+                row_count=max(0, int(rows)),
+                column_count=len(columns),
+                column_names=columns,
+                numeric_columns=numeric_columns,
+                categorical_columns=categorical_columns,
+            )
 
     file_summary = parent_state.get("file_summary")
     if not isinstance(file_summary, Mapping):
@@ -90,6 +124,12 @@ def initial_deep_agent_state(
     file_summary: Mapping[str, Any] | None = None,
     messages: list[Any] | None = None,
     message_execution_id: str | None = None,
+    missing_values_present: bool = False,
+    algorithm_results: Mapping[str, Any] | None = None,
+    action_ledger: Mapping[str, Any] | None = None,
+    rag_evidence: Mapping[str, Any] | None = None,
+    web_evidence: Mapping[str, Any] | None = None,
+    finalization_retry_count: int = 0,
 ) -> ProjectDeepAgentState:
     """创建可直接 checkpoint 的最小内层 State。"""
 
@@ -99,22 +139,43 @@ def initial_deep_agent_state(
         analysis_question=analysis_question,
         analysis_parameters=dict(analysis_parameters or {}),
         file_summary=dict(file_summary or {}),
+        missing_values_present=missing_values_present,
         **({"message_execution_id": message_execution_id} if message_execution_id else {}),
-        algorithm_results={},
-        action_ledger={},
-        rag_evidence={},
-        web_evidence={},
+        algorithm_results=dict(algorithm_results or {}),
+        action_ledger=dict(action_ledger or {}),
+        rag_evidence=dict(rag_evidence or {}),
+        web_evidence=dict(web_evidence or {}),
         structured_response=None,
-        finalization_retry_count=0,
+        finalization_retry_count=finalization_retry_count,
         model_call_count=0,
         tool_call_count=0,
+    )
+
+
+def _missing_values_from_parent(parent_state: Mapping[str, Any]) -> bool:
+    explicit = parent_state.get("missing_values_present")
+    if explicit is not None:
+        return bool(explicit)
+    analysis_parameters = parent_state.get("analysis_parameters")
+    if not isinstance(analysis_parameters, Mapping):
+        return False
+    quality = analysis_parameters.get("quality_assessment")
+    if isinstance(quality, Mapping) and float(quality.get("total_missing_ratio") or 0) > 0:
+        return True
+    profiles = analysis_parameters.get("column_profiles")
+    if not isinstance(profiles, Mapping):
+        return False
+    return any(
+        isinstance(profile, Mapping) and int(profile.get("missing_count") or 0) > 0
+        for profile in profiles.values()
     )
 
 
 def to_deep_agent_input(parent_state: Mapping[str, Any]) -> ProjectDeepAgentState:
     """只把 Deep Agent 所需字段投影到内层 State，不复制父状态。"""
 
-    messages = parent_state.get("messages")
+    existing_child_messages = parent_state.get("deep_agent_messages")
+    messages = existing_child_messages or parent_state.get("messages")
     if messages is None:
         messages = []
     if not isinstance(messages, list):
@@ -125,8 +186,40 @@ def to_deep_agent_input(parent_state: Mapping[str, Any]) -> ProjectDeepAgentStat
     file_summary = parent_state.get("file_summary")
     if not isinstance(file_summary, Mapping):
         file_summary = {}
+    data_profile = _as_data_profile(parent_state.get("data_profile"), parent_state)
+    if not existing_child_messages:
+        messages = [
+            *messages,
+            {
+                "role": "system",
+                "content": json.dumps(
+                    {
+                        "analysis_question": str(
+                            parent_state.get("analysis_question")
+                            or parent_state.get("user_question")
+                            or ""
+                        ),
+                        "data_profile": data_profile.model_dump(mode="json"),
+                        "analysis_parameters": dict(analysis_parameters),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+            },
+        ]
+    retry_instruction = parent_state.get("deep_agent_retry_instruction")
+    if isinstance(retry_instruction, str) and retry_instruction.strip():
+        # 使用普通消息值而不是把 Runtime/异常对象放进 State；LangChain 会在
+        # 真正模型调用前把标准 role/content mapping 转成 HumanMessage。
+        messages = [
+            *messages,
+            {
+                "role": "user",
+                "content": retry_instruction.strip(),
+            },
+        ]
     return initial_deep_agent_state(
-        data_profile=_as_data_profile(parent_state.get("data_profile"), parent_state),
+        data_profile=data_profile,
         analysis_question=str(
             parent_state.get("analysis_question")
             or parent_state.get("user_question")
@@ -140,6 +233,12 @@ def to_deep_agent_input(parent_state: Mapping[str, Any]) -> ProjectDeepAgentStat
             if parent_state.get("message_execution_id")
             else None
         ),
+        missing_values_present=_missing_values_from_parent(parent_state),
+        algorithm_results=parent_state.get("deep_agent_algorithm_results"),
+        action_ledger=parent_state.get("deep_agent_action_ledger"),
+        rag_evidence=parent_state.get("deep_agent_rag_evidence"),
+        web_evidence=parent_state.get("deep_agent_web_evidence"),
+        finalization_retry_count=int(parent_state.get("finalization_retry_count") or 0),
     )
 
 
@@ -153,6 +252,7 @@ def from_deep_agent_output(state: Mapping[str, Any]) -> ParentStateUpdate:
         "deep_agent_web_evidence": dict(state.get("web_evidence") or {}),
         "deep_agent_decision": state.get("structured_response"),
         "deep_agent_structured_response": state.get("structured_response"),
+        "deep_agent_messages": list(state.get("messages") or []),
     }
     return result
 

@@ -3,8 +3,9 @@
 import asyncio
 import builtins
 from types import SimpleNamespace
+from unittest.mock import patch
 
-from Agent.deep_agent_tools import RagEvidenceTool
+from Agent.deep_agent_tools import RagEvidenceTool, build_default_rag_evidence_tool
 from Agent.knowledge_base.embedding_runtime import EmbeddingApiError
 from Agent.knowledge_base.query_rag import RagRetrievalConfig
 from Agent.knowledge_base.rag_service import RagService
@@ -72,6 +73,22 @@ def test_rag_tool_returns_evidence_without_answer_generation() -> None:
     assert result["evidence"][0]["rerank_score"] == 0.8
     assert result["sufficiency"] == "sufficient"
     assert retriever.calls == [("causal query", None)]
+
+
+def test_default_rag_tool_defers_runtime_creation_until_first_query() -> None:
+    """worker 构造工具时不能提前加载 Chroma、BM25 或 embedding。"""
+    retriever = FakeRetriever()
+    with patch(
+        "Agent.knowledge_base.query_rag._get_rag_service",
+        return_value=retriever,
+    ) as get_service:
+        tool = build_default_rag_evidence_tool()
+        get_service.assert_not_called()
+
+        result = asyncio.run(tool.get_evidence("causal query"))
+
+    get_service.assert_called_once_with()
+    assert result["status"] == "available"
 
 
 def test_rag_tool_rejects_invalid_payload_as_protocol_error() -> None:

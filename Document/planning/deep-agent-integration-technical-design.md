@@ -2,11 +2,11 @@
 
 > **文档职责**：把《Deep Agent 集成改造计划》中已经冻结的产品与架构决策，落实为可编码、可迁移、可测试和可回退的技术方案；同时记录版本适配、状态契约、MCP 传输与并发、幂等恢复、可观测性及验收门槛。
 >
-> **适用范围**：适用于 `Agent/`、`app/agent/worker/`、`Database/`、RAG/Web 工具适配层和 Docker Compose 中的 Deep Agent 改造。本文不改变产品语义，不代表功能已经实现，也不替代现有运行时事实文档。
+> **适用范围**：适用于 `Agent/`、`app/agent/worker/`、`Database/`、RAG/Web 工具适配层和 Docker Compose 中的 Deep Agent 改造。本文不改变产品语义；实现状态和真实验收边界以当前运行时事实文档及本文第 3.3 节为准。
 
-**状态**：技术设计草案；P2-M 独立服务、鉴权、进程池和客户端池代码切片已实施，P2-U fake executor 前置已实施，真实生产部署验收和其余 P2-U 能力仍待执行
+**状态**：技术设计草案（实现已部分落地）；P2-M 独立服务、鉴权、进程池和客户端池已合入，P2-U 协议基础、P3 worker/MCP pool/Store/父图接入和 P4 Finalization/report/events 代码已实施；真实 MCP、PostgreSQL Store/checkpoint、DeepSeek、RAG/Web 和完整 Job 验收仍待执行
 
-**事实核对日期**：2026-09-14
+**事实核对日期**：2026-09-15
 
 **产品决策来源**：[deep-agent-integration-plan.md](./deep-agent-integration-plan.md)
 **目标架构图**：[deep-agent-integration-technical-design.drawio](./deep-agent-integration-technical-design.drawio)
@@ -22,7 +22,7 @@
 1. 新版本不保留 `langchain-mcp-adapters`，主程序和独立 `causal-mcp` 镜像都使用 `mcp==2.2.0`。主程序通过官方 MCP client 调用服务，模型只使用本地 function tools；这组依赖切片已通过隔离 `pip --dry-run`。
 2. 旧版本继续把 `langchain-mcp-adapters` 与 MCP v1 保存在自己的锁文件和镜像中，不与新版本共环境。官方 v2 服务端虽能兼容早期协议，但本项目新链路没有必要主动保留 v1 客户端。
 3. 新 Deep Agent 会直接看到由 `AlgorithmSpec` 生成的本地 LangChain function tools；“不暴露动态工具清单”特指不在运行时调用远端 MCP `list_tools()` 后，把服务端当时返回的任意工具自动注册给模型。MCP tools 是内部服务契约，由 `AlgorithmExecutor` 调用，不是第二份模型工具清单。
-4. 当前仓库依赖直接加入 `deepagents==0.7.13` 无法解析；必须整体升级 LangChain/LangGraph 兼容簇。本文给出已通过独立 `pip --dry-run` 的候选簇，但完整项目依赖和运行回归仍是阶段 0 的强制门禁。
+4. 阶段 0 曾确认在旧的 LangChain/LangGraph 依赖上直接加入 `deepagents==0.7.13` 会解析失败；当前 `requirements.txt` 已整体升级并固定兼容簇，Docker Python 3.11 镜像和 unit 回归已提供容器级证据，但真实 DeepSeek、PostgreSQL Store/checkpoint 与完整 Job 仍是强制门禁。
 5. 本方案存在两类不同的池：worker 内的长期 MCP Client pool 负责连接复用与传输故障隔离，`causal-mcp` 内的有界 CPU 进程池负责算法并发。MCP session 不承载 Job 状态。首版默认单副本、2 个进程、队列 4、每 Job 同时最多 2 个工具调用；这些值是保守启动值，不是性能承诺，必须用真实数据压测后调整。
 6. 外层 LangGraph 继续承担 Job 生命周期、checkpoint、`fold`、fencing 和最终确定性门禁；内层单 Deep Agent 只承担工具选择、迭代分析与结构化决策。两层状态通过显式投影连接，禁止共享无边界字典。
 7. 旧实现和新实现保存在不同分支、构建为不同镜像并分别部署，不在同一个运行系统中保留双路径。本次设计不实施架构对比实验，只冻结未来比较所需的版本材料；未来实验允许工具调用漂移，主要评价报告质量。
@@ -67,7 +67,7 @@
 
 ## 3. 当前实现基线与迁移原则
 
-### 3.1 当前事实
+### 3.1 迁移前兼容基线
 
 当前 Docker 基线是 Python 3.11。父图主链路为：
 
@@ -80,7 +80,7 @@ agent -> fold -> preprocess -> mcp -> rag -> [web_search] -> agent -> postproces
 - 每个 worker slot 启动一个长期存在的 stdio `ClientSession`，加载 MCP tools 后编译自己的图；slot 内 Job 串行执行，`JOB_WORKERS` 默认 2。
 - `Agent/tool_node/mcp_tool_call_adapter.py` 只处理 `tool_calls[0]`，状态只容纳一个 `causal_analysis_result`，因此不能表达 DeepSeek 并行返回的多个 tool calls。
 - 当前 MCP server 的 async handler 直接调用同步 CPU 算法，会阻塞服务事件循环；把传输从 stdio 改为 HTTP 并不会自动解决 CPU 并发。
-- 外层 PostgreSQL checkpointer 已用 `thread_id=job_id`，MySQL Job 表已有 `worker_id`、`attempt_count`、`lease_epoch`、events 和 inputs 账本，应复用这些权威身份而不是另造 Agent session。
+  - 外层 PostgreSQL checkpointer 已用 `thread_id=job_id`，MySQL Job 表已有 `worker_id`、`attempt_count`、`lease_epoch`、events 和 inputs 账本，应复用这些权威身份而不是另造 Agent session。
 
 ### 3.2 版本保留、迁移与未来对比前置条件
 
@@ -94,6 +94,18 @@ agent -> fold -> preprocess -> mcp -> rag -> [web_search] -> agent -> postproces
 - 带版本号的冻结输入与问题集。
 
 未来实验主要比较报告质量，允许模型选择、Tool 调用顺序和调用次数发生自然漂移，因此不要求逐调用完整复现。若届时需要比较延迟、成本或失败率，应在新的实验计划中单独冻结采集口径；若两版数据库 schema 不兼容，则使用独立数据库快照或先实施向后兼容 migration。Git 分支本身不能回退数据库和在途 Job。
+
+### 3.3 2026-09-15 实现状态与偏差
+
+本轮实现把迁移前兼容基线保留为兼容/回退路径，同时把新生产路径接入现有 worker 外层安全壳：
+
+- `ProcessRuntime` 在进程级持有 MCP client pool、真实 `McpAlgorithmExecutor`、静态 `AlgorithmRegistry`、官方 `AsyncPostgresStore`、PostgreSQL checkpointer、RAG/Web 工具和已编译的 Deep Agent 子图与父图；`SlotRuntime` 只绑定一次 Job 的 `AgentRunContext`。生产路径不按 slot 启动 stdio session，旧 stdio helper 只在未注入 graph 的兼容测试路径保留。
+- bootstrap 顺序为 MySQL readiness → PostgreSQL checkpoint pool/schema → `AsyncPostgresStore` setup/readiness → 静态 Registry → 进程级 MCP connect/handshake → RAG readiness → Deep Agent/父图编译 → worker ready → claim Job。该顺序已写入实现和当前运行时文档，但真实依赖连接尚未执行。
+- 模型可见 algorithm tools 仍从 `AlgorithmSpec`/静态 Registry 生成；依赖 middleware 在 Deep Agent ToolNode 边界收集同一响应中的完整调用，按 `requires/produces` 分层并在 Job 上限内执行，禁止用 MCP `list_tools()` 动态注册第二套工具事实源。Tool call identity、terminal Action Ledger 和结果/evidence reducer 通过显式父子 State 投影连接。
+- RAG 证据工具现在惰性创建实际 retriever，worker readiness 不会加载 Chroma、BM25 或 embedding；Web 工具通过显式运行时开关控制是否触网。`FinalizationGate`、report presenter 和公共事件 adapter 已实现一次修正、degraded 报告、安全字段白名单和 `finalization_status` 投影。
+- 未新增 MySQL schema；长期 memory Store 与 checkpoint 是不同逻辑对象，官方 Store 的初始化、真实 PostgreSQL 持久化/重启保留和 cleanup 边界仍需 P5 数据库验收。当前代码只在生产初始化中装配 Store，不把 Store 当作 Job 身份或 MCP session 状态。
+
+已取得的证据包括 P3/P4 定向测试 `42 passed`、Docker Python 3.11 全量 `tests/unit` 的 `528 passed`、全量 integration 的 `59 passed, 4 skipped, 2 failed`（两项既有 admin deployment 环境断言）、目标依赖下的图构造、开发 Compose 展开和 staging/prod 必填环境缺失时的 fail-closed/占位配置行为。尚未取得真实 MCP HTTP/故障容量、PostgreSQL Store/checkpoint、DeepSeek Responses 多调用/ToolStrategy、active RAG/SearXNG、完整 Job/SSE/取消恢复或 Loki/Alloy 生产观测证据，因此本文不授予生产可替换结论。
 
 ---
 
@@ -293,7 +305,7 @@ deep_agent = create_deep_agent(
 
 Profile 应按实际由 `ChatOpenAI` 解析出的 provider/model key 注册，并做启动测试，避免因 DeepSeek 使用 OpenAI-compatible client 而未命中。产品决策已确认保留 Deep Agents 内置 `read_file` 与 `edit_file`：`read_file` 用于读取当前 Job 的大 Tool 结果、summary 淘汰历史和原始算法输出，也可读取 memory 文件；`edit_file` 用于更新 `/memories/` 下由可信 bootstrap 预先创建的两份 memory 文件。`FilesystemMiddleware.tools` 是允许列表，不是提示词约束；其快照必须证明 `write_file`、`delete`、目录检索和 execute 根本没有注册。默认 general-purpose subagent 被 Profile 关闭后不出现 `task`；`tools=` 只传算法与 RAG/Web evidence 工具，不再额外增加记忆工具。
 
-底层只组合官方 `StateBackend` 与 `StoreBackend`，不使用宿主 `FilesystemBackend`。`/memories/` 由 `StoreBackend` 路由并按可信用户身份隔离；其余 Deep Agent 虚拟文件落在当前运行 State，并通过父图 checkpoint 持久化。Deep Agents 0.7.13 已弃用把 runtime factory 直接传给 `backend=` 的旧写法，因此使用预构造 backend 对象。`trusted_memory_namespace(runtime)` 必须从 worker 在 graph invocation 时绑定的可信身份提取 canonical `user_id`，而不是读取模型 Tool 参数；0.7.13 官方示例使用 `runtime.server_info.user.identity`，本项目是否改用自定义 `context_schema` 字段必须在阶段 0 以实际 LangGraph Runtime 对象验证后写入 helper，本文不提前硬编码一个尚未证明存在的属性。Harness Profile 和 model profile 都是 beta API，因此锁定 0.7.13，并用模型可见 tool-name 快照、backend 路由测试和 model profile 启动断言防止升级漂移；工具快照应恰好允许领域工具、evidence 工具、`read_file`、`edit_file` 和结构化输出工具。
+底层只组合官方 `StateBackend` 与 `StoreBackend`，不使用宿主 `FilesystemBackend`。`/memories/` 由 `StoreBackend` 路由并按可信用户身份隔离；其余 Deep Agent 虚拟文件落在当前运行 State，并通过父图 checkpoint 持久化。Deep Agents 0.7.13 已弃用把 runtime factory 直接传给 `backend=` 的旧写法，因此使用预构造 backend 对象。当前实现将 graph 的 `context_schema` 固定为 `AgentRunContext`，`trusted_memory_namespace(runtime)` 优先从 `runtime.context.trusted_identity.user_id`（兼容直接 context 对象）提取 canonical `user_id`，只保留对官方 `server_info.user.identity` 的受限兼容读取，绝不读取模型 Tool 参数；真实 Store invocation 仍需在 P5 验证。Harness Profile 和 model profile 是 beta API，因此锁定 0.7.13，并用模型可见 tool-name 快照、backend 路由测试和 model profile 启动断言防止升级漂移；工具快照应恰好允许领域工具、evidence 工具、`read_file`、`edit_file` 和结构化输出工具。
 
 `edit_file` 的路径权限已经冻结为上面的两条 first-match 规则：先精确允许 `/memories/preferences.md` 与 `/memories/research_background.md`，再用 `/**` 拒绝模型写入其他虚拟路径。0.7.13 对未命中规则的操作默认允许，因此兜底 deny 不可省略，顺序也不能颠倒。该权限只约束内置 filesystem Tool；可信 Adapter 直接调用 backend API 不经过模型 Tool permission，因此仍能写 raw 文件。raw 文件继续以哈希和不可变 `AlgorithmResult` 为权威，模型不能通过 `edit_file` 修改它们。除这组 permission 外，本轮不新增其他长期记忆防御措施；查看、删除、保留期和并发编辑仍为暂缓项。
 
@@ -362,7 +374,7 @@ Job 隔离仍以 `user_id + session_id + job_id + attempt_count + lease_epoch` �
 
 MVP 的跨会话记忆只保存两份虚拟 Markdown 文件：稳定偏好 `/memories/preferences.md`，以及用户明确要求后续复用的研究背景 `/memories/research_background.md`。`memory=[...]` 使官方 memory middleware 在模型调用前把文件内容加载到系统上下文；模型在对话热路径中通过内置 `edit_file` 更新文件，因此不新增 `remember_user_context`、`forget_user_context` 等自定义工具。模型写权限由第 5.3 节的 `FilesystemPermission` 精确限制到这两个文件，其他虚拟路径写入一律拒绝。由于 `edit_file` 只能修改已存在文件，可信 bootstrap 必须在首次使用前执行“仅缺失时创建”的初始化，绝不能在每次 Job 启动时用空模板覆盖已有记忆；如果 `StoreBackend`/Store 组合不能提供安全的 create-if-absent，阶段 0 必须选择带事务/CAS 的初始化位置。并发编辑冲突仍属于本轮明确延后的数据生命周期边界。系统提示必须要求：只有明确、可长期复用的信息才写入；研究背景必须由用户主动要求保存；不得保存文件正文、数据画像、算法结果、因果图、Tool 输出或模型推测。
 
-官方 backend 组合已在第 5.3 节给出。`StoreBackend.namespace` 调用 `trusted_memory_namespace(runtime)`，helper 从 worker claim 后绑定到实际 LangGraph Runtime 的可信用户身份读取 canonical `user_id`，不是模型参数；具体是官方 `server_info.user.identity` 还是本项目 `context_schema` 字段，必须由阶段 0 Runtime Spike 决定并做启动断言。路径分流和实际存储结构见第 5.4 节。
+官方 backend 组合已在第 5.3 节给出。`StoreBackend.namespace` 调用 `trusted_memory_namespace(runtime)`，helper 从 worker claim 后绑定到 `AgentRunContext` 的可信用户身份读取 canonical `user_id`，不是模型参数；实现层面的 context 字段已经固定，Store 的真实读写、用户隔离和重启保留仍在 P5 验证。路径分流和实际存储结构见第 5.4 节。
 
 ```python
 backend = CompositeBackend(
@@ -999,9 +1011,9 @@ secret 只从部署 secret/env 注入，不写入仓库、checkpoint 或配置 d
 
 ---
 
-## 17. 代码影响面
+## 17. 代码影响面（实施结果与剩余验证）
 
-以下是实施时的预期位置，不代表本轮已经修改：
+下表是本次实施实际涉及的位置和仍需完成的真实验证，不把设计预期误写成验收结果：
 
 | 位置 | 变更 |
 |---|---|
@@ -1019,6 +1031,8 @@ secret 只从部署 secret/env 注入，不写入仓库、checkpoint 或配置 d
 | `Database.bootstrap` / PostgreSQL | 复用 `postgres-checkpoint`，初始化并验证 checkpointer 与 `AsyncPostgresStore`；Store 保存按 user_id 隔离的两份 memory 文件 |
 | RAG 实现 | 拆分 evidence-only 检索入口，保留 release/readiness |
 | tests | schema、planner、fencing、MCP v1→v2、DeepSeek、多调用、恢复和真实 Job 验收 |
+
+本轮已修改 requirements、Compose、worker runtime/bootstrap、父/子图、工具、事件、结果 presenter、定向测试和上述当前事实文档；未修改 MySQL migration 或新增 invocation 表，也未删除旧 MCP 文件。表中真实 DeepSeek、PostgreSQL Store/checkpoint、MCP HTTP、RAG/Web、恢复和完整 Job 测试仍是 P5 未完成项。
 
 旧 `mcp_tool_call_adapter.py`、stdio session 和单结果字段保留在旧版本分支/镜像，不复制到新运行链路。新旧方案的比较不在本次设计中实施，只按第 3.2 节保留未来实验前置材料。
 
@@ -1151,4 +1165,4 @@ secret 只从部署 secret/env 注入，不写入仓库、checkpoint 或配置 d
 
 ## 23. 本文的完成边界
 
-本文已经冻结实现方向、依赖隔离方式、首版默认并发、状态/幂等/MCP/Finalization 协议和分阶段验收标准。它没有修改 requirements、数据库、Compose 或运行代码，也没有声称 Deep Agent 已可运行。进入实施时，应从阶段 0 开始，按真实依赖解析和真实 DeepSeek/MCP 契约证据推进。
+本文已经冻结实现方向、依赖隔离方式、首版默认并发、状态/幂等/MCP/Finalization 协议和分阶段验收标准；本轮已按该方案部分修改 requirements、Compose、worker、graph、工具和事件代码。当前代码已取得构造、静态配置和隔离回归证据，但真实 MCP、PostgreSQL Store/checkpoint、DeepSeek、RAG/Web、完整 Job/SSE 和生产观测仍未验收，因此不能据此声称 Deep Agent 已达到可替换旧版本的生产标准。

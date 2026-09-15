@@ -25,6 +25,26 @@ from .fault_tolerance import (
     tool_retry,
 )
 import logging
+from collections.abc import Mapping
+import asyncio
+import inspect
+from typing import Any
+
+from Agent.deep_agent.finalization import (
+    FinalizationGate,
+    StructuredResponseError,
+)
+from Agent.deep_agent.memory import MEMORY_PATHS, MEMORY_TEMPLATES, trusted_memory_namespace
+from Agent.deep_agent.state import (
+    assert_checkpoint_state_safe,
+    from_deep_agent_output,
+    to_deep_agent_input,
+)
+from Agent.deep_agent_tools.models import (
+    AlgorithmResult,
+    EvidenceResult,
+    WebEvidenceResult,
+)
 
 
 
@@ -247,6 +267,461 @@ def create_graph_from_tools(
         checkpointer=checkpointer,
         rag_available=rag_available,
     )
+
+
+def _safe_algorithm_result_summary(result: AlgorithmResult) -> dict[str, Any]:
+    """把算法结果压缩为报告可读事实，不把 raw payload 带进提示词。"""
+
+    return {
+        "result_ref": result.result_ref,
+        "capability_id": result.capability_id,
+        "capability_version": result.capability_version,
+        "status": result.status,
+        "graph_semantics": result.graph_semantics,
+        "summary": result.summary,
+        "diagnostics": result.diagnostics.model_dump(mode="json"),
+        "warnings": [warning.model_dump(mode="json") for warning in result.warnings],
+    }
+
+
+def _legacy_rag_evidence_result(evidence: Mapping[str, Any]) -> dict[str, Any]:
+    """把 Deep Agent evidence 投影为既有 report formatter 能消费的摘要。"""
+
+    normalized: list[EvidenceResult] = []
+    for key, value in evidence.items():
+        try:
+            item = EvidenceResult.model_validate(value)
+        except Exception:
+            continue
+        if str(key) == item.evidence_ref:
+            normalized.append(item)
+    if not normalized:
+        return {
+            "success": False,
+            "status": "unavailable",
+            "summary": "Deep Agent 未返回可引用的知识库证据。",
+            "questions": [],
+        }
+    answer = "\n".join(
+        f"[{item.evidence_ref}] {item.snippet}" for item in normalized
+    )
+    retrieved_docs = [
+        {
+            "evidence_id": item.evidence_ref,
+            "metadata": {
+                "source_title": item.source_title,
+                "source_url": item.source_url,
+                "locator": item.locator,
+                "release_id": item.release_id,
+            },
+            "rerank_score": item.rerank_score if item.rerank_score is not None else item.score,
+        }
+        for item in normalized
+    ]
+    return {
+        "success": True,
+        "status": "available",
+        "questions": [
+            {
+                "question": "Deep Agent 检索的可引用证据",
+                "intent": "为因果分析报告补充背景证据",
+                "answer": answer,
+                "confidence": "medium",
+                "citations": [item.evidence_ref for item in normalized],
+                "retrieved_docs": retrieved_docs,
+            }
+        ],
+    }
+
+
+def _legacy_web_evidence_result(evidence: Mapping[str, Any]) -> dict[str, Any]:
+    """把 Deep Agent Web evidence 投影为旧报告的 snippet-only 输入。"""
+
+    normalized: list[WebEvidenceResult] = []
+    for key, value in evidence.items():
+        try:
+            item = WebEvidenceResult.model_validate(value)
+        except Exception:
+            continue
+        if str(key) == item.evidence_ref:
+            normalized.append(item)
+    if not normalized:
+        return {
+            "success": False,
+            "status": "unavailable",
+            "content": [],
+        }
+    return {
+        "success": True,
+        "status": "available",
+        "content": [
+            {
+                "title": item.source_title or "",
+                "url": item.source_url or "",
+                "origin": item.locator or "学术来源",
+                "text": item.snippet,
+            }
+            for item in normalized
+        ],
+    }
+
+
+def _legacy_analysis_result(
+    *,
+    decision: Any | None,
+    algorithm_results: Mapping[str, Any],
+    action_ledger: Mapping[str, Any],
+    finalization_status: str,
+    finalization_error: str | None = None,
+) -> dict[str, Any]:
+    """为现有 report/presenter 提供兼容视图；权威仍是 Deep Agent 投影字段。"""
+
+    normalized_results: dict[str, AlgorithmResult] = {}
+    for key, value in algorithm_results.items():
+        try:
+            result = AlgorithmResult.model_validate(value)
+        except Exception:
+            continue
+        if key == result.result_ref:
+            normalized_results[key] = result
+
+    payload: dict[str, Any] = {
+        "success": False,
+        "outcome": getattr(decision, "outcome", None),
+        "finalization_status": finalization_status,
+        "algorithm_results": [
+            _safe_algorithm_result_summary(result)
+            for result in normalized_results.values()
+        ],
+        "action_ledger": [
+            {
+                "tool_name": getattr(record, "tool_name", None),
+                "final_status": getattr(record, "final_status", None),
+                "result_ref": getattr(record, "result_ref", None),
+            }
+            for record in action_ledger.values()
+        ],
+    }
+    if finalization_error:
+        payload.update(
+            {
+                "error_type": "FinalizationDegraded",
+                "error": finalization_error,
+                "message": (
+                    "程序无法验证最终算法选择；以下报告仅基于已验证的输入和执行摘要。"
+                ),
+            }
+        )
+
+    primary_ref = getattr(decision, "primary_result_ref", None)
+    primary = normalized_results.get(primary_ref) if primary_ref else None
+    if (
+        finalization_status == "valid"
+        and getattr(decision, "outcome", None) == "algorithm_supported"
+        and primary is not None
+        and primary.status == "valid"
+        and primary.standardized_graph is not None
+    ):
+        payload["success"] = True
+        payload["data"] = primary.standardized_graph.model_dump(mode="json")
+        payload["primary_result_ref"] = primary.result_ref
+    elif finalization_status == "valid" and getattr(decision, "outcome", None) == "evidence_only":
+        payload["message"] = "本次分析未采用算法结果，仅返回证据型信息。"
+    elif finalization_status == "valid" and getattr(decision, "outcome", None) == "no_valid_algorithm":
+        payload["error_type"] = "NoValidAlgorithmResult"
+        payload["message"] = "算法调用未产生有效结果，不能据此断言不存在因果关系。"
+    return payload
+
+
+async def _deep_agent_parent_node(
+    state,
+    *,
+    runtime,
+    config,
+    deep_agent,
+    store,
+    memory_init_lock,
+):
+    """显式投影父 State 到 Deep Agent，并只接收白名单输出。"""
+
+    context = getattr(runtime, "context", None)
+    if context is not None and hasattr(context, "ensure_active"):
+        await context.ensure_active()
+    await _ensure_official_memory_files(
+        store=store,
+        context=context,
+        lock=memory_init_lock,
+    )
+    child_input = to_deep_agent_input(state)
+    if context is not None and hasattr(context, "assert_state_safe"):
+        context.assert_state_safe(child_input)
+    child_state = await deep_agent.ainvoke(
+        child_input,
+        config=config,
+        context=context,
+    )
+    if not isinstance(child_state, Mapping):
+        raise RuntimeError("Deep Agent returned an invalid State")
+    assert_checkpoint_state_safe(child_state)
+    update = dict(from_deep_agent_output(child_state))
+    # data_profile 是外层 admission 的只读摘要副本，不是 runtime dependency。
+    update["data_profile"] = child_input["data_profile"]
+    # report_node 仍使用既有 formatter；这里仅投影结构化证据，不把
+    # provider response、raw result 或运行时对象带回父 State。
+    update["knowledge_base_result"] = _legacy_rag_evidence_result(
+        update["deep_agent_rag_evidence"]
+    )
+    update["web_search_result"] = _legacy_web_evidence_result(
+        update["deep_agent_web_evidence"]
+    )
+    return update
+
+
+async def _ensure_official_memory_files(
+    *,
+    store: Any | None,
+    context: Any,
+    lock: asyncio.Lock,
+) -> None:
+    """首次 Job 使用时按可信 user namespace create-if-absent 初始化记忆。"""
+
+    if store is None:
+        return
+    identity = getattr(context, "trusted_identity", None)
+    if identity is None:
+        raise RuntimeError("trusted runtime identity is required for memory initialization")
+    namespace = trusted_memory_namespace(context)
+    getter = getattr(store, "aget", None) or getattr(store, "get", None)
+    writer = getattr(store, "aput", None) or getattr(store, "put", None)
+    if not callable(getter) or not callable(writer):
+        raise RuntimeError("PostgreSQL Store does not expose get/put operations")
+    async with lock:
+        for path in MEMORY_PATHS:
+            existing = getter(namespace, path)
+            if inspect.isawaitable(existing):
+                existing = await existing
+            if existing is not None:
+                continue
+            value = {
+                "content": MEMORY_TEMPLATES[path].decode("utf-8"),
+                "encoding": "utf-8",
+            }
+            result = writer(namespace, path, value)
+            if inspect.isawaitable(result):
+                await result
+
+
+async def _finalization_gate_node(
+    state,
+    *,
+    runtime,
+    gate: FinalizationGate,
+):
+    """执行纯确定性 finalization；失败只消耗一次持久化修正机会。"""
+
+    context = getattr(runtime, "context", None)
+    identity = getattr(context, "trusted_identity", None)
+    if identity is None:
+        raise RuntimeError("trusted runtime identity is required for finalization")
+    try:
+        decision = gate.validate(
+            decision=state.get("deep_agent_structured_response")
+            or state.get("deep_agent_decision"),
+            algorithm_results=state.get("deep_agent_algorithm_results"),
+            action_ledger=state.get("deep_agent_action_ledger"),
+            trusted_identity=identity,
+            rag_evidence=state.get("deep_agent_rag_evidence"),
+            web_evidence=state.get("deep_agent_web_evidence"),
+        )
+    except StructuredResponseError:
+        retry_count = int(state.get("finalization_retry_count") or 0)
+        if retry_count < 1:
+            return {
+                "finalization_retry_count": retry_count + 1,
+                "deep_agent_retry_instruction": (
+                    "上一份结构化最终决策未通过程序事实校验。请保留已有工具结果，"
+                    "重新提交一个只引用真实结果、并为每个有效结果提供唯一取舍的"
+                    "FinalAnalysisDecision；不要重新编造工具调用或结果。"
+                ),
+            }
+        safe_error = "FINALIZATION_CONTRACT_INVALID"
+        return {
+            "finalization_status": "degraded",
+            "finalization_error": safe_error,
+            "deep_agent_retry_instruction": "",
+            "causal_analysis_result": _legacy_analysis_result(
+                decision=None,
+                algorithm_results=state.get("deep_agent_algorithm_results") or {},
+                action_ledger=state.get("deep_agent_action_ledger") or {},
+                finalization_status="degraded",
+                finalization_error=safe_error,
+            ),
+        }
+
+    return {
+        "deep_agent_decision": decision,
+        "deep_agent_structured_response": decision,
+        "deep_agent_retry_instruction": "",
+        "finalization_status": "valid",
+        "causal_analysis_result": _legacy_analysis_result(
+            decision=decision,
+            algorithm_results=state.get("deep_agent_algorithm_results") or {},
+            action_ledger=state.get("deep_agent_action_ledger") or {},
+            finalization_status="valid",
+        ),
+    }
+
+
+def _finalization_router(state) -> str:
+    """第一次 Gate 失败回到同一 Deep Agent，第二次或成功进入报告。"""
+
+    return (
+        "deep_agent"
+        if state.get("finalization_status") is None
+        and int(state.get("finalization_retry_count") or 0) == 1
+        else "report"
+    )
+
+
+def build_deep_agent_parent_graph(
+    *,
+    llm: "ChatOpenAI",
+    deep_agent: Any,
+    registry: Any,
+    checkpointer: Any,
+    store: Any | None = None,
+) -> Any:
+    """构建新 Job 路径：admission/preprocess → Deep Agent → Gate → report。
+
+    旧 ``build_graph`` 保留给兼容链路；worker 新运行时显式使用本构造器，
+    因而不会再加载 slot stdio MCP 或固定 mcp→rag→web 流水线。
+    """
+
+    if checkpointer is None or checkpointer is False:
+        raise RuntimeError("必须提供 PostgreSQL Checkpointer，禁止无持久化降级")
+    workflow = StateGraph(CausalAgentState, context_schema=AgentRunContext)
+    memory_init_lock = asyncio.Lock()
+    streaming_llm = llm.model_copy(update={"streaming": True})
+    workflow.add_node(
+        "agent",
+        bind_node(nodes.agent_node, event_node_name="agent", llm=llm),
+        retry_policy=short_retry(),
+        timeout=timeout(run_timeout=45, idle_timeout=20),
+        error_handler=guarded_error_handler(
+            route_to_normal_chat,
+            event_node_name="agent",
+            timeout_ms=45_000,
+        ),
+    )
+    workflow.add_node(
+        "fold",
+        bind_node(nodes.fold_node, event_node_name="fold", llm=llm),
+        retry_policy=short_retry(),
+        timeout=timeout(run_timeout=120, idle_timeout=45),
+        error_handler=guarded_error_handler(
+            recover_fold_to_agent,
+            event_node_name="fold",
+            timeout_ms=120_000,
+        ),
+    )
+    workflow.add_node(
+        "preprocess",
+        bind_node(nodes.preprocess_node, event_node_name="preprocess", llm=llm),
+        retry_policy=short_retry(),
+        timeout=timeout(run_timeout=180, idle_timeout=80),
+        error_handler=guarded_error_handler(
+            recover_preprocess_to_agent,
+            event_node_name="preprocess",
+            timeout_ms=180_000,
+        ),
+    )
+    workflow.add_node(
+        "deep_agent",
+        bind_subgraph_node(
+            _deep_agent_parent_node,
+            event_node_name="deep_agent",
+            deep_agent=deep_agent,
+            store=store,
+            memory_init_lock=memory_init_lock,
+        ),
+    )
+    workflow.add_node(
+        "finalization_gate",
+        bind_subgraph_node(
+            _finalization_gate_node,
+            event_node_name="finalization_gate",
+            gate=FinalizationGate(registry=registry),
+        ),
+    )
+    workflow.add_node(
+        "report",
+        bind_node(nodes.report_node, event_node_name="report", llm=llm),
+        retry_policy=short_retry(),
+        timeout=timeout(run_timeout=180, idle_timeout=60),
+        error_handler=guarded_error_handler(
+            recover_report,
+            event_node_name="report",
+            timeout_ms=180_000,
+        ),
+    )
+    workflow.add_node(
+        "normal_chat",
+        bind_node(nodes.normal_chat_node, event_node_name="normal_chat", llm=streaming_llm),
+        retry_policy=short_retry(),
+        timeout=timeout(run_timeout=60, idle_timeout=30),
+        error_handler=guarded_error_handler(
+            recover_terminal_message,
+            event_node_name="normal_chat",
+            timeout_ms=60_000,
+        ),
+    )
+    workflow.add_node(
+        "inquiry_answer",
+        bind_node(
+            nodes.inquiry_answer_node,
+            event_node_name="inquiry_answer",
+            llm=streaming_llm,
+        ),
+        retry_policy=short_retry(),
+        timeout=timeout(run_timeout=90, idle_timeout=30),
+        error_handler=guarded_error_handler(
+            recover_terminal_message,
+            event_node_name="inquiry_answer",
+            timeout_ms=90_000,
+        ),
+    )
+
+    workflow.set_entry_point("agent")
+    workflow.add_conditional_edges(
+        "agent",
+        guarded_router(edges.decision_router),
+        {
+            "fold": "fold",
+            "normal_chat": "normal_chat",
+            "postprocess": "report",
+            "inquiry_answer": "inquiry_answer",
+        },
+    )
+    workflow.add_conditional_edges(
+        "fold",
+        guarded_router(edges.fold_router),
+        {
+            "preprocess": "preprocess",
+            "agent": "agent",
+            "normal_chat": "normal_chat",
+        },
+    )
+    workflow.add_edge("preprocess", "deep_agent")
+    workflow.add_edge("deep_agent", "finalization_gate")
+    workflow.add_conditional_edges(
+        "finalization_gate",
+        guarded_router(_finalization_router),
+        {"deep_agent": "deep_agent", "report": "report"},
+    )
+    workflow.add_edge("report", END)
+    workflow.add_edge("normal_chat", END)
+    workflow.add_edge("inquiry_answer", END)
+    return workflow.compile(checkpointer=checkpointer, store=store)
 
 
 agent_graph = None

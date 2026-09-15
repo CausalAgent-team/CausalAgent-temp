@@ -184,6 +184,12 @@ def trusted_memory_namespace(value: Any) -> tuple[str, ...]:
     """从可信 runtime 身份提取 user namespace，不读取模型参数。"""
 
     identity = value
+    # Deep Agents/StoreBackend 传入的是 LangGraph Runtime，而可信身份位于
+    # runtime.context。不能退回模型可控的 tool 参数或普通 State 字段。
+    if hasattr(value, "context"):
+        context = getattr(value, "context", None)
+        if context is not None:
+            identity = context
     if hasattr(value, "trusted_identity"):
         identity = getattr(value, "trusted_identity")
 
@@ -246,6 +252,6 @@ def build_official_backend(*, store: Any, namespace: Callable[[Any], tuple[str, 
     return OfficialCompositeBackend(
         default=OfficialStateBackend(),
         routes={
-            "/memories/": OfficialStoreBackend(namespace=namespace),
+            "/memories/": OfficialStoreBackend(namespace=namespace, store=store),
         },
     )

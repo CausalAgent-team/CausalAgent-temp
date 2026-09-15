@@ -2,9 +2,9 @@
 
 > **文档职责**：把 Deep Agent 产品规划与技术设计拆解为可分支协作、可逐阶段验收、可合并和可回退的工程任务；明确主线实施者与 MCP 协作成员的文件所有权、依赖顺序、合并门禁、测试证据和文档更新范围。
 >
-> **适用范围**：适用于从 `develop@4bea85fdea7292e85577d2b9b3e4c1c763b50829` 创建的新 DeepAgent 功能分支，以及由该分支派生的 MCP 协作分支。本文是实施计划，不代表功能已经实现或验收通过。
+> **适用范围**：适用于从 `develop@4bea85fdea7292e85577d2b9b3e4c1c763b50829` 创建的新 DeepAgent 功能分支，以及由该分支派生的 MCP 协作分支。本文记录阶段实现状态，但任何 unit、隔离或构造证据都不能替代文末列出的真实依赖与完整 Job 验收。
 
-**状态**：P0、P1 与 P2 已完成合并收口；P3 worker/MCP pool/checkpoint 真实接入及以后阶段尚未完成
+**状态**：P0、P1、P2 已完成合并收口；P3 worker/MCP pool/Store/父图代码已接入，P4 Finalization/report/events 代码契约已完成；P5 真实依赖与完整 Job 验收仍未完成，P6 当前事实文档、产品规划链接和 CHANGELOG 已同步
 
 **计划日期**：2026-09-14
 
@@ -44,7 +44,7 @@ P0 已取得目标依赖 clean install、真实 DeepSeek Responses、多 Tool/To
 | `Agent/deep_agent/state.py`、`context.py` | 实现 `ProjectDeepAgentState(DeepAgentState)` 兼容基类、Action Ledger/算法结果/RAG/Web 独立 reducer 字段、空 Ledger 初始值、父子 State 白名单投影，以及不把 guard/executor/Store/checkpointer 写入 checkpoint 的检查。真实 `deepagents.graph.DeepAgentState` 只在安装后继承，当前环境使用协议测试 fallback。 |
 | `Agent/deep_agent/profile.py`、`prompts.py`、`graph.py`、`finalization.py` | 冻结 `read_file`/`edit_file` 工具面、两条 memory write allow 加 `/**` deny 的 first-match 规则、模型/Tool/递归/Finalization retry 预算、85%/10%/4000 summarization 参数、受控系统提示和 `ToolStrategy(FinalAnalysisDecision)`/引用闭包校验。真实 graph 依赖通过惰性加载，缺包不会伪造生产图。 |
 | `Agent/deep_agent/memory.py`、`postgres_store.py` | 实现 `CompositeBackend(StateBackend + StoreBackend)` 的协议级路径路由；memory 按可信 `user_id` namespace 隔离；默认内存 backend 的两份 Markdown 文件 create-if-absent；模型不能写 raw/其他虚拟路径，可信 Adapter 可直接写 canonical raw JSON 并回读校验 hash/大小/version；PostgreSQL Store 只做惰性官方 API 装配，checkpoint cleanup helper 明确排除 `store`/`store_migrations`。官方 StoreBackend 初始化、PostgreSQL 重启保留和真实跨 Job 保留列入后续真实验收，不作为当前默认 P2-U 的阻断条件。 |
-| `Agent/deep_agent_tools/dependency_planner.py` | 已形成只覆盖 PC、OLC、DirectLiNGAM 的静态 Registry DAG 协议；P2-U 收口时以 `AlgorithmSpec` 作为唯一事实源，统一 `requires/produces`、算法 timeout、`concurrency_key` 和默认并发，并保留同轮 calls、分层执行和失败传播语义。当前尚未接入真实 Deep Agent Tool dispatch；P3 接入，P5 使用真实 DeepSeek 验证。 |
+| `Agent/deep_agent_tools/dependency_planner.py` | 已形成只覆盖 PC、OLC、DirectLiNGAM 的静态 Registry DAG 协议；以 `AlgorithmSpec` 作为唯一事实源，统一 `requires/produces`、算法 timeout、`concurrency_key` 和默认并发，并保留同轮 calls、分层执行和失败传播语义。P3 已在 Deep Agent ToolNode 边界接入；同轮真实 DeepSeek 并行/依赖行为仍由 P5 验证。 |
 | `Agent/deep_agent_tools/adapters/`、`algorithm_tools.py`、`runtime_updates.py` | 实现 PC、OLC、DirectLiNGAM 应用侧 Adapter；逐项落实参数校验、连续数据/样本量/缺失边界、可逆确定性预处理 recipe digest、timeout/concurrency 所属 Spec、统一 `AlgorithmResult`/provenance、raw result metadata 和单调 Ledger revision；增加旧 runner 节点/边/权重方向的纯函数标准化。三类 LangChain Tool 已使用 runtime identity 并通过 `Command` 同步更新结果、Ledger 与 ToolMessage；未接入 MCP transport。 |
 | `Agent/deep_agent_tools/rag_evidence_tool.py`、`web_evidence_tool.py`、`Agent/knowledge_base/rag_service.py` | 增加不调用 answer model 的 `RagService.get_evidence()` 与 `rag_evidence_search`；保留 active release/readiness、脱敏 embedding fingerprint、检索 trace、dense/sparse/MMR/rerank、compression、citation 和 unavailable/no-evidence/protocol 状态。Web Tool 复用当前 SearXNG arXiv/Crossref/OpenAlex、top-3 轮转和最多 9 条 snippet；`web_search_enabled` 关闭时不触网。 |
 | `tests/unit/agent/`、`tests/integration/agent/` | 新增 P2-U State、Profile、permission、memory、dependency planner、Adapter、RAG/Web、FinalAnalysisDecision 和 Store/checkpoint 边界测试；只使用 fake/isolated 实现，未把它们写成真实服务验收。 |
@@ -70,7 +70,34 @@ P2-M 已交付独立服务、鉴权、固定 runner、有界执行池、长期�
 
 合并后的 Docker Python 3.11 测试镜像已完成 `515 passed` 全量 unit；Agent、deployment、migration、logging policy 和 observability 定向 integration 为 `44 passed, 3 skipped`；开发 Compose `config --quiet` 通过。全量 integration 为 `57 passed, 4 skipped, 3 failed`，其中一项新增动态事件问题已修复并复跑通过，剩余两项仍是既有 admin deployment 环境断言（测试镜像没有 `git`，以及既有 `rag-eval-worker` 显式模型环境变量），不属于本轮 MCP/Deep Agent 合并引入。LangSmith 测试遥测曾因 DNS 失败，但 pytest 退出码与断言不受影响。
 
-因此当前状态是“P0/P1/P2 已闭合，生产 Deep Agent 功能尚不可部署”。下一步进入 P3 的真实 worker HTTP executor、checkpoint/Store 生命周期和父图接入；P4/P5 仍须以真实依赖和隔离服务逐层补证，不能用 unit/mock 替代。
+因此当前状态是“P0/P1/P2 已闭合，P3/P4 已完成代码接入但生产 Deep Agent 功能尚不可部署”。下一步以 P5 的真实依赖、恢复和完整 Job 验收为主；所有 unit、隔离服务和构造证据仍须按层次报告，不能替代真实 MCP、PostgreSQL、DeepSeek、RAG/Web 或完整 Job 证据。
+
+## P3/P4 当前执行记录（2026-09-15）
+
+本轮在已合入 `causal-mcp` v2 协作代码的基础上完成了 worker、父图和公共结果链路的代码接入。以下结论只描述当前代码和已执行证据，不把真实外部服务尚未执行的部分写成完成。
+
+### P3 当前状态
+
+- 生产初始化路径由进程级 `ProcessRuntime` 持有 MCP client pool、`McpAlgorithmExecutor`、静态 `AlgorithmRegistry`、官方 `AsyncPostgresStore`、PostgreSQL checkpointer、RAG/Web 工具和已编译父/子图；`SlotRuntime` 只创建每次 Job 的可信 `AgentRunContext`，生产路径不再按 slot 启动 stdio MCP session。
+- bootstrap 的顺序已固定为 MySQL readiness、PostgreSQL checkpoint pool/schema、`AsyncPostgresStore` setup/readiness、静态 Registry 校验、进程级 MCP connect/handshake、RAG readiness、Deep Agent/父图编译、worker ready，然后才 claim Job。真实数据库、MCP、RAG 和模型连接仍未在本轮执行。
+- `AlgorithmSpec` 仍是唯一模型工具事实源；依赖调度 middleware 位于 Deep Agent 的 ToolNode 边界，收集同一模型响应中的完整 algorithm calls，按 `requires/produces` 分层并在 Job 上限内并发执行，不能由动态 `list_tools()` 绕过。Tool call identity、terminal Ledger 和结果/evidence reducer 已接入父子 State 投影。
+- RAG evidence retriever 已改为首次查询时惰性创建，worker readiness 不会加载 Chroma/BM25/embedding；Web 是否可用由运行时显式绑定，关闭时不触网。
+
+### P4 当前状态
+
+- 父图数据分析路径已接入 `agent → fold/preprocess → deep_agent → finalization_gate → report`；普通聊天和兼容旧路径仍保留，未删除旧文件或旧重要产物。
+- `FinalizationGate` 只做确定性动态校验；第一次不一致只回到同一 Deep Agent 重提结构化决策，第二次仍失败则生成 `finalization_status=degraded` 的安全报告上下文，报告成功后 Job 仍为 `succeeded` 且不发布未经验证的主图。
+- 公共事件适配器已把 Deep Agent/finalization 节点和聚合后的安全 Tool 结果投影到现有 SSE 白名单；只增加受控 `status`、`safe_error_code` 与 `finalization_status`，不公开 invocation、result、provider ID、原始参数/结果或 reasoning。
+
+### 当前证据边界
+
+```text
+已验证：P3/P4 定向 42 passed；Docker Python 3.11 全量 tests/unit 528 passed；全量 integration 59 passed、4 skipped；Deep Agent 父图构造、开发 Compose 展开，以及 staging/prod 必填环境缺失时 fail-closed、占位配置展开成功
+已知环境失败：全量 integration 中 2 项既有 admin deployment 断言失败（测试镜像缺少 git；既有 rag-eval-worker 宿主模型变量断言），不属于本轮 Deep Agent/MCP 代码失败
+未验证：真实 MCP HTTP 调用与故障/容量验收、隔离 PostgreSQL Store/checkpoint 重启恢复、真实 DeepSeek Responses、多调用/ToolStrategy、active RAG/SearXNG、完整 Job/SSE/取消恢复和生产观测链路
+```
+
+P3/P4 的本地代码证据不改变 P5 的进入条件；在真实依赖和完整 Job 证据齐全前，不能切换生产 worker，也不能声称“可替换旧版本”。
 
 ---
 
@@ -277,10 +304,10 @@ Agent/deep_agent_tools/identity.py
 | P1 | 共享领域/传输契约 | 你 | 否 | schema snapshot、reducer、identity、fake executor 测试通过并提交 | 已由 `a6eba00` 提交；本轮兼容回归通过 |
 | P2-M | causal-mcp 纵向切片 | MCP 协作者 | 与 P2-U 并行 | MCP 分支独立完成真实算法、并发和故障验收 | 代码与隔离证据已合入收口；fencing/readiness/容量/参数/事件问题待修复 |
 | P2-U | Deep Agent 基础、Memory、Adapter、RAG/Web | 你 | 与 P2-M 并行 | fake executor 下状态、权限、工具和结构化终态测试通过 | 协议级代码和测试已完成；真实 Store/RAG/Web/模型服务未验收 |
-| P3 | 合并 MCP 并接入 worker | 你主导，协作者配合 | 否 | 真实 executor 替换 fake 后集成测试通过 | 未开始 |
-| P4 | Finalization/report/events/UI 收口 | 你 | 否 | 三类 outcome、degraded、SSE、主图和 Job 终态通过 | 未开始 |
-| P5 | 真实依赖与恢复验收 | 双方按模块负责 | 可分层 | Docker、MySQL、PostgreSQL、MCP、DeepSeek、RAG/Web 证据齐全 | 未开始 |
-| P6 | 文档、CHANGELOG、版本身份 | 你 | 否 | 当前事实文档与实现一致，验证结果分层记录 | 未开始 |
+| P3 | 合并 MCP 并接入 worker | 你主导，协作者配合 | 否 | 真实 executor 替换 fake 后集成测试通过 | 代码已接入 worker：进程级 MCP pool、真实 executor、Store、父/子图和静态 dispatch；真实服务验收未完成 |
+| P4 | Finalization/report/events/UI 收口 | 你 | 否 | 三类 outcome、degraded、SSE、主图和 Job 终态通过 | 父图、Gate、报告兼容投影、公共字段和定向测试已完成；真实 SSE/full Job 未验收 |
+| P5 | 真实依赖与恢复验收 | 双方按模块负责 | 可分层 | Docker、MySQL、PostgreSQL、MCP、DeepSeek、RAG/Web 证据齐全 | 静态/容器 unit 和 Compose 展开已验证；真实 MCP/Store/DeepSeek/RAG/Web/full Job 未完成 |
+| P6 | 文档、CHANGELOG、版本身份 | 你 | 否 | 当前事实文档与实现一致，验证结果分层记录 | 当前事实文档、产品规划链接、CHANGELOG 和最终验证记录已同步；版本身份/生产验收仍未完成 |
 
 任一强制门禁失败时应停在当前阶段解决，不能用后续代码、mock 或文档声明绕过。
 
@@ -751,19 +778,20 @@ tests/integration/agent/test_deep_agent_checkpoint.py
 
 并行阶段只声明 fake executor、isolated Store 或协议级测试通过；不能写成真实 MCP、PostgreSQL、RAG、SearXNG 或模型验收完成。
 
-### 8.7 P2-U 实施状态
+### 8.7 P2-U 实施状态（历史收口记录）
 
-8.1—8.6 已形成协议实现和单元测试基础，但尚未完成父图/worker 主链接入，不能写成
-完整落地。2026-09-14 的实现审计补齐了真实 graph 的 `state_schema`、
+在 P2-U 阶段，8.1—8.6 已形成协议实现和单元测试基础，但尚未完成父图/worker 主链接入；
+该停止点不能写成完整落地。2026-09-14 的实现审计补齐了真实 graph 的 `state_schema`、
 `context_schema`、模型 profile、摘要/调用预算 middleware、filesystem permission
 和关闭默认 general-purpose subagent 的 Harness Profile；同时修正了 RAG evidence
 字段与不可用降级、依赖调度的并发/超时边界、旧 runner payload 标准化、
 `arrows="from"` 方向语义和 DirectLiNGAM CSV 硬校验。隔离 Python 3.11 容器使用
-第 4.1 节目标依赖簇成功构造 `CompiledStateGraph`，但仓库声明依赖和正式镜像仍未升级。
+第 4.1 节目标依赖簇成功构造 `CompiledStateGraph`；随后依赖、worker 和父图接入由 P3/P4
+继续完成，当前事实见本计划的 P3/P4 执行记录。
 
-依赖调度器在本阶段只作为 `AlgorithmSpec` 驱动的协议组件收口；真实 Deep Agent
-Tool dispatch 接入属于 P3，真实 DeepSeek 并发和依赖行为验证属于 P5。当前不把
-调度器单元测试通过写成已经控制生产 ToolNode 执行。
+依赖调度器在本阶段只作为 `AlgorithmSpec` 驱动的协议组件收口；P3 已将其接入
+Deep Agent Tool dispatch，真实 DeepSeek 并发和依赖行为验证仍属于 P5。该段历史证据
+不把调度器单元测试通过写成真实服务验收。
 
 随后补齐了此前与本计划不一致的 Tool 运行时写回：`build_deep_agent()` 会把项目
 Tool materialize 为 LangChain Tool；Algorithm、RAG、Web 均从注入的 `ToolRuntime`
@@ -785,14 +813,12 @@ ToolRuntime/Command/ToolNode 定向：6 passed
 真实 RAG active release / SearXNG / DeepSeek：未执行，无真实服务/凭据
 ```
 
-仍未完成的关键项包括：父 State → Deep Agent → 父 State 的真实 worker 调用；P3 的
-依赖调度器 Tool dispatch 接入和 artifact publication；MCP 传输重试的 `retry_ordinal`
-注入；P0 真实 DeepSeek response/call identity 字段映射；官方 StoreBackend 两份
-memory 文件的初始化及 PostgreSQL 重启保留；真实 MCP、RAG、SearXNG、DeepSeek
-与 checkpoint 恢复验收。官方 StoreBackend 相关项目不阻断当前默认 P2-U，但必须在
-后续真实 PostgreSQL/长期记忆验收中单独报告。
-P2-U 不修改 P2-M 持有的 MCP server、worker runtime/bootstrap、Compose 或 requirements；
-后续 P3 合并前仍须按 9.1—9.4 的共享契约、普通 merge、真实 MCP 握手和 fencing 门禁执行。
+在 P2-U 停止点仍未完成的关键项包括：父 State → Deep Agent → 父 State 的 worker 调用、
+P3 的真实 dispatch、MCP 传输重试的 `retry_ordinal` 注入、真实 DeepSeek response/call
+identity 映射、官方 StoreBackend 两份 memory 文件初始化及 PostgreSQL 重启保留，以及
+真实 MCP、RAG、SearXNG、DeepSeek 与 checkpoint 恢复验收。P3/P4 已覆盖其中的代码接入
+部分；剩余真实证据仍在 P5 单独验收。P2-U 阶段“不修改 P2-M 持有的 worker/bootstrap、
+Compose 或 requirements”是历史协作边界，已由合并后的 P3 实现解除。
 旧 MCP 文件没有物理删除，只在未来新运行链接入时按计划移除不可达引用，并在需要删除
 文件时另行取得明确授权。
 
@@ -871,6 +897,18 @@ PC、OLC、DirectLiNGAM 三类算法 Tool；同一模型响应中的独立调用
 
 旧文件是否物理删除属于重要文件删除，必须在实现时另行取得用户明确授权。未授权时只移除新运行链引用并在验收中确认旧代码不可达，不执行删除。
 
+### 9.5 本轮 P3 实施状态
+
+9.3 的生产初始化顺序、进程级 MCP pool、真实 `McpAlgorithmExecutor`、官方
+`AsyncPostgresStore` 装配、静态 Registry、父/子图编译和 slot 可信上下文已经落入
+`app/agent/worker/runtime.py`、`bootstrap.py` 与 graph runner。新路径没有按 slot 启动
+stdio server；兼容 helper 仅在显式未注入 graph 的测试/旧调用路径保留。
+
+9.4 的动态工具注册和单 `tool_calls[0]` 处理不再作为新路径入口。依赖 middleware 已在
+Deep Agents 目标依赖下以真实 ToolNode 行为构造并由定向测试锁定；RAG service 改为
+首次查询惰性创建，避免 readiness 加载索引或 embedding。尚未完成的是真实 MCP HTTP
+调用、容量/故障注入、真实 Store/checkpoint 生命周期、真实模型和完整 Job 验收。
+
 ---
 
 ## 10. P4：父图、Finalization、报告与公共事件
@@ -941,6 +979,17 @@ observability/event_catalog.py
 - cancel/revoked 不被错误映射为普通降级。
 
 如果普通聊天页面无需结构变化，则不做无关前端重构，只补充现有附件/主图/报告合同测试。
+
+### 10.5 本轮 P4 实施状态
+
+父图已实现 `agent → fold/preprocess → deep_agent → finalization_gate → report` 数据型
+路径，并保留普通聊天、追问和旧兼容路径。`FinalizationGate` 已按当前 Job/attempt/lease
+筛选结果并校验 decision、Ledger、assessment 和主图引用；动态失败最多回环一次，第二次
+失败构造安全 degraded report context，成功报告对应的 Job 仍为 `succeeded`。
+
+报告 presenter 和公共 event adapter 已完成 `valid|degraded` 结果状态、Deep Agent 节点、
+安全 Tool result 字段和敏感字段白名单收口。已验证的是代码构造、定向 unit/integration 和
+Compose 静态行为；真实 SSE replay、完整 Job 终态/取消恢复、真实模型和生产观测仍属于 P5。
 
 ---
 

@@ -11,7 +11,7 @@ _EVENT_FIELDS = {
     "progress": {"summary"},
     "decision": {"summary"},
     "tool_call_start": {"tool_name", "argument_keys"},
-    "tool_call_result": {"tool_name", "summary"},
+    "tool_call_result": {"tool_name", "summary", "status", "safe_error_code"},
     "node_retry": {"message", "discard_stream_id"},
     "node_end": {"duration", "status", "message"},
     "text_delta": {"stream_id", "sequence", "delta"},

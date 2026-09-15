@@ -31,8 +31,12 @@ class DirectLiNGAMAdapter(BaseAlgorithmAdapter):
             return "invalid_input", SafeErrorCode.ALGORITHM_INPUT_INVALID
         if adapter_input.missing_values_present:
             return "invalid_input", SafeErrorCode.ALGORITHM_INPUT_INVALID
-        if not adapter_input.dataset_csv:
+        if not adapter_input.dataset_csv and not adapter_input.dataset_authority_available:
             return "invalid_input", SafeErrorCode.ALGORITHM_INPUT_INVALID
+        if not adapter_input.dataset_csv:
+            # 新路径由 causal-mcp 按可信上下文从冻结文件读取；本地 Adapter
+            # 仍保留 profile/缺失值校验，但不复制文件正文到 State。
+            return None
         try:
             rows = list(csv.reader(io.StringIO(adapter_input.dataset_csv), strict=True))
         except (csv.Error, UnicodeError):

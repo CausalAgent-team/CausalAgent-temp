@@ -61,6 +61,37 @@ docker compose -f docker-compose.test.yml run --rm unit-test python -m pytest -p
 docker compose -f docker-compose.test.yml run --rm unit-test python -m pytest -p no:cacheprovider tests/unit/agent/test_job_lifecycle.py
 ```
 
+## Deep Agent P3/P4 定向验证
+
+Deep Agent 新路径的定向测试覆盖静态 Algorithm Registry 与 `ToolNode` 依赖调度、父图
+`deep_agent → finalization_gate → report` 拓扑、父子 State 白名单投影、三类
+Finalization outcome/degraded 合同、RAG evidence 延迟初始化、可信 Web 开关、worker
+进程级 runtime 复用和公共事件/SSE 字段脱敏：
+
+```powershell
+docker compose -f docker-compose.test.yml run --rm --no-deps unit-test python -m pytest -p no:cacheprovider `
+  tests/unit/agent/test_dependency_dispatch.py `
+  tests/unit/agent/test_deep_agent_parent_graph.py `
+  tests/unit/agent/test_final_analysis_decision.py `
+  tests/unit/agent/test_runtime_tool_state_updates.py `
+  tests/unit/agent/test_stream_events.py `
+  tests/unit/agent/test_worker_runtime.py `
+  tests/integration/agent/test_deep_agent_graph_runtime.py
+```
+
+当前本轮该组测试为 42 项通过（其中包含同文件已有的 runtime/event 用例）；全量
+`tests/unit` 为 528 项通过。真实 Deep Agents 依赖下的 integration 只证明
+`CompiledStateGraph` 构造及静态三算法 tool 接线，不调用真实 DeepSeek；dependency
+middleware 的调度测试使用真实 LangChain `ToolNode` 和 fake executor，不能替代真实
+MCP HTTP、PostgreSQL Store、RAG/SearXNG 或完整 MySQL Job 验收。
+
+本轮全量 `tests/integration` 收集 65 项，结果为 `59 passed, 4 skipped, 2 failed`。
+两项失败属于既有管理员部署环境断言：测试镜像没有 `git`，以及既有
+`rag-eval-worker` 配置断言仍要求移除宿主模型变量；Deep Agent/MCP 相关的父图、checkpoint、
+Compose、migration、日志和 observability 测试通过。测试输出在成功结束后可能出现由既有
+日志序列化失败兜底路径产生的 `logging.serialization_failed` 事件；它不影响 pytest 断言，
+也不能作为生产观测链路已验收的证据。
+
 ## P2-M causal-mcp 纵向切片
 
 P2-M 的代码级验证覆盖固定 capability/spec digest、Bearer/HMAC 时窗与命令绑定、结果规范化、进程池容量/迟到结果、N×K 客户端池、owner task 清理和 `AlgorithmExecutor` 结构化结果。使用仓库测试镜像执行：
@@ -116,6 +147,11 @@ python -m alembic heads
 ```
 
 迁移 downgrade/upgrade 仅在隔离数据库执行，并指定明确 revision；不能用 `alembic downgrade -1` 代替合并迁移的回退验证。
+
+生产/预发 Compose 的 `:?` 必需变量应在无凭据占位的临时环境中验证“缺失即 fail closed”，
+再使用合成占位值检查静态展开；不要把占位配置当成可部署或真实服务通过。`AsyncPostgresStore.setup()`
+属于 PostgreSQL 官方 Store schema 初始化，必须与 checkpointer schema/readiness 分开验证，
+checkpoint cleanup 不得清理 Store 表。
 
 ## SearXNG 部署验证
 

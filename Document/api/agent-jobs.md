@@ -58,6 +58,8 @@ Last-Event-ID: 42
 
 收到 `interrupt` 后，前端应展示公开问题并等待恢复；收到 `final_result`、`error` 或 `canceled` 后连接结束。若 Job 已经进入终态，即使数据库查询时没有新的事件，服务端也会结束连接。
 
+新 Deep Agent 报告的 `final_result.data` 可包含程序生成的 `finalization_status`：`valid` 表示最终结构化决策已通过当前 Job/attempt/lease、AlgorithmResult 与 Action Ledger 校验；`degraded` 表示一次修正仍未通过，但系统生成了安全报告并将 Job 置为 `succeeded`。`degraded` 结果不展示未经 Gate 验证的主图，也不把内部校验错误、provider ID、raw result 或工具参数返回给用户。该字段是结果质量元数据，不是模型的 `outcome`，旧 Job 没有该字段时按兼容语义处理。
+
 联网搜索成功且存在结果时，报告终态的 `final_result.data` 额外包含最多 9 条引用。报告/追问使用的搜索结果与公开引用共用 `WEB_SEARCH_MAX_RESULTS=9` 上限。引用只公开网页标题和 URL，不返回网页正文、搜索工具内部字段或完整搜索结果：
 
 ```json

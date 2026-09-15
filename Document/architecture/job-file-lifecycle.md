@@ -15,6 +15,7 @@
 | 文件对象 | MySQL `file_objects` | 按用户和 SHA-256 去重的不可变 BLOB |
 | 用户文件 | MySQL `user_files` | 用户可见文件名、访问统计和对象引用 |
 | checkpoint | PostgreSQL 官方 LangGraph 表 | Job 的恢复状态；`thread_id` 是 `analysis_jobs.job_id` |
+| 长期记忆 Store | PostgreSQL 官方 `AsyncPostgresStore` 表 | 按可信 `user_id` namespace 保存 Deep Agent 两份 memory 文件；不属于 Job checkpoint |
 | cleanup outbox | MySQL `checkpoint_cleanup_outbox` | 跨库删除请求的可靠账本，按 `thread_id` 唯一 |
 
 新建会话时，`POST /api/new_chat` 先在 MySQL 主库插入 `sessions` 记录再返回 ID。创建 Job、保存聊天、修改标题和上传文件都要求会话或用户文件真实存在且属于当前用户，不会根据未知 ID 自动重建对象。Job 创建时保存入口确定的原始 `X-Request-ID` 到 `analysis_jobs.request_id`；历史行可为 `NULL`，幂等重放不覆盖首次值。
@@ -56,6 +57,18 @@ checkpoint_ns = ""
 
 业务 `session_id` 仍然是 MySQL `sessions.id`，不是 checkpoint thread。新 Job 从同一 Session 的 MySQL 聊天历史加载有界初始窗口；同一 Job 的 resume 和 stale recovery 才继续原 checkpoint。旧的 session-thread checkpoint 不迁移、不读取、不清理。管理员 checkpoint 摘要必须使用 `metadata.job_id` 精确关联，缺少该字段的记录不能按时间猜测归属。
 
+Deep Agent 的 checkpoint 与长期记忆共用 PostgreSQL 实例但不是同一类数据：checkpoint 以
+`thread_id=job_id` 保存本次 Job 的可恢复 State；`AsyncPostgresStore` 使用
+`("causalagent", "memory", str(user_id))` namespace 保存 `/memories/preferences.md` 和
+`/memories/research_background.md`。worker 首次使用某个用户 namespace 时只做
+create-if-absent 初始化，不覆盖已有内容；内层 State/运行时对象、MCP session 和 Job lease
+不会写入 Store。真实跨 Job、跨 PostgreSQL 重启保留和不同用户隔离仍需 P5 隔离服务验收，
+当前代码测试只证明 API 装配、路径边界和协议行为。
+
 删除 Session 或用户时，MySQL 事务先锁定并删除业务数据，同时为相关 Job 写入 `checkpoint_cleanup_outbox`。cleanup worker 用租约领取并调用 PostgreSQL `adelete_thread(job_id)`；租约过期可以恢复，失败按有限次数和退避重试。两个数据库之间没有伪造的分布式事务，后台清理状态必须可查询。
+
+checkpoint cleanup 只删除目标 Job 的 checkpoint/raw file，不删除 `store` 或
+`store_migrations` 中的长期记忆；用户/合规删除若将来需要清理长期记忆，必须设计独立的
+Store 删除流程，不能借用 Job cleanup 的表名过滤或顺手扩大清理范围。
 
 删除逻辑文件时，如果仍有活动 Job 使用该 `user_file_id`，请求必须被阻断；删除 `user_files` 后只有在没有其他逻辑引用时才删除 `file_objects` BLOB，不提供回收站。

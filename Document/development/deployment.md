@@ -33,7 +33,7 @@
 | `searxng` / `valkey` | 固定版本的 SearXNG 联网学术搜索及其缓存/队列依赖 |
 | `loki` / `alloy` / `grafana` | 开发环境运行日志采集、存储和查看；只加入独立的 observability network |
 
-`app`、Agent worker、`causal-mcp`、monitor、RAG evaluation worker 和 cleanup 依赖 `db-bootstrap` 成功退出；`causal-mcp` 另外等待 `mysql-primary` 健康，并以 `/health`/`/ready` 提供进程、MySQL strong read 和进程池就绪边界。`causal-mcp` 不映射宿主端口，算法仅在有界进程池运行；Bearer/HMAC 密钥只通过环境变量或部署 secret 注入。当前 worker 仍沿用旧 stdio 运行路径，P3 完成前不会把新 HTTP 服务声称为生产 worker 路径。`searxng` 依赖 Valkey 健康和 `searxng-init` 成功退出。联网搜索是 Job 级可选能力，默认拓扑不让 `app` 或 Agent worker 等待 SearXNG 健康，运行期不可用时由 Web Search 子图重试并降级；非搜索 Job 不会因此阻止启动。开发拓扑当前不提供自动故障切换。启动命令见 [`setup.md`](setup.md)。
+`app`、Agent worker、`causal-mcp`、monitor、RAG evaluation worker 和 cleanup 依赖 `db-bootstrap` 成功退出；`causal-mcp` 另外等待 `mysql-primary` 健康，并以 `/health`/`/ready` 提供进程、MySQL strong read 和进程池就绪边界。`causal-mcp` 不映射宿主端口，算法仅在有界进程池运行；Bearer/HMAC 密钥只通过环境变量或部署 secret 注入。当前 worker 新路径还依赖 `causal-mcp` healthy，启动时按“PostgreSQL checkpoint pool/schema → AsyncPostgresStore setup → 静态 Registry → 进程级 MCP Client pool handshake → RAG readiness → Deep Agent/父图编译”的顺序完成 fail-fast 初始化；slot 不再创建 stdio MCP session。`searxng` 依赖 Valkey 健康和 `searxng-init` 成功退出。联网搜索是 Job 级可选能力，worker readiness 不等待 SearXNG，运行期不可用时新 `web_evidence_search` 返回受控 unavailable/disabled 结果；非搜索 Job 不会因此阻止启动。开发拓扑当前不提供自动故障切换。启动命令见 [`setup.md`](setup.md)。
 
 ## 联网搜索（SearXNG）
 
@@ -45,12 +45,12 @@
 
 ## 预发部署
 
-`docker-compose.staging.yml` 是隔离预发拓扑，保留 `gateway`、`scripts/staging_environment_guard.py` 启动 guard 和独立 `rag-eval-worker`，并使用独立 MySQL 主从、PostgreSQL checkpoint、卷和 gateway 日志。所有 Python 服务先通过 guard 校验项目/DSN/数据库/卷名中的 production/prod 标识，`db-bootstrap` 成功后才启动应用服务；gateway 负责入口和日志轮转。staging 显式只读挂载多模态 index、active/previous runtime、assets 与 retrieval policy。它不自动加入开发专用 SearXNG/Valkey 或 Loki/Alloy/Grafana。
+`docker-compose.staging.yml` 是隔离预发拓扑，保留 `gateway`、`scripts/staging_environment_guard.py` 启动 guard 和独立 `rag-eval-worker`，并使用独立 MySQL 主从、PostgreSQL checkpoint、卷和 gateway 日志。所有 Python 服务先通过 guard 校验项目/DSN/数据库/卷名中的 production/prod 标识，`db-bootstrap` 成功后才启动应用服务；worker 还等待 `causal-mcp` healthy，并要求显式的 Deep Agent model/base/API key/context window 与 MCP service token/signing key。gateway 负责入口和日志轮转。staging 显式只读挂载多模态 index、active/previous runtime、assets 与 retrieval policy。它不自动加入开发专用 SearXNG/Valkey 或 Loki/Alloy/Grafana。
 
 ## 生产部署
 
-`docker-compose.prod.yml` 使用生产 MySQL、PostgreSQL checkpoint、统一 bootstrap、Web、Agent worker、独立 `causal-mcp`、monitor、checkpoint cleanup 和独立 `rag-eval-worker`；生产环境不挂载源代码，使用独立卷、网络和日志轮转设置。`causal-mcp` 使用独立不可变镜像、单 ASGI worker、默认 2 个 CPU 进程和 4 个等待队列，不开放宿主端口；镜像内的 CDMIR 固定到受控 commit，并使用 CPU Torch 依赖闭合 `pip check`。RAG evaluation worker 与主系统进程隔离，并通过独立评测卷共享必要的运行产物；它不带开发可观测性标签，不应把评测日志混入主系统观测流。当前生产 Compose 是单独的生产配置，不能假设它自动提供开发 Compose 的 MySQL replica、SearXNG、Loki/Alloy/Grafana 或故障切换能力。
-当前生产 Compose 未定义 SearXNG 服务；如果生产环境启用 `web_search_enabled`，必须另外提供可访问的 `SEARXNG_URL` 和对应的搜索服务部署，搜索不可用时仍遵循 worker 运行期降级语义。
+`docker-compose.prod.yml` 使用生产 MySQL、PostgreSQL checkpoint、统一 bootstrap、Web、Agent worker、独立 `causal-mcp`、monitor、checkpoint cleanup 和独立 `rag-eval-worker`；生产环境不挂载源代码，使用独立卷、网络和日志轮转设置。worker 通过进程级 MCP Client pool 调用私有服务，必须显式提供不可变 Deep Agent 配置和 MCP 鉴权材料；它依赖 `causal-mcp` healthy 后才开始 claim Job。`causal-mcp` 使用独立不可变镜像、单 ASGI worker、默认 2 个 CPU 进程和 4 个等待队列，不开放宿主端口；镜像内的 CDMIR 固定到受控 commit，并使用 CPU Torch 依赖闭合 `pip check`。RAG evaluation worker 与主系统进程隔离，并通过独立评测卷共享必要的运行产物；它不带开发可观测性标签，不应把评测日志混入主系统观测流。当前生产 Compose 是单独的生产配置，不能假设它自动提供开发 Compose 的 MySQL replica、SearXNG、Loki/Alloy/Grafana 或故障切换能力。
+当前生产 Compose 未定义 SearXNG 服务；如果生产环境启用 `web_search_enabled`，必须另外提供可访问的 `SEARXNG_URL` 和对应的搜索服务部署，搜索不可用时仍遵循 worker 运行期降级语义。当前代码只取得 Compose 静态配置证据，尚未取得真实生产 worker、MCP、PostgreSQL Store、DeepSeek 或 RAG/Web 服务验收证据。
 
 ## RAG release 与 worker 生命周期
 

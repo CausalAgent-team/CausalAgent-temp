@@ -6,29 +6,59 @@
 
 ## Worker 启动与 slot
 
-`python -m app.agent.worker` 进入 `app/agent/worker/__main__.py`，再调用 bootstrap。启动顺序是数据库就绪检查、PostgreSQL checkpoint 检查、创建显式进程 runtime，然后按 `JOB_WORKERS` 启动 slot。每个 slot 持有一组独立运行依赖：
+`python -m app.agent.worker` 进入 `app/agent/worker/__main__.py`，再调用 bootstrap。当前新运行路径的启动顺序是：
 
-1. MCP server process 与一个通过 `MultiServerMCPClient.session("causal")` 建立的持久 `ClientSession`。
-2. 由该 session 加载的 LangChain tools。
-3. 当前配置下的 LLM、RAG 可用性和编译后的 Agent graph。
+```text
+MySQL readiness
+  → PostgreSQL checkpoint pool/schema
+  → AsyncPostgresStore setup/readiness
+  → 静态 Algorithm Registry
+  → 进程级 MCP Client pool connect/handshake
+  → RAG active release readiness
+  → Deep Agent model/profile、内层 graph 和外层父图编译
+  → worker ready
+  → slots claim Job
+```
 
-`runtime.py` 通过 `ProcessRuntime` 和 `SlotRuntime` 显式传递这些对象；执行函数不能从 `app.agent.core` 读取全局 graph 或 LLM。这样可以把真实并发单元限定为 slot，并让 MCP session 与 graph 的生命周期一致。
+`ProcessRuntime` 持有进程级 MCP pool、`McpAlgorithmExecutor`、静态 Registry、PostgreSQL Store/checkpointer、RAG readiness、领域 tools 和编译后的父图。`SlotRuntime` 只保存对这些对象的显式引用；生产新路径不会为 slot 创建 stdio MCP session，也不会重复编译 graph。每个 Job invocation 再由 slot 创建 `AgentRunContext`，绑定可信 Job/attempt/lease/input identity、execution guard、executor、filesystem backend 和 `web_search_enabled`；这些对象只进入 LangGraph runtime context，不进入 State 或 checkpoint。
+
+因此，进程级 MCP Client pool 的成员容量和生命周期与 slot 数量分离，真实算法并发仍由 MCP 服务端进程池、Client pool、Tool 调度器和 Job 预算共同限制。启动失败会在 worker ready 前 fail closed，不领取 Job。
+
+旧兼容构造器仍保留在 `runtime.py`，但只有显式走旧 `ProcessRuntime.graph is None` 的测试/兼容调用才会使用 slot stdio；`main_async()` 的新生产路径不会进入该分支。
 
 ## P2-M causal-mcp 过渡边界
 
 P2-M 已新增独立的 `Agent/CausalAgentMCP/app.py`、固定 runner registry、有界 CPU 进程池和 `app/agent/worker/mcp_client_pool.py`。新服务使用 Streamable HTTP/HTTP/1.1、Bearer/HMAC、MySQL primary strong read、canonical UUID 和 lease 校验；`MCP session` 只承载传输，不保存 Job、checkpoint 或 Action Ledger。客户端池按 `N×K` 成员容量调度，成员 context 由 owner task 创建和关闭，以避免 MCP SDK/AnyIO cancel scope 跨任务清理。
 
-这只是 MCP 协作支线的独立纵向切片。当前 worker 仍通过上面的旧 stdio `MultiServerMCPClient` 建立 slot 级 session；P3 才会在 worker bootstrap 中替换为长期 HTTP client pool 和真实 `McpAlgorithmExecutor`。因此本节的服务协议/池单测和 fake-authority HTTP smoke 不能写成 Job 全链路已迁移或真实 MySQL/容量验收完成。
+这是 MCP 协作支线与 worker 新运行路径的共同边界。新路径在 bootstrap 中使用进程级长期 HTTP Client pool 和真实 `McpAlgorithmExecutor`；pool 的握手只确认 `execute_algorithm` capability，绝不使用远端 `list_tools()` 动态生成模型工具。服务协议、fake-authority HTTP smoke 和 pool 单测不能写成真实 MySQL 容量、完整 Job 或生产负载验收完成；这些仍属于 P5。
 
-## P2-U fake executor 前置
+## P2-U 基础实现与协议边界
 
-`Agent/deep_agent/` 当前只提供 P2-U 的隔离前置：`ProjectDeepAgentState` 继承官方 `DeepAgentState`，算法结果、Action Ledger 和证据使用显式 reducer；`AgentRunContext` 保存 fake/未来真实 executor、可信身份和执行守卫，不进入 checkpoint；父 State 与 Deep Agent State 通过显式投影连接。`build_fake_graph()` 只用于该前置的 checkpointer/State 验收，不接入当前生产父图，也不代表 Memory、RAG/Web、Finalization 或真实 DeepSeek 已完成。
+`Agent/deep_agent/` 保留 P2-U 的协议前置：`ProjectDeepAgentState` 继承官方 `DeepAgentState`，算法结果、Action Ledger 和证据使用显式 reducer；`AgentRunContext` 保存可信身份、执行守卫和真实/测试 executor，不进入 checkpoint；父 State 与 Deep Agent State 通过显式白名单投影连接。`build_fake_graph()` 仍只用于隔离 checkpointer/State 验收；生产构造器 `build_deep_agent()` 使用真实 Deep Agents graph，但本仓库当前只取得构造和 ToolNode 静态接线证据，真实 DeepSeek 调用、PostgreSQL Store 持久化和完整 Job 仍未验收。
 
 ## 父图与工具阶段
 
-父图当前暴露 `mcp`、`rag` 和 `web_search` 三个工具阶段。MCP 子图的正常路径为 `mcp_planner -> mcp_tool_node -> mcp_result_parser`；RAG 子图内部对应 `rag_question_planner -> rag_tool_node -> rag_result_parser -> rag_finalize`。父图通过适配节点只向 RAG 子图传入 `messages`、`analysis_parameters`、`preprocess_summary` 和 `causal_analysis_result`，子图只投影 `rag_output` 为父图的 `knowledge_base_result`；RAG route、问题列表、ToolMessage 和解析中间结果不会进入父 State。
+新 worker 父图的数据型路径是：
+
+```text
+agent → fold → preprocess → deep_agent → finalization_gate → report
+```
+
+普通聊天和报告追问仍由既有 `normal_chat`/`inquiry_answer` 路径结束。`deep_agent` 节点只把问题、数据画像、分析参数和必要的上一次内层消息显式投影给 Deep Agent；返回时只接收算法结果、Action Ledger、RAG/Web evidence、结构化决策和消息白名单。`finalization_gate` 不调用 LLM，只校验当前 Job/attempt/lease 的结果与 Ledger 对账；首次不一致回送同一 Deep Agent 一次，第二次仍不一致则以 `finalization_status=degraded` 进入报告，且不会展示未经 Gate 验证的主图。
+
+Deep Agent 的模型可见算法 tools 由静态 `AlgorithmSpec`/Registry 生成。`AlgorithmDependencyDispatchMiddleware` 在 LangChain `ToolNode` 的调用边界收集同一响应中的 PC、OLC、DirectLiNGAM calls，使用 `requires/produces` 规划独立并行和依赖分层，之后才调用真实 `AlgorithmExecutor`；它不读取远端动态工具清单。内层工具结果不会把 raw payload 或 provider ID 带回父 State，事件适配器只在 `deep_agent` 父节点 update 中生成受控工具完成摘要。
+
+旧 `build_graph()` 仍保留 `mcp`、`rag` 和 `web_search` 子图兼容路径：MCP 子图为 `mcp_planner -> mcp_tool_node -> mcp_result_parser`，RAG 子图为 `rag_question_planner -> rag_tool_node -> rag_result_parser -> rag_finalize`。该路径的中间字段仍隔离在子图内，不是新 worker 父图的生产入口。
+
+### 新 Deep Agent 的 RAG/Web evidence 工具
+
+`rag_evidence_search` 直接调用 `RagService.get_evidence()`，不调用旧 answer model；默认 Tool 绑定为延迟代理，worker 启动时只执行 active release/readiness，不加载 Chroma、BM25 或 embedding，首次实际查询才初始化进程内 RAG runtime。证据以 `evidence_ref`、snippet、来源定位、分数、release 和降级状态进入内层 State，父节点再投影为旧 report formatter 可消费的引用摘要。
+
+`web_evidence_search` 直接返回 SearXNG 学术 snippet 和来源元数据，不读取正文；每次调用从 runtime context 读取可信的 `web_search_enabled`，显式关闭时返回 `WEB_SEARCH_DISABLED`，不会触网。Web evidence 与 RAG evidence 一样只通过白名单投影进入报告；真实 active release、SearXNG 网络和引用展示仍需 P5 验收。
 
 #### RAG具体实现与异常处理
+
+以下兼容子图行为仅适用于旧 `build_graph()` 路径；新 Deep Agent 使用上面的 evidence-only Tool。
 
 RAG Planner 在调用 LLM 前检查进程级 `rag_available` 和已注册的 `rag_tools`。知识库目录未初始化、active release readiness 失败或工具列表为空时，Planner 写入私有 `rag_route=finish`、`rag_status=unavailable` 和统一降级中间结果，跳过 ToolNode，仍经 `rag_finalize` 回到父图的 Agent；进程 Runtime 同时保留内部 `rag_status=rag_unavailable`、安全错误码和可用时的 release id。正常 ToolNode 返回（包括 `success=False`）继续进入 Parser；ToolNode 或 Planner 的未捕获普通异常在重试结束后由 error handler 跳到 Finalize，Parser 异常标记为 `protocol_error` 后也进入 Finalize。
 
@@ -42,6 +72,8 @@ worker 收到 SIGTERM/SIGINT 后停止领取新 Job，按 `JOB_DRAIN_TIMEOUT_SEC
 
 #### web_search具体实现与异常处理
 
+以下兼容子图行为仅适用于旧 `build_graph()` 路径；新 Deep Agent 使用上面的 `web_evidence_search`。
+
 `web_search` 子图内部路径为 `web_search_planner -> academic_search_node -> web_search_result_parser_node`。父图通过适配节点只向子图传入 `messages`、`analysis_parameters`、`causal_analysis_result` 和 `knowledge_base_result`，子图只投影 `web_search_result` 回父图；中间的 `planner`、`search` 私有字段不会进入父 State。
 
 `web_search_planner` 与 RAG 不同，不在调用 LLM 前做进程级可用性检查，而是始终执行两步结构化输出：先 `generate_research_question` 提炼最需论证的具体问题，再 `get_web_search_query` 生成中英双语检索 query（`query` 面向报告展示、`query_en` 面向学术检索）。planner 捕获 `StructuredOutputError` 时写 `planner.success=False`，`academic_search_node` 据此短路、不再调用底层检索。
@@ -52,7 +84,7 @@ worker 收到 SIGTERM/SIGINT 后停止领取新 Job，按 `JOB_DRAIN_TIMEOUT_SEC
 
 ## 事件流与脱敏
 
-worker 使用 LangGraph v2 的 `updates`、`messages`、`custom` 和 `tasks` 流，将内部执行事件转换为 `analysis_job_events`。根图 `tasks` 构成用户时间线，子图工具事件折叠为 `mcp` 或 `rag` 阶段。普通用户 SSE 只允许 `normal_chat` 和 `inquiry_answer` 的公开文字进入 `text_delta`；原始 prompt、ToolMessage、完整工具结果、图状态、内部 attempt 和隐藏推理都不能进入普通用户协议。
+worker 使用 LangGraph v2 的 `updates`、`messages`、`custom` 和 `tasks` 流，将内部执行事件转换为 `analysis_job_events`。根图 `tasks` 构成用户时间线，兼容子图工具事件折叠为 `mcp` 或 `rag` 阶段；新 Deep Agent 的内层 `ToolMessage` 不直接进入普通用户流，父 `deep_agent` update 只投影稳定工具名、完成状态和受控安全错误码。`finalization_gate` 作为独立阶段展示，最终 `finalization_status` 位于 `final_result.data`。普通用户 SSE 只允许 `normal_chat` 和 `inquiry_answer` 的公开文字进入 `text_delta`；原始 prompt、ToolMessage、完整工具结果、图状态、内部 attempt 和隐藏推理都不能进入普通用户协议。
 
 事件写入由 Job 的 `lease_epoch`、worker、attempt、`execution_state=leased` 和稳定 `event_key` 共同保护。终态事件与 assistant 消息、Job 状态在同一个 MySQL 事务中落盘；旧 worker 失去 lease 或收到取消撤销后不能覆盖新执行结果。`JobExecutionGuard` 通过 LangGraph invocation runtime context 传递到父图、子图、ToolNode 包装器和 parser；节点开始、调用返回、异常处理、路由和事件持久化前均检查执行资格。`JobExecutionRevoked` 和 `asyncio.CancelledError` 是内部控制流，不进入 RetryPolicy、RAG 降级或公开 error 事件，必须继续向 worker 传播；普通 RAG 故障则在子图内收口并回到 Agent。前端断线恢复使用 Event ID 读取 MySQL 事件，不依赖 worker 内存。
 
@@ -64,6 +96,7 @@ worker 使用 LangGraph v2 的 `updates`、`messages`、`custom` 和 `tasks` 流
 
 - 修改图节点或路由时，必须核对显式 State 字段和失败路径，不能只验证成功样例。
 - 修改事件适配器、结果展示或 SSE 时，必须确认公共 payload 没有内部字段和原始工具数据。
-- 修改 worker 初始化时，必须同时检查 `runtime.py`、`bootstrap.py`、Docker Compose 的 worker 入口和 slot 资源占用。
+- 修改 worker 初始化时，必须同时检查 `runtime.py`、`bootstrap.py`、Docker Compose 的 worker 入口、进程级 MCP pool、PostgreSQL Store/checkpointer 和 slot 资源占用。
 - 修改结构化输出或 MCP planner 时，必须分别验证普通 function calling、thinking 配置和原生 Tool Calls。
 - 修改 RAG 或因果工具时，必须分别验证“知识库缺失可启动”和工具输入/输出契约。
+- 新父图必须至少验证 `deep_agent → finalization_gate → report` 拓扑、首次 Gate 修正和二次 degraded；构造测试通过不能代替真实 MCP、DeepSeek、PostgreSQL、RAG/Web 或 MySQL Job 验收。

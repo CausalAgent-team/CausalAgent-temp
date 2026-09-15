@@ -210,6 +210,34 @@ def test_rag_and_web_tools_write_evidence_and_terminal_ledgers() -> None:
     assert web_ledger.final_status == "succeeded"
 
 
+def test_web_tool_honors_trusted_runtime_switch() -> None:
+    calls = []
+
+    def search(query, *, max_results):
+        calls.append(query)
+        return {"results": []}
+
+    context = AgentRunContext(
+        execution_guard=None,
+        trusted_identity=IDENTITY,
+        web_search_enabled=False,
+    )
+    tool = WebEvidenceTool(search).to_langchain_tool()
+    command = asyncio.run(
+        tool.coroutine(
+            runtime=_runtime(context, call_id="web-call-disabled"),
+            query="causal inference",
+        )
+    )
+
+    payload = json.loads(command.update["messages"][0].content)
+    assert payload["status"] == "disabled"
+    assert calls == []
+    ledger = next(iter(command.update["action_ledger"].values()))
+    assert ledger.final_status == "not_ready"
+    assert ledger.attempts[0].safe_error_code == "WEB_SEARCH_DISABLED"
+
+
 def test_evidence_unavailable_is_recorded_without_leaking_exception() -> None:
     context = _context()
 

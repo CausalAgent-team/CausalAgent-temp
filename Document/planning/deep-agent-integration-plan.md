@@ -2,9 +2,9 @@
 
 文档职责：记录在现有 CausalAgent LangGraph 运行时中接入 Deep Agents 的产品语义、架构决策、能力边界、迁移阶段与验收门槛；本文是评审用规划，不代表当前代码已经实现。
 
-适用范围：面向 CausalAgent 的产品、Agent、MCP、RAG、Web Search、Job worker、checkpoint、Human-in-the-loop、公开事件与长期记忆改造；当前运行事实仍以 [`agent-runtime.md`](agent-runtime.md) 和代码为准。
+适用范围：面向 CausalAgent 的产品、Agent、MCP、RAG、Web Search、Job worker、checkpoint、Human-in-the-loop、公开事件与长期记忆改造；当前运行事实仍以 [`agent-runtime.md`](../architecture/agent-runtime.md) 和代码为准。
 
-> 状态：**规划中，尚未实施**。本文冻结截至 2026-09-14 已讨论并确认的方向。文中的“当前”来自仓库核对，“目标”是已接受的设计，“待验证”必须通过隔离 Spike 或真实集成测试后才能成为实现事实。
+> 状态：**产品决策已冻结，工程实现部分落地**。截至 2026-09-15，P3 worker/MCP pool/Store/父图接入和 P4 Finalization/report/events 代码已实施；P5 的真实 MCP、PostgreSQL、DeepSeek、RAG/Web 和完整 Job 验收仍未完成。文中的“当前”来自仓库核对，“目标”是已接受的设计，“待验证”必须通过隔离 Spike 或真实集成测试后才能成为实现事实。
 
 可编辑架构图：[`deep-agent-integration-plan.drawio`](deep-agent-integration-plan.drawio)。
 
@@ -129,7 +129,7 @@ agent → fold → preprocess → mcp → rag → [web_search] → agent → pos
 
 ### 3.3 当前运行时必须保留的资产
 
-[`agent-runtime.md`](agent-runtime.md) 与 [`job-file-lifecycle.md`](job-file-lifecycle.md) 记录的下列能力不是本次重写对象：
+[`agent-runtime.md`](../architecture/agent-runtime.md) 与 [`job-file-lifecycle.md`](../architecture/job-file-lifecycle.md) 记录的下列能力不是本次重写对象：
 
 - MySQL Job 控制面、输入账本和公开事件；
 - worker slot、MCP session 生命周期和运行依赖；

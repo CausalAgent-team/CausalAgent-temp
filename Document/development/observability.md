@@ -8,7 +8,7 @@
 
 共享 JSON stderr 运行时位于 [`observability/logging_runtime.py`](../../observability/logging_runtime.py)，机器可校验的事件目录位于 [`observability/event_catalog.py`](../../observability/event_catalog.py)，进程内转移/恢复和重复事件限频位于 [`observability/noise_control.py`](../../observability/noise_control.py)。Web、worker、monitor、MCP 和 maintenance 的自有运行日志统一通过 `log_event()` 写入标准 `logging`；调用方不能自由传入级别、分类或消息。
 
-第二阶段已经把请求、Job、worker slot、LangGraph node 和 MCP tool 的日志上下文贯通，并收敛 Web、Agent/RAG、数据库、monitor 和 checkpoint cleanup 的旧运行日志。该改造没有新增数据库迁移、HTTP API、管理员前端页面或 LangGraph State 字段，也不改变 HTTP 返回、Job fencing、checkpoint、SSE、取消和既有降级控制流。
+第二阶段已经把请求、Job、worker slot、LangGraph node 和 MCP tool 的日志上下文贯通，并收敛 Web、Agent/RAG、数据库、monitor 和 checkpoint cleanup 的旧运行日志。P3/P4 继续复用这套日志目录和 SSE 适配边界：新 Deep Agent 的内层 ToolMessage 不直接落入公共事件，父节点只生成受控 `tool_call_result` 状态；`finalization_status` 只进入最终结果数据。该改造没有新增数据库迁移、HTTP API 或管理员前端页面，也不改变 Job fencing、checkpoint、SSE、取消和既有降级控制流。
 
 默认开发 Compose 已接入 Alloy、Loki 和 Grafana，生产 Compose 仍不包含这套拓扑。第二阶段代码与静态测试已落地，但真实 Docker、Alloy positions、Loki 检索和受控故障矩阵尚未取得通过证据时，本阶段不得标记完成，也不得把本地静态检查当作端到端验收。
 
@@ -75,7 +75,7 @@ Flask 在确认 `X-Request-ID` 后立即绑定 `request_id`，只有主库确认
 | `worker` | `app/agent/worker/__main__.py`、slot/runtime/execution | slot、Job、lease、node 最终降级和 cleanup 聚合结果 |
 | `monitor` | `Database/monitor_worker.py`、`Database/monitoring.py`、`app/db.py` | 快照、配置、锁、主从、连接和慢 SQL 的转移/恢复事件 |
 | `maintenance` | bootstrap、database/checkpoint setup、checkpoint cleanup worker | 启动边界、outbox attempt 结果和循环级转移/恢复 |
-| `mcp` | P2-M `Agent/CausalAgentMCP/app.py` 私有容器；旧版本仍为 `mcp_server.py` stdio 子进程 | 新服务记录容量拒绝、进程回收、客户端重连和安全工具结果；协议输出与应用日志分离，旧路径日志只写 stderr |
+| `mcp` | P2-M `Agent/CausalAgentMCP/app.py` 私有容器；兼容路径仍为 `mcp_server.py` stdio 子进程 | 新服务记录容量拒绝、进程回收、客户端重连和安全工具结果；协议输出与应用日志分离，兼容路径日志只写 stderr |
 
 ### 3.1 隐私与去重边界
 
@@ -202,15 +202,16 @@ X-Request-ID
   -> analysis_jobs.request_id
   -> worker claim
   -> request/user/session/job/worker_slot context
-  -> LangGraph node/tool context
-  -> MCP 可信参数
+  -> LangGraph node/tool runtime context
+  -> Deep Agent / 兼容子图工具摘要
+  -> MCP 可信参数（新路径）
   -> MCP 子进程 JSON stderr
 ```
 
 - Flask 使用最小 `CausalFlask.log_exception()` 替换默认未处理异常日志，仍由 Flask 返回默认 500；已捕获 5xx 在最外层路由记录。普通 4xx 不升级为异常日志，只有确认禁用账号、已登录用户跨归属、CSRF 拒绝、重认证失败和安全会话撤销进入 `security`。
 - Job 首次创建与幂等重放分别记录 accepted/replayed；重放使用当前请求 ID，worker 使用 Job 首次落库的原始请求 ID，并通过同一 `job_id` 下钻。
 - `OrderedEventWriter.terminal_type` 只读区分 `final_result/interrupt/error/None`。waiting input、fencing、取消和 shutdown 保留原控制流并记录 INFO；Job 最终失败每次执行最多一个事件，cleanup 多 phase 先聚合再记录。
-- node 包装器统一绑定 `node`，ToolNode 只从已校验的第一个 tool call 绑定 `tool`。单次重试失败不写运行异常，只有重试耗尽后的 timeout/degraded 才记录；运行日志不写入 `analysis_job_events`。
+- node 包装器统一绑定 `node`；兼容子图 ToolNode 只从已校验的第一个 tool call 绑定 `tool`，新 Deep Agent 则由父节点 update 聚合静态算法结果并只输出稳定工具名/状态/安全错误码。单次重试失败不写运行异常，只有重试耗尽后的 timeout/degraded 才记录；运行日志不写入 `analysis_job_events`。
 - MCP 父进程先删除模型给出的可信参数和 `csv_data`，再从 State 注入 `user_id/session_id/job_id/input_user_file_id/input_object_id`，从当前日志上下文注入 `request_id/worker_slot`。必填可信参数缺少权威值时在 transport 前失败关闭；子进程固定绑定 `node=mcp_tool_node` 和真实工具名。
 - 数据库只记录 `primary/replica` 逻辑别名和稳定 reason code。慢 SQL 只记录操作类型、耗时、规范化 SQL 的完整 SHA-256 digest 和抑制数；monitor 正常锁竞争、轮询和成功快照静默。
 - checkpoint cleanup 每个 outbox attempt 最终边界只记录一个成功或失败事件，claim、heartbeat 和快照发布等循环级异常使用 runtime degraded/recovered；业务数据库中的 fencing、幂等和 outbox 状态机保持原样。
@@ -220,6 +221,6 @@ X-Request-ID
 - 第一阶段单元与静态验证覆盖 JSON 契约、上下文、截断、脱敏、序列化失败和 MCP stdout/stderr；第二阶段增加事件目录、合同降级、转移限频、请求/slot/task/thread 隔离、终态映射、MCP 可信参数、RAG/数据库/monitor/cleanup 事件及 AST 日志政策测试；第三阶段增加 Dashboard JSON、固定 UID、面板、变量、级别白名单和高基数字段边界的静态合同。
 - Docker unit 基线固定为 `docker compose -f docker-compose.test.yml build unit-test` 和 `docker compose -f docker-compose.test.yml run --rm unit-test`。本地 Python 缺少 pytest 时不得临时安装依赖冒充仓库基线。
 - 第一阶段真实验收仍包括 Compose/Alloy/Loki/Grafana、五类测试事件、positions 重启续读、Loki 不可用时不阻塞、高基数标签检查和 30 分钟代表性负载；第二阶段还必须执行受控故障矩阵、关联检索、隐私抽样和正常流噪声检查。
-- 当前没有真实 Docker、真实运行速率、行数、字节数、stream 数或真实模型/MCP smoke 证据。第三阶段本轮按约定只完成实现和基础静态检查，因此保持“实现已落地、真实验收未完成”，开发日志不得写成端到端验收完成。
+- 当前已取得 Python 3.11 Docker unit、相关 integration 和 Compose 静态配置证据；仍没有真实 observability Docker 采集、Alloy positions、Loki 检索、真实运行速率/行数/字节数/stream 数或真实模型/MCP smoke 证据。P3/P4 的公共字段定向测试已通过，但这不等于端到端日志或完整 Job 验收完成，开发日志不得写成端到端验收完成。
 
 相关权威事实见 [`API 通用约定`](../api/conventions.md)、[`Agent 运行时`](../architecture/agent-runtime.md)、[`数据库监控`](../database/monitoring.md)、[`测试与验证`](testing.md)、[`分析 Job API`](../api/agent-jobs.md) 和 [`迁移与 Checkpoint`](../database/migrations-checkpoints.md)。
