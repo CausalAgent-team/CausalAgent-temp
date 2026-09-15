@@ -4,7 +4,7 @@
 >
 > **适用范围**：适用于从 `develop@4bea85fdea7292e85577d2b9b3e4c1c763b50829` 创建的新 DeepAgent 功能分支，以及由该分支派生的 MCP 协作分支。本文是实施计划，不代表功能已经实现或验收通过。
 
-**状态**：P1 共享契约与 P2-U 协议/ToolRuntime State 写回代码已完成；P2-U 的 AlgorithmSpec 调度协议骨架已形成，正在按本计划收口且尚未接入真实 Deep Agent dispatch；P0 真实门禁未完成，P2-M 及 P3 以后未完成
+**状态**：P0、P1 与 P2 已完成合并收口；P3 worker/MCP pool/checkpoint 真实接入及以后阶段尚未完成
 
 **计划日期**：2026-09-14
 
@@ -16,13 +16,13 @@
 
 ---
 
-## 本轮实施结论（2026-09-14）
+## P1、P2-U 与 P2-M 阶段实施结论（2026-09-14 至 2026-09-15）
 
 ### 执行范围与停止点
 
-本轮在保留 P1 的基础上完成 P2-U 主线的协议级实现，并补齐 Algorithm、RAG、Web 本地 Tool 的 `ToolRuntime → Command → State reducer` 写回链路。实现范围限定为不依赖真实 MCP 服务、PostgreSQL、SearXNG 或模型凭据即可验证的 State/context、权限、内存 backend、Adapter、依赖调度、evidence Tool 契约和真实 LangGraph ToolNode State 合并；没有修改 `requirements.txt`、Compose、worker/bootstrap、现有 MCP server、父图、Job/SSE、前端或数据库 schema。未执行提交、推送、分支切换、删除文件和覆盖工作树操作。
+主线先完成 P1 共享契约和 P2-U 协议级实现，补齐 Algorithm、RAG、Web 本地 Tool 的 `ToolRuntime → Command → State reducer` 写回链路；MCP 协作支线随后完成 P0 兼容簇与真实协议 Spike，并交付独立 `causal-mcp`、客户端池、执行器、Compose 和隔离验收证据。合并时以主线 `Agent/deep_agent/**` 为权威实现，MCP 支线不改变外层确定性 LangGraph 安全壳、单 Deep Agent 决策循环和 `AlgorithmSpec` 单一事实源。
 
-P0 的真实门禁没有被本轮重新认定为通过。当前宿主实际缺少 `deepagents`/`langgraph` 运行依赖，且没有 DeepSeek、MCP、PostgreSQL、SearXNG 的真实验收凭据；因此不能把真实依赖安装、DeepSeek Responses、多 Tool/ToolStrategy、父子图 checkpoint、MCP HTTP、Store 重启保留或 active RAG/Web 链路写成已完成。P2-U 只以 fake executor、内存 Store 和协议级测试交付；真实 Deep Agent graph 入口和 PostgreSQL Store 入口采用惰性加载，缺依赖时 fail closed。
+P0 已取得目标依赖 clean install、真实 DeepSeek Responses、多 Tool/ToolStrategy、父子图 checkpoint、MCP 2.2 HTTP 和隔离 PostgreSQL checkpoint 证据。该门禁不等于 P3 真实 worker 接入，也不证明 PostgreSQL Store 长期记忆、active RAG/SearXNG、完整 Job/SSE 或生产部署已经验收；P2-U 的这些能力仍按 fake/isolated/protocol 边界报告。
 
 ### P1 已实施内容
 
@@ -66,9 +66,43 @@ python -m pytest -q tests/unit/agent/test_deep_agent_models.py tests/unit/agent/
 
 P1 共享领域/传输契约与 P2-U 主线协议代码已经形成可供后续 MCP 子分支和主线真实 runtime 复用的基点。P2-U 定向测试证明了 State 投影、空 Ledger、权限拒绝、可信 raw write、用户 namespace 隔离、create-if-absent、依赖分层/失败传播、三项 Adapter 的输入边界、evidence-only 输出和结构化终态校验；这证明的是协议和 fake/isolated 行为，不是生产运行时能力。
 
-当前仍未完成或未验收：P0 真实兼容依赖与 DeepSeek Responses spike、P2-M causal-mcp 纵向切片、P3 worker/MCP pool/checkpoint 接入、P4 父图/FinalizationGate/report/SSE、P5 Docker/MySQL/PostgreSQL/真实 MCP/真实 DeepSeek/真实 active RAG/SearXNG/full Job 验收、P6 当前事实文档与 CHANGELOG 收口。P2-U 也没有宣称真实 PostgreSQL Store 跨重启保留、真实 RAG 不触发 answer model、真实 Web 网络关闭边界或真实模型多 Tool 关联已经通过。
+P2-M 已交付独立服务、鉴权、固定 runner、有界执行池、长期客户端池、MCP executor、私网 Compose 和隔离验收脚本。合并审查补齐三次 authority/lease fencing（入队前、进程提交前、结果采用前）、同步 MySQL strong read 的 event-loop 隔离、`/ready` Compose healthcheck、容量超时时的 semaphore 释放、先终止旧代际再创建新代际的进程回收、PC `alpha` 参数透传，以及成功/失败路径目录事件。Python 3.11 公共 API尚无进程池硬终止接口，回收实现对 `ProcessPoolExecutor` 的私有 `_processes` 做了窄范围封装并由测试锁定；升级 Python 时必须重新验证。
 
-因此当前状态是“P1 + P2-U 协议级主线实现完成，生产 Deep Agent 功能尚不可部署”。进入 P3 前必须先取得并复验 P0 兼容簇，同时等待/合并 P2-M；进入 P4/P5 前必须使用真实依赖和隔离服务补齐对应证据，不能用本轮 unit/mock 结果替代。
+合并后的 Docker Python 3.11 测试镜像已完成 `515 passed` 全量 unit；Agent、deployment、migration、logging policy 和 observability 定向 integration 为 `44 passed, 3 skipped`；开发 Compose `config --quiet` 通过。全量 integration 为 `57 passed, 4 skipped, 3 failed`，其中一项新增动态事件问题已修复并复跑通过，剩余两项仍是既有 admin deployment 环境断言（测试镜像没有 `git`，以及既有 `rag-eval-worker` 显式模型环境变量），不属于本轮 MCP/Deep Agent 合并引入。LangSmith 测试遥测曾因 DNS 失败，但 pytest 退出码与断言不受影响。
+
+因此当前状态是“P0/P1/P2 已闭合，生产 Deep Agent 功能尚不可部署”。下一步进入 P3 的真实 worker HTTP executor、checkpoint/Store 生命周期和父图接入；P4/P5 仍须以真实依赖和隔离服务逐层补证，不能用 unit/mock 替代。
+
+---
+
+## 本轮 P0 执行记录（2026-09-14）
+
+### 当前分支与执行边界
+
+上一轮 P0 执行时工作树位于 `feat(mcp)/causal-mcp-v2`，HEAD 为 `a6eba00`，与当时同名上游分支一致；该段只记录上一轮 P0 基线，不代表当前 HEAD。
+
+### 已通过的 P0 门禁
+
+- 依赖兼容簇已更新：`deepagents==0.7.13`、LangChain/LangGraph 目标版本、`mcp==2.2.0`、`httpx2==2.6.0` 及其兼容的 Pydantic、SSE、Uvicorn 版本；`langchain-community` 固定为 `0.4.1` 以保留 Ragas 0.4.3 仍会导入的 legacy VertexAI 模块；已生成 Python 3.11 Linux hash lock，容器 `pip check` 无 broken requirements。
+- `tests/spike/p0_import_smoke.py`：容器内 9 个关键依赖及 Ragas/VertexAI 兼容导入通过。
+- `tests/spike/p0_deepseek_responses.py`：真实 `deepseek-v4-flash` Responses API 单/多 Tool call、响应 ID/call ID 关联、Tool 输出重关联和 `ToolStrategy` 结构化输出通过。
+- `tests/spike/p0_deep_agent.py`：父子图 checkpoint 已恢复 `messages/files/structured_response`，裁剪后的 `read_file/edit_file` 工具面、真实取消传播、结构化输出/schema retry、v2 stream 无 reasoning 块，以及真实 DeepSeek summary 写入 `/conversation_history/` 后的 Tool call 关联通过。
+- `tests/spike/p0_mcp_http.py`：真实 MCP 2.2 Streamable HTTP 的 `server/discover`、legacy `initialize` fallback、list/call/error、Bearer、无状态 session、并发响应关联、取消、服务端 active request cleanup 和客户端 transport task cleanup 通过。
+- `tests/spike/p0_postgres_checkpoint.py`：隔离 PostgreSQL 16 实例中父图 checkpoint 的 `messages/files/structured_response` 写入、关闭连接后重新连接恢复、runtime context 排除和 ToolMessage 恢复通过。
+- 目标回归：`tests/unit/agent` 为 `262 passed`；P1 定向测试为 `28 passed`；完整容器 `tests/unit` 为 `445 passed`；`tests/integration` 为 `50 passed, 4 skipped, 2 failed`，失败为既有 admin deployment 环境断言（容器内缺少 `git`、Compose worker 环境仍含 `API_KEY`），均未由本轮 P0 代码引入。
+
+依赖迁移边界已实测确认：`langchain-mcp-adapters==0.2.2` 在 `mcp==2.2.0` 下无法导入，最新版适配器解析会回到 MCP 1.x；因此按 5.2 移除旧适配器是必要的。当前 `app/agent/worker/runtime.py` 的旧 stdio adapter 路径尚未迁移到 MCP 2.2 HTTP，不属于本轮 P0 Spike 的通过项，必须在 P2/P3 完成后才可恢复该运行路径的部署资格。
+
+### P0 Docker 门禁结果与环境修复
+
+首次构建被 Docker Desktop 4.82.0 的 `dockerInference`、`docker-secrets-engine/engine.sock` 异常 ReparsePoint 阻断；在完全停机后将两个瞬时父目录重命名为可回退的 `*.stale-*`，并在 Desktop 停止状态下关闭 Resource Saver（`UseResourceSaver=false`、`AutoPauseTimeoutSeconds=0`）。设置和 JSON 均已复核，未触碰 `docker_data.vhdx`、镜像数据或仓库文件。
+
+修复后证据如下：
+
+- `docker compose -f docker-compose.test.yml build unit-test` 成功，Dockerfile 已直接使用 Python 3.11 Linux hash lock，镜像 `causalagent-demopaper-unit-test:latest` 已落地；Engine/WSL/BuildKit 均保持 Running。
+- `docker compose -f docker-compose.test.yml run --rm unit-test` 已实际完成，结果为 `445 passed in 18.45s`；此前出现的 `unexpected EOF` 未在当前 Docker Desktop 状态下复现。
+- 直接容器 integration 回归结果为 `50 passed, 4 skipped, 2 failed`；两个失败均为既有 admin deployment 配置断言（容器内缺少 `git`，以及 Compose 中既有 `API_KEY` 断言），不是本轮 P0 修复引入。
+
+因此上一轮 P0 的依赖、RAG import、真实 DeepSeek/Deep Agent、MCP HTTP、PostgreSQL checkpoint、Docker build/Compose unit 门禁已闭合；上述既有 integration 失败仍作为独立后续问题处理。当前旧 `app/agent/worker/runtime.py` 的 stdio adapter 路径仍未迁移到新 MCP 2.2 HTTP，P0 不授予该旧运行路径的部署资格，须在 P2/P3 完成后再验收。P2-M 当前实现状态见第 7.6 节。
 
 ---
 
@@ -239,10 +273,10 @@ Agent/deep_agent_tools/identity.py
 
 | 阶段 | 内容 | 负责人 | 是否可并行 | 进入下一阶段的门禁 | 本轮状态 |
 |---|---|---|---|---|---|
-| P0 | 分支、文档基线、依赖与协议 Spike | 你；MCP Spike 由协作者配合 | 部分 | 真实依赖、DeepSeek、ToolStrategy、MCP HTTP 最小链路通过 | 未在本轮复验；当前环境缺少目标包和凭据 |
-| P1 | 共享领域/传输契约 | 你 | 否 | schema snapshot、reducer、identity、fake executor 测试通过并提交 | 代码和测试已完成；已提交 |
-| P2-M | causal-mcp 纵向切片 | MCP 协作者 | 与 P2-U 并行 | MCP 分支独立完成真实算法、并发和故障验收 | 未开始 |
-| P2-U | Deep Agent 基础、Memory、Adapter、RAG/Web | 你 | 与 P2-M 并行 | fake executor 下状态、权限、工具和结构化终态测试通过 | 协议级代码和测试已完成；真实依赖/服务未验收 |
+| P0 | 分支、文档基线、依赖与协议 Spike | 你；MCP Spike 由协作者配合 | 部分 | 真实依赖、DeepSeek、ToolStrategy、MCP HTTP 最小链路通过 | 依赖、RAG import、协议 Spike、Docker build/Compose unit 已通过；2 个既有 integration 失败单列 |
+| P1 | 共享领域/传输契约 | 你 | 否 | schema snapshot、reducer、identity、fake executor 测试通过并提交 | 已由 `a6eba00` 提交；本轮兼容回归通过 |
+| P2-M | causal-mcp 纵向切片 | MCP 协作者 | 与 P2-U 并行 | MCP 分支独立完成真实算法、并发和故障验收 | 代码与隔离证据已合入收口；fencing/readiness/容量/参数/事件问题待修复 |
+| P2-U | Deep Agent 基础、Memory、Adapter、RAG/Web | 你 | 与 P2-M 并行 | fake executor 下状态、权限、工具和结构化终态测试通过 | 协议级代码和测试已完成；真实 Store/RAG/Web/模型服务未验收 |
 | P3 | 合并 MCP 并接入 worker | 你主导，协作者配合 | 否 | 真实 executor 替换 fake 后集成测试通过 | 未开始 |
 | P4 | Finalization/report/events/UI 收口 | 你 | 否 | 三类 outcome、degraded、SSE、主图和 Job 终态通过 | 未开始 |
 | P5 | 真实依赖与恢复验收 | 双方按模块负责 | 可分层 | Docker、MySQL、PostgreSQL、MCP、DeepSeek、RAG/Web 证据齐全 | 未开始 |
@@ -575,6 +609,19 @@ test(mcp):覆盖并发故障与真实算法契约
 docs(mcp):补充部署并发与故障边界
 ```
 
+### 7.6 本轮 P2-M 代码切片记录
+
+本轮先在 `feat(mcp)/causal-mcp-v2` 上完成 P2-M 独立代码切片，再普通合并回 DeepAgent 主线并完成收口：
+
+- `Agent/CausalAgentMCP/` 已拆分配置、HMAC、请求模型、固定 runner registry、有界进程池、强读/结果服务、健康检查和 MCP 2.2 `MCPServer` ASGI 入口；独立镜像固定 CDMIR commit，并用 CPU Torch 闭合其声明依赖；
+- `app/agent/worker/mcp_client_pool.py` 已实现共享 HTTP/1.1 client、N×K 成员调度、acquire timeout、generation 重建和 owner-task 生命周期清理；
+- `Agent/deep_agent_tools/mcp_algorithm_executor.py` 已实现签名、结构化响应、有限 transport/capacity 重试和共享 `AlgorithmExecutor` 结果契约；
+- 开发、预发、生产 Compose 已加入不映射宿主端口的 `causal-mcp` service、healthcheck、资源/线程默认值和密钥环境注入；
+- `tests/unit/agent/test_mcp_v2_contract.py` 在 Docker Python 3.11 测试镜像中通过；`tests/spike/p2_mcp_v2.py` 已用真实 MCP 2.2 HTTP、真实 client pool 和 fake authority reader 通过；一次性 MySQL 8.0 fixture 已通过 strong-read/旧 lease 拒绝；CDMIR 固定 commit 已在镜像内完成真实 OLC 小 fixture；`2 CPU/2 GiB` 容器基准和真实容器日志零命中扫描已执行。
+- 合并审查已补齐三阶段 fencing、同步数据库读取隔离、PC 参数透传、`/ready` 健康门禁、semaphore 泄漏修复、旧进程代际硬停止后再建新池，以及 MCP 成功/失败事件；同时移除三处会污染全量 pytest 收集顺序的全局 RAG module stub。
+
+以上证据闭合 P2-M 合并门禁，但不等于生产全链路完成：MySQL 使用最小隔离 schema，OLC 使用小型连续 fixture，RSS/CPU 是固定数据和容器资源基线，完整 migration/生产数据规模与正式部署采集链路仍待执行；旧 worker stdio 到新 HTTP 的生产切换留在 P3。
+
 ---
 
 ## 8. P2-U：主线并行实现
@@ -606,6 +653,8 @@ Agent/deep_agent/
 - `FinalAnalysisDecision` ToolStrategy schema；
 - 模型/工具/递归/finalization retry 预算；
 - reasoning、系统提示和 raw Tool 数据不进入公共输出。
+
+本轮已先完成 fake executor 前置：新增官方 `DeepAgentState` 扩展、runtime-only `AgentRunContext`/可信 Job identity、父 State 与 Deep Agent State 的显式投影，以及要求 checkpointer 的单步 fake algorithm graph。该前置只证明 State/reducer/context/checkpoint 边界，不代表 Deep Agent 主图、Memory、RAG/Web、Finalization 或真实模型已实现。
 
 ### 8.2 Filesystem 与长期记忆
 

@@ -514,6 +514,32 @@ _events: dict[str, EventSpec] = {
         input_bytes=COUNT,
         reason_code=REASON,
     ),
+    "mcp.request.accepted": _spec(
+        logging.INFO,
+        "dependency",
+        "MCP 请求已接受",
+        capability=TOKEN,
+        queue_wait_ms=DURATION,
+    ),
+    "mcp.capacity.rejected": _spec(
+        logging.WARNING,
+        "dependency",
+        "MCP 请求因容量限制被拒绝",
+        reason_code=REASON,
+        retry_after_seconds=COUNT,
+    ),
+    "mcp.process.recycled": _spec(
+        logging.WARNING,
+        "dependency",
+        "MCP 算法进程池已回收",
+        reason_code=REASON,
+    ),
+    "mcp.client.reconnected": _spec(
+        logging.INFO,
+        "dependency",
+        "MCP 客户端成员已重连",
+        generation=COUNT,
+    ),
     "mcp.transport.failed": _spec(
         logging.WARNING,
         "dependency",

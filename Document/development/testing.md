@@ -47,7 +47,7 @@
 
 RAG State 隔离和异常分流的单元测试位于 `tests/unit/agent/test_rag_subgraph_state.py`，覆盖 Planner 预检跳过 ToolNode、查询失败与协议错误标记、`success=False` Parser 路径、父 State 投影和取消/撤销传播。该测试使用 fake LLM、fake RAG tool 和导入桩，不覆盖真实模型、真实 MCP session、真实知识库向量检索或 PostgreSQL checkpoint。
 
-测试镜像基于 Dockerfile 的 `test` target，安装 `requirements-test.txt`。`unit-test` 服务不依赖 app/worker/monitor/MySQL，关闭容器网络，只读挂载仓库，并通过 Compose `env_file` 注入 `tests/unit-test-env`；这些已注入环境变量优先于项目 `.env`：
+测试镜像基于 Dockerfile 的 `test` target：Python 3.11 Linux 运行依赖从 `tests/smoke/requirements-deep-agent-py311-linux.lock` 以 `--require-hashes` 安装，随后再安装 `requirements-test.txt`。`unit-test` 服务不依赖 app/worker/monitor/MySQL，关闭容器网络，只读挂载仓库，并通过 Compose `env_file` 注入 `tests/unit-test-env`；这些已注入环境变量优先于项目 `.env`：
 
 ```bash
 docker compose -f docker-compose.test.yml build unit-test
@@ -60,6 +60,28 @@ docker compose -f docker-compose.test.yml run --rm unit-test
 docker compose -f docker-compose.test.yml run --rm unit-test python -m pytest -p no:cacheprovider tests/unit/admin
 docker compose -f docker-compose.test.yml run --rm unit-test python -m pytest -p no:cacheprovider tests/unit/agent/test_job_lifecycle.py
 ```
+
+## P2-M causal-mcp 纵向切片
+
+P2-M 的代码级验证覆盖固定 capability/spec digest、Bearer/HMAC 时窗与命令绑定、结果规范化、进程池容量/迟到结果、N×K 客户端池、owner task 清理和 `AlgorithmExecutor` 结构化结果。使用仓库测试镜像执行：
+
+```bash
+docker compose -f docker-compose.test.yml run --rm unit-test python -m pytest -p no:cacheprovider tests/unit/agent/test_mcp_v2_contract.py
+docker compose -f docker-compose.test.yml run --rm unit-test python tests/spike/p2_mcp_v2.py
+docker pull mysql:8.0
+docker run --rm --cpus=2 --memory=2g -v "${PWD}/tests:/tests:ro" causalagent-demopaper-causal-mcp:latest python /tests/acceptance/p2_mcp/run_acceptance.py
+.\tests\acceptance\p2_mcp\scan_container_logs.ps1 -ContainerName causal-mcp
+```
+
+第二条 smoke 使用真实 MCP 2.2 Streamable HTTP/HTTP/1.1、真实 client pool 和 fake authority reader，证明协议/结构化 envelope/生命周期；第三条在实际 `causal-mcp` 镜像和 `2 CPU/2 GiB` 容器约束下运行 PC、OLC、DirectLiNGAM fixture、容量窗口、deadline、RSS/CPU 和 A/B pool。镜像固定 CDMIR commit 与 CPU Torch，构建后必须通过 `pip check`。MySQL authority 另用一次性 `mysql:8.0` 容器与 `tests/acceptance/p2_mcp/mysql_strong_read.py` 验证有效 lease/旧 lease 拒绝；真实容器算法调用后的 Docker logs 使用合成值做零命中扫描。生产数据规模、完整 migration Compose 和正式资源基准仍需单独验收。
+
+P2-U fake executor 前置验证：
+
+```bash
+docker compose -f docker-compose.test.yml run --rm unit-test python -m pytest -p no:cacheprovider tests/unit/agent/test_deep_agent_fake_executor.py
+```
+
+该测试只证明官方 `DeepAgentState` 扩展、runtime context 不进入 State、显式 parent/deep projection、fake executor 结果/ledger 和 checkpointer 单步恢复；不证明真实 Deep Agent、Memory、RAG/Web、Finalization 或 worker 集成。
 
 ## RAG、多模态与隔离评测
 

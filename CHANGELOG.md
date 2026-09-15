@@ -1308,3 +1308,14 @@
   - 【构建环境】：修复 GitHub Windows runner 未创建 `.venv-desktop`、而打包脚本只接受该虚拟环境所导致的 onefile 构建失败；依赖安装、逻辑测试、PyInstaller 构建和冻结标记检查统一使用桌面虚拟环境。
   - 【恢复入口】：为 workflow 增加显式手动补齐模式，从原 tag 重新检出和构建，只允许向已发布且未锁定的 Release 上传缺失附件；不改变正式版或 Pre-release 属性，并拒绝移动 tag、修改说明或覆盖同名附件。
   - 【文档与测试】：增加 workflow 静态安全契约测试，并同步桌面发布、CD 恢复流程和 v0.1.0 Release Notes 的验收边界。
+
+---
+2026.9.15
+- 【MCP/Deep Agent：完成 P2-M 代码切片与 P2-U fake executor 前置】
+  - 【P2-M 服务】：新增独立 `causal-mcp` 服务，提供 MCP 2.2 Streamable HTTP、Bearer/HMAC 鉴权、MySQL primary strong read 与旧 lease/worker fencing、固定 PC/OLC/DirectLiNGAM runner、bounded ProcessPool 和 N×K client pool。
+  - 【P2-U 前置】：新增基于官方 `DeepAgentState` 的隔离扩展、runtime-only run context、显式 parent/deep state projection，以及带 checkpointer 的 fake executor graph；当前 worker 仍保留旧 stdio 路径，真实接入留待 P3。
+  - 【部署与依赖】：补齐 `causal-mcp` 私网 Compose 服务、健康检查和资源边界；独立镜像固定 CDMIR 版本并使用 CPU-only Torch，镜像 `pip check` 通过。
+  - 【验收证据】：Docker unit `454 passed`，相关 integration `20 passed`；隔离 MySQL strong-read/旧 lease、HMAC/Compose 配置、真实算法 fixture runner、并发排队/超时回收、A/B pool、故障 generation/cancel 和容器日志敏感字段扫描均按脚本记录。
+  - 【边界与风险】：MySQL 使用最小隔离 schema；算法调用、`2 running + 4 queued`、RSS/CPU 为受控 fixture/容器基线，不构成生产容量或性能承诺；真实容器调用已验证健康、鉴权和结构化响应，但极小输入仍返回 `execution_failed`，完整 P3 worker HTTP 接入、迁移链路和生产规模验收尚未完成。
+  - 【主线合并收口】：保留 DeepAgent 主线 State/Context/Graph 权威实现，补齐三阶段 lease fencing、异步 strong read、`/ready` 健康门禁、PC 参数透传、容量信号量释放、旧进程代际终止后回收和成功/失败目录事件；修复全量测试中的 RAG module stub 污染。
+  - 【合并验证】：重建 Python 3.11 测试镜像后全量 unit `515 passed`；Agent/部署/migration/日志定向 integration `44 passed, 3 skipped`，开发 Compose 静态展开通过；既有 admin deployment 两项失败仍独立保留，不计入 MCP/DeepAgent 完成证据。

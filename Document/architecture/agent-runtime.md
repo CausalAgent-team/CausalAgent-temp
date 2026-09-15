@@ -14,6 +14,16 @@
 
 `runtime.py` 通过 `ProcessRuntime` 和 `SlotRuntime` 显式传递这些对象；执行函数不能从 `app.agent.core` 读取全局 graph 或 LLM。这样可以把真实并发单元限定为 slot，并让 MCP session 与 graph 的生命周期一致。
 
+## P2-M causal-mcp 过渡边界
+
+P2-M 已新增独立的 `Agent/CausalAgentMCP/app.py`、固定 runner registry、有界 CPU 进程池和 `app/agent/worker/mcp_client_pool.py`。新服务使用 Streamable HTTP/HTTP/1.1、Bearer/HMAC、MySQL primary strong read、canonical UUID 和 lease 校验；`MCP session` 只承载传输，不保存 Job、checkpoint 或 Action Ledger。客户端池按 `N×K` 成员容量调度，成员 context 由 owner task 创建和关闭，以避免 MCP SDK/AnyIO cancel scope 跨任务清理。
+
+这只是 MCP 协作支线的独立纵向切片。当前 worker 仍通过上面的旧 stdio `MultiServerMCPClient` 建立 slot 级 session；P3 才会在 worker bootstrap 中替换为长期 HTTP client pool 和真实 `McpAlgorithmExecutor`。因此本节的服务协议/池单测和 fake-authority HTTP smoke 不能写成 Job 全链路已迁移或真实 MySQL/容量验收完成。
+
+## P2-U fake executor 前置
+
+`Agent/deep_agent/` 当前只提供 P2-U 的隔离前置：`ProjectDeepAgentState` 继承官方 `DeepAgentState`，算法结果、Action Ledger 和证据使用显式 reducer；`AgentRunContext` 保存 fake/未来真实 executor、可信身份和执行守卫，不进入 checkpoint；父 State 与 Deep Agent State 通过显式投影连接。`build_fake_graph()` 只用于该前置的 checkpointer/State 验收，不接入当前生产父图，也不代表 Memory、RAG/Web、Finalization 或真实 DeepSeek 已完成。
+
 ## 父图与工具阶段
 
 父图当前暴露 `mcp`、`rag` 和 `web_search` 三个工具阶段。MCP 子图的正常路径为 `mcp_planner -> mcp_tool_node -> mcp_result_parser`；RAG 子图内部对应 `rag_question_planner -> rag_tool_node -> rag_result_parser -> rag_finalize`。父图通过适配节点只向 RAG 子图传入 `messages`、`analysis_parameters`、`preprocess_summary` 和 `causal_analysis_result`，子图只投影 `rag_output` 为父图的 `knowledge_base_result`；RAG route、问题列表、ToolMessage 和解析中间结果不会进入父 State。

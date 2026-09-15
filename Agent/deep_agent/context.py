@@ -141,4 +141,3 @@ class AgentRunContext:
                     "runtime-only fields must not enter graph state: "
                     + ", ".join(sorted(leaked))
                 )
-

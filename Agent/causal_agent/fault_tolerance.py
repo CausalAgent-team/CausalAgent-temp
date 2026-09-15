@@ -38,6 +38,8 @@ def retry_transient_errors(exc: BaseException) -> bool:
         return False
     guard = current_execution_guard()
     if guard is not None and guard.revoked:
+        if default_retry_on(exc):
+            raise JobExecutionRevoked("执行已撤销，停止瞬态错误重试")
         return False
     exc_name = exc.__class__.__name__.lower()
     if "interrupt" in exc_name:
