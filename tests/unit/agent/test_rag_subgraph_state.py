@@ -11,6 +11,7 @@ from typing import TypedDict
 
 import pytest
 from langchain_core.tools import tool
+from langgraph.errors import NodeCancelledError
 from langgraph.graph import END, StateGraph
 
 
@@ -584,8 +585,13 @@ def test_rag_query_task_does_not_convert_cancellation(monkeypatch, cancel_except
         graph.add_node("invoke_task", invoke_task)
         graph.set_entry_point("invoke_task")
         graph.add_edge("invoke_task", END)
-        with pytest.raises(type(cancel_exception)):
-            await graph.compile().ainvoke({"result": None})
+        if isinstance(cancel_exception, asyncio.CancelledError):
+            with pytest.raises(NodeCancelledError) as error_info:
+                await graph.compile().ainvoke({"result": None})
+            assert isinstance(error_info.value.__cause__, asyncio.CancelledError)
+        else:
+            with pytest.raises(type(cancel_exception)):
+                await graph.compile().ainvoke({"result": None})
 
     asyncio.run(scenario())
 
