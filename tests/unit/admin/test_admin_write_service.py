@@ -158,12 +158,12 @@ class ControlledAdminWriteTests(unittest.TestCase):
         started = time.monotonic()
         with (
             patch.object(
-                database_access.settings,
+                database_access.database_settings,
                 "MYSQL_POOL_ACQUIRE_TIMEOUT_SECONDS",
                 0.01,
             ),
             patch.object(
-                database_access.settings,
+                database_access.database_settings,
                 "MYSQL_POOL_ACQUIRE_RETRY_MS",
                 1,
             ),
