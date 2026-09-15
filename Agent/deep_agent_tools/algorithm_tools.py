@@ -35,8 +35,8 @@ class AlgorithmTool:
 
     entry: RegistryEntry
     adapter: Any
-    runtime_context: "AgentRunContext"
-    adapter_input: AdapterInput
+    runtime_context: "AgentRunContext | None" = None
+    adapter_input: AdapterInput | None = None
 
     @property
     def name(self) -> str:
@@ -53,6 +53,44 @@ class AlgorithmTool:
     def schema(self) -> dict[str, Any]:
         return self.entry.spec.build_tool_schema()
 
+    @staticmethod
+    def _data_profile_from_state(state: Mapping[str, Any]) -> DataProfile:
+        profile = state.get("data_profile")
+        if isinstance(profile, DataProfile):
+            return profile.model_copy(deep=True)
+        if isinstance(profile, Mapping):
+            return DataProfile.model_validate(profile)
+        file_summary = state.get("file_summary")
+        if not isinstance(file_summary, Mapping):
+            file_summary = {}
+        columns = tuple(
+            str(column) for column in file_summary.get("columns", ()) if str(column)
+        )
+        return DataProfile(
+            row_count=max(0, int(file_summary.get("rows") or 0)),
+            column_count=len(columns),
+            column_names=columns,
+        )
+
+    def _adapter_input_from_runtime(self, runtime: Any) -> AdapterInput:
+        """从当前 ToolRuntime 生成输入快照；文件正文不进入 State。"""
+
+        context = getattr(runtime, "context", None)
+        identity = getattr(context, "trusted_identity", None)
+        if identity is None:
+            raise RuntimeError("trusted runtime context is required for algorithm input")
+        state = getattr(runtime, "state", None)
+        if not isinstance(state, Mapping):
+            raise RuntimeError("ToolRuntime.state must be a mapping")
+        dataset_csv = state.get("dataset_csv")
+        return AdapterInput(
+            data_profile=self._data_profile_from_state(state),
+            input_identity=identity.input_identity,
+            dataset_csv=dataset_csv if isinstance(dataset_csv, str) else None,
+            missing_values_present=bool(state.get("missing_values_present")),
+            dataset_authority_available=True,
+        )
+
     def _record(
         self,
         *,
@@ -64,9 +102,13 @@ class AlgorithmTool:
         status: str,
         revision: int,
         result_ref: str | None = None,
+        runtime_context: "AgentRunContext | None" = None,
     ) -> InvocationRecord:
+        active_context = runtime_context or self.runtime_context
+        if active_context is None or active_context.trusted_identity is None:
+            raise RuntimeError("trusted runtime context is required for Ledger")
         invocation_id = build_invocation_id(
-            job_id=self.runtime_context.trusted_identity.job_id,
+            job_id=active_context.trusted_identity.job_id,
             response_identity=response_identity,
             provider_call_id=provider_call_id,
         )
@@ -119,19 +161,40 @@ class AlgorithmTool:
         retry_ordinal: int = 0,
         result_index: int = 0,
         runtime_context: "AgentRunContext | None" = None,
+        adapter_input: AdapterInput | None = None,
     ) -> AlgorithmResult:
         """调用 Adapter；身份参数由 Tool runtime 注入而不是模型 schema。"""
 
         active_context = runtime_context or self.runtime_context
+        if active_context is None or active_context.trusted_identity is None:
+            raise RuntimeError("trusted runtime context is required for algorithm execution")
         await active_context.ensure_active()
+        active_input = adapter_input or self.adapter_input
+        if active_input is None:
+            state = getattr(active_context, "_tool_state", None)
+            if not isinstance(state, Mapping):
+                state = {}
+            active_input = AdapterInput(
+                data_profile=self._data_profile_from_state(state),
+                input_identity=active_context.trusted_identity.input_identity,
+                dataset_csv=(
+                    state.get("dataset_csv")
+                    if isinstance(state.get("dataset_csv"), str)
+                    else None
+                ),
+                missing_values_present=bool(state.get("missing_values_present")),
+                dataset_authority_available=True,
+            )
         return await self.adapter.run(
             parameters=dict(arguments or {}),
-            adapter_input=self.adapter_input,
+            adapter_input=active_input,
             trusted_context=active_context.trusted_identity,
             provider_call_id=provider_call_id,
             response_identity=response_identity,
             retry_ordinal=retry_ordinal,
             result_index=result_index,
+            executor=active_context.algorithm_executor,
+            raw_backend=active_context.filesystem_backend,
         )
 
     async def ainvoke_with_ledger(
@@ -154,6 +217,7 @@ class AlgorithmTool:
             result=None,
             status="queued",
             revision=0,
+            runtime_context=self.runtime_context,
         )
         running = queued.model_copy(
             deep=True,
@@ -195,6 +259,7 @@ class AlgorithmTool:
             status=terminal_status,
             revision=2,
             result_ref=result.result_ref if result.status == "valid" else None,
+            runtime_context=self.runtime_context,
         )
         return result, (queued, running, terminal)
 
@@ -224,11 +289,15 @@ class AlgorithmTool:
                 expected_context=self.runtime_context,
             )
             started_at = datetime.now(timezone.utc)
+            active_adapter_input = self.adapter_input or self._adapter_input_from_runtime(
+                runtime
+            )
             result = await self.ainvoke(
                 kwargs,
                 provider_call_id=identity.provider_call_id,
                 response_identity=identity.response_identity,
                 runtime_context=identity.runtime_context,
+                adapter_input=active_adapter_input,
             )
             attempt_status = {
                 "valid": "succeeded",
@@ -278,21 +347,27 @@ class AlgorithmTool:
 def build_algorithm_tools(
     registry: AlgorithmRegistry,
     *,
-    runtime_context: "AgentRunContext",
-    data_profile: DataProfile,
+    runtime_context: "AgentRunContext | None" = None,
+    data_profile: DataProfile | None = None,
     input_identity: str | None = None,
     dataset_csv: str | None = None,
     missing_values_present: bool = False,
 ) -> tuple[AlgorithmTool, ...]:
     """按 Registry 静态顺序生成三项领域工具。"""
 
-    identity = input_identity or runtime_context.trusted_identity.input_identity
-    adapter_input = AdapterInput(
-        data_profile=data_profile,
-        input_identity=identity,
-        dataset_csv=dataset_csv,
-        missing_values_present=missing_values_present,
-    )
+    adapter_input = None
+    if runtime_context is not None and data_profile is not None:
+        identity = input_identity or (
+            runtime_context.trusted_identity.input_identity
+            if runtime_context.trusted_identity is not None
+            else "runtime-input"
+        )
+        adapter_input = AdapterInput(
+            data_profile=data_profile,
+            input_identity=identity,
+            dataset_csv=dataset_csv,
+            missing_values_present=missing_values_present,
+        )
     tools: list[AlgorithmTool] = []
     for entry in registry.entries:
         tools.append(
@@ -308,8 +383,8 @@ def build_algorithm_tools(
 
 def build_default_algorithm_tools(
     *,
-    runtime_context: "AgentRunContext",
-    data_profile: DataProfile,
+    runtime_context: "AgentRunContext | None" = None,
+    data_profile: DataProfile | None = None,
     adapters: Mapping[str, Any],
     **kwargs: Any,
 ) -> tuple[AlgorithmTool, ...]:

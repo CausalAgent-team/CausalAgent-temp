@@ -10,6 +10,7 @@ from app.agent.worker.runtime import (
     McpClientResources,
     ProcessRuntime,
     RagReadiness,
+    SlotRuntime,
     create_process_runtime,
     create_slot_runtime,
     inspect_rag_readiness,
@@ -154,6 +155,71 @@ def test_slot_runtime_builds_graph_from_explicit_dependencies():
     assert slot_runtime.mcp_resources is resources
     assert slot_runtime.mcp_tools is tools
     assert slot_runtime.graph is graph
+
+
+def test_production_slot_reuses_process_graph_without_opening_stdio_mcp():
+    """生产新路径复用进程级 HTTP pool/graph，不再创建 slot stdio session。"""
+    llm = Mock(name="llm")
+    graph = Mock(name="compiled-parent-graph")
+    domain_tools = (SimpleNamespace(name="causal_pc"),)
+    process_runtime = ProcessRuntime(
+        llm=llm,
+        rag_available=True,
+        domain_tools=domain_tools,
+        graph=graph,
+    )
+
+    with patch(
+        "app.agent.worker.runtime.open_mcp_client_resources",
+        new=AsyncMock(side_effect=AssertionError("stdio path must be unreachable")),
+    ):
+        slot_runtime = asyncio.run(
+            create_slot_runtime(
+                process_runtime,
+                AsyncExitStack(),
+                Mock(name="checkpoint_pool"),
+            )
+        )
+
+    assert slot_runtime.graph is graph
+    assert slot_runtime.mcp_resources is None
+    assert slot_runtime.mcp_tools == list(domain_tools)
+    assert slot_runtime.process_runtime is process_runtime
+
+
+def test_slot_context_binds_job_lease_and_web_switch():
+    """每次 slot invocation 都从 claim 结果构造可信 identity。"""
+    from Agent.deep_agent import TrustedJobIdentity
+
+    process_runtime = ProcessRuntime(
+        llm=Mock(name="llm"),
+        rag_available=True,
+        algorithm_executor=Mock(name="executor"),
+        filesystem_backend=Mock(name="backend"),
+    )
+    slot_runtime = SlotRuntime(
+        llm=process_runtime.llm,
+        process_runtime=process_runtime,
+    )
+    context = slot_runtime.build_run_context(
+        job={
+            "job_id": "00000000-0000-0000-0000-000000000301",
+            "session_id": "00000000-0000-0000-0000-000000000302",
+            "user_id": 7,
+            "attempt_count": 2,
+            "lease_epoch": 4,
+            "input_file_hash": "input-sha",
+            "web_search_enabled": True,
+        },
+        execution_guard=Mock(name="guard"),
+        worker_id="worker-1",
+    )
+
+    assert isinstance(context.trusted_identity, TrustedJobIdentity)
+    assert context.trusted_identity.attempt_count == 2
+    assert context.trusted_identity.lease_epoch == 4
+    assert context.web_search_enabled is True
+    assert context.algorithm_executor is process_runtime.algorithm_executor
 
 
 def test_drain_timeout_cancels_local_slot_without_terminal_job_mutation():

@@ -68,6 +68,15 @@ def test_final_result_uses_valid_revised_graph_and_history_persists_same_data():
     assert persisted["graph_source"] == "postprocessed"
 
 
+def test_final_result_exposes_only_finalization_status() -> None:
+    state = _final_state(None)
+    state["finalization_status"] = "degraded"
+    result = process_final_result(state)
+
+    assert result["finalization_status"] == "degraded"
+    assert "finalization_error" not in result
+
+
 @pytest.mark.parametrize(
     "postprocess_result",
     [

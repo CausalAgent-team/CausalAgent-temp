@@ -55,7 +55,14 @@ def test_observability_network_ports_and_password_boundary():
 
 def test_only_intended_development_containers_are_labelled_for_collection():
     compose = COMPOSE_PATH.read_text(encoding="utf-8")
-    intended = {"app", "worker", "db-bootstrap", "checkpoint-cleanup", "monitor"}
+    intended = {
+        "app",
+        "worker",
+        "causal-mcp",
+        "db-bootstrap",
+        "checkpoint-cleanup",
+        "monitor",
+    }
 
     for service_name in intended:
         block = _service_block(compose, service_name)

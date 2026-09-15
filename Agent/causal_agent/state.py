@@ -10,6 +10,15 @@ from typing_extensions import NotRequired
 
 from langchain_core.messages import BaseMessage, ToolMessage
 
+from Agent.deep_agent_tools.models import (
+    AlgorithmResult,
+    DataProfile,
+    EvidenceResult,
+    FinalAnalysisDecision,
+    InvocationRecord,
+    WebEvidenceResult,
+)
+
 
 class FileSummary(TypedDict, total=False):
     """当前 Job 的冻结文件元数据和受限数据摘要。"""
@@ -52,6 +61,7 @@ class CausalAgentState(TypedDict):
     session_id: str
     job_id: NotRequired[str]
     file_summary: NotRequired[Optional[FileSummary]]
+    data_profile: NotRequired[Optional[DataProfile]]
 
     route_decision: NotRequired[
         Literal["fold", "postprocess", "normal_chat", "inquiry_answer"]
@@ -73,6 +83,18 @@ class CausalAgentState(TypedDict):
     visualization_mapping: Optional[dict]
 
     visualizations: Optional[dict]
+
+    # 新 Deep Agent 路径的父子 State 投影；这些字段不包含 runtime-only 对象。
+    deep_agent_algorithm_results: NotRequired[dict[str, AlgorithmResult]]
+    deep_agent_action_ledger: NotRequired[dict[str, InvocationRecord]]
+    deep_agent_rag_evidence: NotRequired[dict[str, EvidenceResult]]
+    deep_agent_web_evidence: NotRequired[dict[str, WebEvidenceResult]]
+    deep_agent_decision: NotRequired[Optional[FinalAnalysisDecision]]
+    deep_agent_structured_response: NotRequired[Optional[FinalAnalysisDecision]]
+    deep_agent_retry_instruction: NotRequired[str]
+    finalization_retry_count: NotRequired[int]
+    finalization_status: NotRequired[Literal["valid", "degraded"]]
+    finalization_error: NotRequired[str]
 
 
 class RagSubgraphState(TypedDict, total=False):

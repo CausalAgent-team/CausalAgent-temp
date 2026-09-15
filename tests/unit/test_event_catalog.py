@@ -47,6 +47,10 @@ EXPECTED_CODES = {
     "rag.multimodal.parse_failed",
     "mcp.tool.finished",
     "mcp.tool.failed",
+    "mcp.request.accepted",
+    "mcp.capacity.rejected",
+    "mcp.process.recycled",
+    "mcp.client.reconnected",
     "mcp.transport.failed",
     "monitor.snapshot.failed",
     "monitor.snapshot.recovered",
@@ -91,6 +95,8 @@ def _sample_value(field: str, rule):
         "final_attempt",
         "outbox_id",
         "consecutive_failures",
+        "generation",
+        "retry_after_seconds",
     }:
         return 1
     if field.endswith("_count") or field in {
@@ -99,6 +105,7 @@ def _sample_value(field: str, rule):
         "downtime_ms",
         "elapsed_ms",
         "input_bytes",
+        "queue_wait_ms",
         "lag_seconds",
         "lease_epoch",
         "max_workers",

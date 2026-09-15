@@ -204,6 +204,46 @@ class StreamEventAdapterTests(unittest.TestCase):
         self.assertEqual(finished["summary"], "调用完成")
         self.assertNotIn("private file body", repr(finished))
 
+    def test_deep_agent_results_expose_controlled_status_only(self):
+        """新 Deep Agent 结果只投影工具名、状态和安全错误码。"""
+        self.adapter.convert(task_start("task-deep", "deep_agent"))
+        events = self.adapter.convert({
+            "type": "updates",
+            "ns": (),
+            "data": {
+                "deep_agent": {
+                    "deep_agent_algorithm_results": {
+                        "result-1": {
+                            "capability_id": "causal.pc",
+                            "status": "execution_failed",
+                            "diagnostics": {
+                                "safe_error_code": "ALGORITHM_EXECUTION_FAILED",
+                                "summary": "private diagnostics",
+                            },
+                            "raw_result_ref": "/private/path.json",
+                        }
+                    }
+                }
+            },
+        })
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(
+            events[0],
+            {
+                "type": "tool_call_result",
+                "step_id": events[0]["step_id"],
+                "node_name": "deep_agent",
+                "title": "执行 Deep Agent 分析",
+                "attempt": 3,
+                "tool_name": "causal_pc",
+                "summary": "调用失败",
+                "status": "failed",
+                "safe_error_code": "ALGORITHM_EXECUTION_FAILED",
+            },
+        )
+        self.assertNotIn("private", repr(events[0]))
+
     def test_sse_public_payload_removes_backend_attempt(self):
         """job attempt 可以持久化，但不能进入普通用户 SSE 协议。"""
         payload = {
@@ -219,6 +259,25 @@ class StreamEventAdapterTests(unittest.TestCase):
         self.assertNotIn("prompt", public)
         self.assertNotIn("tool_result", public)
         self.assertEqual(payload["attempt"], 4)
+
+    def test_sse_public_payload_keeps_controlled_tool_status(self):
+        payload = {
+            "type": "tool_call_result",
+            "step_id": "opaque",
+            "node_name": "deep_agent",
+            "title": "执行 Deep Agent 分析",
+            "tool_name": "causal_pc",
+            "summary": "调用失败",
+            "status": "failed",
+            "safe_error_code": "ALGORITHM_EXECUTION_FAILED",
+            "raw_result": "private",
+        }
+
+        public = _public_event_payload(payload)
+
+        self.assertEqual(public["status"], "failed")
+        self.assertEqual(public["safe_error_code"], "ALGORITHM_EXECUTION_FAILED")
+        self.assertNotIn("raw_result", public)
 
 
 class RealLangGraphStreamTests(unittest.IsolatedAsyncioTestCase):

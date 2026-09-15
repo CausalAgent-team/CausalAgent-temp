@@ -7,6 +7,7 @@
 
 from .context import AgentRunContext, TrustedJobIdentity
 from .finalization import (
+    FinalizationGate,
     FinalizationRetryController,
     StructuredResponseError,
     validate_structured_response,
@@ -55,6 +56,7 @@ __all__ = [
     "DeepAgentState",
     "FilesystemPermission",
     "FinalizationRetryController",
+    "FinalizationGate",
     "CompositeBackend",
     "MemoryConflictError",
     "MemoryPermissionError",

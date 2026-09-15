@@ -40,6 +40,9 @@ def process_final_result(final_state_data: dict[str, Any]) -> dict[str, Any]:
                     "summary": final_state_data["final_report"],
                     "layout": "report",
                 }
+                finalization_status = final_state_data.get("finalization_status")
+                if finalization_status in {"valid", "degraded"}:
+                    result["finalization_status"] = finalization_status
                 analysis_data = final_state_data.get("causal_analysis_result")
                 if isinstance(analysis_data, dict) and analysis_data.get("success"):
                     original_graph = analysis_data.get("data")
@@ -79,6 +82,9 @@ def process_final_result(final_state_data: dict[str, Any]) -> dict[str, Any]:
     final_report = final_state_data.get("final_report")
     if final_report:
         result = {"type": "text", "summary": final_report, "layout": "report"}
+        finalization_status = final_state_data.get("finalization_status")
+        if finalization_status in {"valid", "degraded"}:
+            result["finalization_status"] = finalization_status
         references = _extract_references(final_state_data.get("web_search_result"))
         if references:
             result["references"] = references

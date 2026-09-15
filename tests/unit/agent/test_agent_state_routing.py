@@ -31,13 +31,6 @@ def _install_import_stubs():
     data_visualize.generate_visualizations = lambda *args, **kwargs: {}
     sys.modules.setdefault("Agent.Processing.data_visualize", data_visualize)
 
-    query_rag = types.ModuleType("Agent.knowledge_base.query_rag")
-    query_rag.get_rag_excerpt = lambda *args, **kwargs: ""
-    query_rag.format_rag_summary_for_prompt = lambda *args, **kwargs: ""
-    query_rag.get_rag_response = lambda *args, **kwargs: {}
-    sys.modules.setdefault("Agent.knowledge_base.query_rag", query_rag)
-
-
 _install_import_stubs()
 
 from Agent.causal_agent import edges, nodes

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from typing import Any
 
@@ -11,6 +12,8 @@ NODE_DESCRIPTIONS = {
     "agent": "分析用户意图",
     "fold": "加载文件并验证数据",
     "preprocess": "预处理数据",
+    "deep_agent": "执行 Deep Agent 分析",
+    "finalization_gate": "校验最终分析决策",
     "mcp": "执行因果分析",
     "rag": "检索知识库",
     "web_search": "联网搜索",
@@ -40,6 +43,13 @@ DECISION_PROGRESS = {
 DECISION_FIELDS = {
     "agent": "route_decision",
     "fold": "fold_decision",
+}
+_SAFE_TOOL_NAME = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
+_SAFE_ERROR_CODE = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
+_ALGORITHM_TOOL_NAMES = {
+    "causal.pc": "causal_pc",
+    "causal.olc": "causal_olc",
+    "causal.direct_lingam": "causal_direct_lingam",
 }
 
 
@@ -175,6 +185,94 @@ class LangGraphEventAdapter:
         keys = sorted(str(key) for key in args)[:12] if isinstance(args, dict) else []
         return name, keys
 
+    @staticmethod
+    def _safe_result_status(result: Any) -> str:
+        """把内部结果状态压缩为公共事件允许的有限状态。"""
+        if isinstance(result, dict):
+            status = result.get("status")
+            success = result.get("success")
+        else:
+            status = getattr(result, "status", None)
+            success = getattr(result, "success", None)
+        normalized = str(getattr(status, "value", status) or "").strip()
+        if normalized in {"valid", "available", "no_results", "succeeded"}:
+            return "succeeded"
+        if normalized in {"not_ready", "disabled"}:
+            return "not_ready"
+        if normalized in {"timed_out", "timeout"}:
+            return "timed_out"
+        if normalized in {
+            "invalid_input",
+            "not_applicable",
+            "execution_failed",
+            "unavailable",
+            "protocol_error",
+            "failed",
+        }:
+            return "failed"
+        return "succeeded" if success is not False else "failed"
+
+    @staticmethod
+    def _safe_error_code(result: Any) -> str | None:
+        """只透传格式受限的安全错误码，不透传异常文本或诊断对象。"""
+        if isinstance(result, dict):
+            diagnostics = result.get("diagnostics")
+            candidate = result.get("safe_error_code")
+            if candidate is None and isinstance(diagnostics, dict):
+                candidate = diagnostics.get("safe_error_code")
+        else:
+            diagnostics = getattr(result, "diagnostics", None)
+            candidate = getattr(result, "safe_error_code", None)
+            if candidate is None:
+                candidate = getattr(diagnostics, "safe_error_code", None)
+        candidate = str(getattr(candidate, "value", candidate) or "").strip()
+        return candidate if _SAFE_ERROR_CODE.fullmatch(candidate) else None
+
+    @staticmethod
+    def _safe_algorithm_tool_name(result: Any) -> str:
+        capability = (
+            result.get("capability_id")
+            if isinstance(result, dict)
+            else getattr(result, "capability_id", None)
+        )
+        return _ALGORITHM_TOOL_NAMES.get(str(capability), "算法工具")
+
+    @staticmethod
+    def _safe_public_tool_name(value: Any) -> str:
+        """只允许已约定格式的公开工具名，拒绝把内部名称原样外带。"""
+
+        name = str(value or "").strip()
+        return name if _SAFE_TOOL_NAME.fullmatch(name) else "工具"
+
+    def _deep_agent_result_events(
+        self,
+        step: dict[str, Any],
+        output: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """把 Deep Agent 聚合结果投影为不含引用/正文的工具完成事件。"""
+        results = output.get("deep_agent_algorithm_results")
+        if not isinstance(results, dict):
+            return []
+        events: list[dict[str, Any]] = []
+        for result in results.values():
+            event = self._base("tool_call_result", step)
+            event.update(
+                {
+                    "tool_name": self._safe_algorithm_tool_name(result),
+                    "summary": (
+                        "调用完成"
+                        if self._safe_result_status(result) == "succeeded"
+                        else "调用失败"
+                    ),
+                    "status": self._safe_result_status(result),
+                }
+            )
+            safe_error_code = self._safe_error_code(result)
+            if safe_error_code:
+                event["safe_error_code"] = safe_error_code
+            events.append(event)
+        return events
+
     def _update_event(self, namespace: Any, data: Any) -> list[dict[str, Any]]:
         """从显式 State 和规范化结果生成 decision、progress 与工具摘要。"""
         if not isinstance(data, dict):
@@ -199,6 +297,8 @@ class LangGraphEventAdapter:
                         f"已决定进入：{NODE_DESCRIPTIONS.get(decision, decision)}"
                     )
                     events.append(event)
+                if node_name == "deep_agent":
+                    events.extend(self._deep_agent_result_events(step, output))
             tool_step = self._parent_tool_step(node_name)
             if not tool_step:
                 continue
@@ -208,7 +308,10 @@ class LangGraphEventAdapter:
             if tool_name:
                 event = self._base("tool_call_start", tool_step)
                 event.update(
-                    {"tool_name": tool_name, "argument_keys": argument_keys}
+                    {
+                        "tool_name": self._safe_public_tool_name(tool_name),
+                        "argument_keys": argument_keys,
+                    }
                 )
                 events.append(event)
             if TOOL_STAGE_NODES[node_name] == "mcp":
@@ -218,18 +321,26 @@ class LangGraphEventAdapter:
             else:
                 result = output.get("knowledge_base_result")
             if isinstance(result, dict):
-                metadata = result.get("_tool_call") or {}
+                metadata = result.get("_tool_call")
+                if not isinstance(metadata, dict):
+                    metadata = {}
                 event = self._base("tool_call_result", tool_step)
                 event.update(
                     {
-                        "tool_name": metadata.get("name") or tool_name or "工具",
+                        "tool_name": self._safe_public_tool_name(
+                            metadata.get("name") or tool_name
+                        ),
                         "summary": (
                             "调用完成"
                             if result.get("success") is not False
                             else "调用失败"
                         ),
+                        "status": self._safe_result_status(result),
                     }
                 )
+                safe_error_code = self._safe_error_code(result)
+                if safe_error_code:
+                    event["safe_error_code"] = safe_error_code
                 events.append(event)
         return events
 
