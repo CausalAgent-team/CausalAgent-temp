@@ -4,7 +4,7 @@
 >
 > **适用范围**：适用于从 `develop@4bea85fdea7292e85577d2b9b3e4c1c763b50829` 创建的新 DeepAgent 功能分支，以及由该分支派生的 MCP 协作分支。本文是实施计划，不代表功能已经实现或验收通过。
 
-**状态**：P0 依赖、RAG import smoke、真实协议 Spike、Docker build/Compose unit 回归已通过；integration 仍保留 2 个既有部署断言失败；P1 共享契约已提交，P2 及以后未开始
+**状态**：P0 依赖、RAG import smoke、真实协议 Spike、Docker build/Compose unit 回归已通过；P1 共享契约已提交；P2-M 代码纵向切片已落地，真实 MySQL/容量压测/故障注入/独立镜像验收待执行；P2-U 及以后未开始
 
 **计划日期**：2026-09-14
 
@@ -60,7 +60,7 @@ python -m pytest -q tests/unit/agent/test_deep_agent_models.py tests/unit/agent/
 
 ### 当前分支与执行边界
 
-当前工作树位于 `feat(mcp)/causal-mcp-v2`，HEAD 为 `a6eba00`，与同名上游分支一致。本轮只完成 P0 依赖/协议 Spike、必要的兼容回归修复和测试证据；未提交、未推送、未切分支，未进入 P2-M/P2-U 业务集成。
+上一轮 P0 执行时工作树位于 `feat(mcp)/causal-mcp-v2`，HEAD 为 `a6eba00`，与当时同名上游分支一致；该段只记录上一轮 P0 基线，不代表当前 HEAD。
 
 ### 已通过的 P0 门禁
 
@@ -84,7 +84,7 @@ python -m pytest -q tests/unit/agent/test_deep_agent_models.py tests/unit/agent/
 - `docker compose -f docker-compose.test.yml run --rm unit-test` 已实际完成，结果为 `445 passed in 18.45s`；此前出现的 `unexpected EOF` 未在当前 Docker Desktop 状态下复现。
 - 直接容器 integration 回归结果为 `50 passed, 4 skipped, 2 failed`；两个失败均为既有 admin deployment 配置断言（容器内缺少 `git`，以及 Compose 中既有 `API_KEY` 断言），不是本轮 P0 修复引入。
 
-因此 P0 的依赖、RAG import、真实 DeepSeek/Deep Agent、MCP HTTP、PostgreSQL checkpoint、Docker build/Compose unit 门禁已闭合；上述既有 integration 失败仍作为独立后续问题处理。当前旧 `app/agent/worker/runtime.py` 的 stdio adapter 路径仍未迁移到新 MCP 2.2 HTTP，P0 不授予该旧运行路径的部署资格，须在 P2/P3 完成后再验收。本轮除 `app/agent/worker/graph_runner.py` 的 LangGraph 取消兼容修复外，没有修改现有 `Agent/CausalAgentMCP/mcp_server.py`、Compose、worker MCP bootstrap 或业务集成路径。P2-M、P2-U、P3、P4、P5、P6 仍未开始。
+因此上一轮 P0 的依赖、RAG import、真实 DeepSeek/Deep Agent、MCP HTTP、PostgreSQL checkpoint、Docker build/Compose unit 门禁已闭合；上述既有 integration 失败仍作为独立后续问题处理。当前旧 `app/agent/worker/runtime.py` 的 stdio adapter 路径仍未迁移到新 MCP 2.2 HTTP，P0 不授予该旧运行路径的部署资格，须在 P2/P3 完成后再验收。P2-M 当前实现状态见第 7.6 节。
 
 ---
 
@@ -257,8 +257,8 @@ Agent/deep_agent_tools/identity.py
 |---|---|---|---|---|---|
 | P0 | 分支、文档基线、依赖与协议 Spike | 你；MCP Spike 由协作者配合 | 部分 | 真实依赖、DeepSeek、ToolStrategy、MCP HTTP 最小链路通过 | 依赖、RAG import、协议 Spike、Docker build/Compose unit 已通过；2 个既有 integration 失败单列 |
 | P1 | 共享领域/传输契约 | 你 | 否 | schema snapshot、reducer、identity、fake executor 测试通过并提交 | 已由 `a6eba00` 提交；本轮兼容回归通过 |
-| P2-M | causal-mcp 纵向切片 | MCP 协作者 | 与 P2-U 并行 | MCP 分支独立完成真实算法、并发和故障验收 | 未开始 |
-| P2-U | Deep Agent 基础、Memory、Adapter、RAG/Web | 你 | 与 P2-M 并行 | fake executor 下状态、权限、工具和结构化终态测试通过 | 未开始 |
+| P2-M | causal-mcp 纵向切片 | MCP 协作者 | 与 P2-U 并行 | MCP 分支独立完成真实算法、并发和故障验收 | 代码切片已落地，真实验收待执行 |
+| P2-U | Deep Agent 基础、Memory、Adapter、RAG/Web | 你 | 与 P2-M 并行 | fake executor 下状态、权限、工具和结构化终态测试通过 | fake executor 前置已落地，其余未开始 |
 | P3 | 合并 MCP 并接入 worker | 你主导，协作者配合 | 否 | 真实 executor 替换 fake 后集成测试通过 | 未开始 |
 | P4 | Finalization/report/events/UI 收口 | 你 | 否 | 三类 outcome、degraded、SSE、主图和 Job 终态通过 | 未开始 |
 | P5 | 真实依赖与恢复验收 | 双方按模块负责 | 可分层 | Docker、MySQL、PostgreSQL、MCP、DeepSeek、RAG/Web 证据齐全 | 未开始 |
@@ -591,6 +591,18 @@ test(mcp):覆盖并发故障与真实算法契约
 docs(mcp):补充部署并发与故障边界
 ```
 
+### 7.6 本轮 P2-M 代码切片记录
+
+本轮在 `feat(mcp)/causal-mcp-v2` 上完成了 P2-M 的独立代码切片：
+
+- `Agent/CausalAgentMCP/` 已拆分配置、HMAC、请求模型、固定 runner registry、有界进程池、强读/结果服务、健康检查和 MCP 2.2 `MCPServer` ASGI 入口；独立镜像固定 CDMIR commit，并用 CPU Torch 闭合其声明依赖；
+- `app/agent/worker/mcp_client_pool.py` 已实现共享 HTTP/1.1 client、N×K 成员调度、acquire timeout、generation 重建和 owner-task 生命周期清理；
+- `Agent/deep_agent_tools/mcp_algorithm_executor.py` 已实现签名、结构化响应、有限 transport/capacity 重试和共享 `AlgorithmExecutor` 结果契约；
+- 开发、预发、生产 Compose 已加入不映射宿主端口的 `causal-mcp` service、healthcheck、资源/线程默认值和密钥环境注入；
+- `tests/unit/agent/test_mcp_v2_contract.py` 在 Docker Python 3.11 测试镜像中通过；`tests/spike/p2_mcp_v2.py` 已用真实 MCP 2.2 HTTP、真实 client pool 和 fake authority reader 通过；一次性 MySQL 8.0 fixture 已通过 strong-read/旧 lease 拒绝；CDMIR 固定 commit 已在镜像内完成真实 OLC 小 fixture；`2 CPU/2 GiB` 容器基准和真实容器日志零命中扫描已执行。
+
+以上证据仍不等于生产 P2-M 完成：MySQL 使用最小隔离 schema，OLC 使用小型连续 fixture，RSS/CPU 是固定数据和容器资源基线，完整 migration/生产数据规模与正式部署采集链路仍待执行；旧 worker stdio 到新 HTTP 的生产切换留在 P3。
+
 ---
 
 ## 8. P2-U：主线并行实现
@@ -622,6 +634,8 @@ Agent/deep_agent/
 - `FinalAnalysisDecision` ToolStrategy schema；
 - 模型/工具/递归/finalization retry 预算；
 - reasoning、系统提示和 raw Tool 数据不进入公共输出。
+
+本轮已先完成 fake executor 前置：新增官方 `DeepAgentState` 扩展、runtime-only `AgentRunContext`/可信 Job identity、父 State 与 Deep Agent State 的显式投影，以及要求 checkpointer 的单步 fake algorithm graph。该前置只证明 State/reducer/context/checkpoint 边界，不代表 Deep Agent 主图、Memory、RAG/Web、Finalization 或真实模型已实现。
 
 ### 8.2 Filesystem 与长期记忆
 

@@ -75,7 +75,7 @@ Flask 在确认 `X-Request-ID` 后立即绑定 `request_id`，只有主库确认
 | `worker` | `app/agent/worker/__main__.py`、slot/runtime/execution | slot、Job、lease、node 最终降级和 cleanup 聚合结果 |
 | `monitor` | `Database/monitor_worker.py`、`Database/monitoring.py`、`app/db.py` | 快照、配置、锁、主从、连接和慢 SQL 的转移/恢复事件 |
 | `maintenance` | bootstrap、database/checkpoint setup、checkpoint cleanup worker | 启动边界、outbox attempt 结果和循环级转移/恢复 |
-| `mcp` | `Agent/CausalAgentMCP/mcp_server.py` stdio 子进程 | 子进程启动和实际工具成功/失败；应用日志只写 stderr |
+| `mcp` | P2-M `Agent/CausalAgentMCP/app.py` 私有容器；旧版本仍为 `mcp_server.py` stdio 子进程 | 新服务记录容量拒绝、进程回收、客户端重连和安全工具结果；协议输出与应用日志分离，旧路径日志只写 stderr |
 
 ### 3.1 隐私与去重边界
 
@@ -89,13 +89,13 @@ Flask 在确认 `X-Request-ID` 后立即绑定 `request_id`，只有主库确认
 
 应用运行入口可达代码中的自有 `logging.info/warning/error/critical/exception` 必须由 AST 静态测试阻止。当前只允许 [`Database/audit_before_db_upgrade.py`](../../Database/audit_before_db_upgrade.py) 和未接入生产入口的 [`Database/mysql_checkpointer.py`](../../Database/mysql_checkpointer.py) 保留普通终端日志；其输出不得被容器生产流程调用或采集。`print` 同样由静态清单限制在数据库引导/修复、管理员 CLI、知识库构建/评估和独立算法演示文件中；其中 [`Database/job_execution_upgrade_repair.py`](../../Database/job_execution_upgrade_repair.py) 只输出不含 Job ID、worker 标识和连接信息的 dry-run/执行计数。桌面客户端和浏览器 `console` 不属于服务端运行日志合同，但仍不得用来旁路输出秘密或用户正文。
 
-MCP 不创建应用文件 handler，stdout 只允许协议消息；MySQL `/var/lib/mysql/mysql-slow.log` 是未被本拓扑采集的数据库引擎日志，不属于事件目录。
+MCP 不创建应用文件 handler，MCP transport stdout 只允许协议消息；P2-M 容器通过标准 JSON stderr 接入采集，不能把 CSV、SQL、签名、Token 或异常原文写入事件。MySQL `/var/lib/mysql/mysql-slow.log` 是未被本拓扑采集的数据库引擎日志，不属于事件目录。
 
 ### 3.3 第 1.3 步开发采集拓扑
 
 默认开发 Compose 在 [`docker-compose.yml`](../../docker-compose.yml) 中增加独立的 `observability_network`，并锁定以下镜像：`grafana/loki:3.7.4`、`grafana/alloy:v1.18.0` 和 `grafana/grafana:13.1.1`。Loki、Alloy 不映射宿主机端口；Grafana 仅映射到 `127.0.0.1:3000`，要求 `GRAFANA_ADMIN_PASSWORD` 非空，并通过 `GF_USERS_DEFAULT_LANGUAGE=zh-Hans` 将未设置个人偏好的账号默认显示为简体中文；账号自己的语言偏好仍具有更高优先级。Loki 数据、Grafana 数据和 Alloy positions 分别使用命名卷，生产 Compose 不复用这些服务或卷。
 
-采集范围由 Compose 静态标签控制：`app`、`worker`、`monitor`、`db-bootstrap` 和 `checkpoint-cleanup` 才带有 `causalagent_observability=true`。数据库容器和可观测组件自身没有该标签，因此 Alloy 不会递归采集它们。MCP 是 worker 内的 stdio 子进程，子进程应用日志进入 worker stderr，采集后再按 JSON 中的 `service=mcp` 覆盖 `service_name`；这不是一个额外 Docker 容器。
+采集范围由 Compose 静态标签控制：`app`、`worker`、`causal-mcp`、`monitor`、`db-bootstrap` 和 `checkpoint-cleanup` 才带有 `causalagent_observability=true`。数据库容器和可观测组件自身没有该标签，因此 Alloy 不会递归采集它们。P2-M `causal-mcp` 是独立私有容器，使用 `service=mcp` 的 JSON stderr；旧版本 worker 内 stdio 子进程仍由 worker stderr 采集，不把两条运行路径混写成同一服务事实。
 
 Alloy 先用 `stage.docker` 解包 Docker `json-file` 包装层，再用 `stage.json` 提取 `service`、`environment`、`level` 和 `category`。`drop_malformed=false` 保证非法或旧格式行保留原文，未解析字段不被伪造。最终只保留 `service_name`、`environment`、`level`、`category` 四类低基数标签；`request_id`、`job_id`、`user_id`、`session_id`、`node`、`tool`、`instance` 等仍只在 JSON 行正文中。positions 位于 Alloy 的 `/var/lib/alloy/data` 命名卷，重启续读由 `loki.source.docker` 管理。
 
@@ -178,6 +178,10 @@ Grafana 继续使用独立账号和 `127.0.0.1:3000` 本地入口，不复用 Ca
 | `rag.multimodal.parse_failed` | `error/dependency` | 多模态 RAG 解析失败 | `phase`, `reason_code`, `source_alias`, `page_number`, `image_index`, `table_index`, `status_code`, `fallback_attempted`, `circuit_breaker_open` |
 | `mcp.tool.finished` | `info/dependency` | MCP 工具调用完成 | `duration_ms`, `input_bytes`, `result_kind` |
 | `mcp.tool.failed` | `error/dependency` | MCP 工具调用失败 | `duration_ms`, `input_bytes`, `reason_code` |
+| `mcp.request.accepted` | `info/dependency` | MCP 请求已接受 | `capability`, `queue_wait_ms` |
+| `mcp.capacity.rejected` | `warning/dependency` | MCP 请求因容量限制被拒绝 | `reason_code`, `retry_after_seconds` |
+| `mcp.process.recycled` | `warning/dependency` | MCP 算法进程池已回收 | `reason_code` |
+| `mcp.client.reconnected` | `info/dependency` | MCP 客户端成员已重连 | `generation` |
 | `mcp.transport.failed` | `warning/dependency` | MCP transport 最终调用失败 | `reason_code`, `final_attempt`, `duration_ms` |
 | `monitor.snapshot.failed` | `error/dependency` | 数据库监控快照采集失败 | `snapshot_key`, `reason_code`, `duration_ms`, `suppressed_count` |
 | `monitor.snapshot.recovered` | `info/dependency` | 数据库监控快照采集已恢复 | `snapshot_key`, `downtime_ms`, `failure_count` |

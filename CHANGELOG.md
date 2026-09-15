@@ -1304,3 +1304,12 @@
   - 【RAG 与搜索】：交付多模态来源摄取、staged index、混合检索、隔离评测、active release publish/rollback 和 SearXNG 学术搜索及安全降级。
   - 【管理与运维】：交付管理员前后端、MySQL 主从与监控、结构化日志、Alloy/Loki/Grafana、开发/测试/staging/production Compose 及分层技术文档。
   - 【发布制品】：发布 GitHub 自动源码归档与 Windows WebView2 Developer Preview onefile；桌面壳只连接本机服务，本版本不发布官方 Docker 镜像、不部署公网服务、不提供代码签名或自动更新。
+
+---
+2026.9.15
+- 【MCP/Deep Agent：完成 P2-M 代码切片与 P2-U fake executor 前置】
+  - 【P2-M 服务】：新增独立 `causal-mcp` 服务，提供 MCP 2.2 Streamable HTTP、Bearer/HMAC 鉴权、MySQL primary strong read 与旧 lease/worker fencing、固定 PC/OLC/DirectLiNGAM runner、bounded ProcessPool 和 N×K client pool。
+  - 【P2-U 前置】：新增基于官方 `DeepAgentState` 的隔离扩展、runtime-only run context、显式 parent/deep state projection，以及带 checkpointer 的 fake executor graph；当前 worker 仍保留旧 stdio 路径，真实接入留待 P3。
+  - 【部署与依赖】：补齐 `causal-mcp` 私网 Compose 服务、健康检查和资源边界；独立镜像固定 CDMIR 版本并使用 CPU-only Torch，镜像 `pip check` 通过。
+  - 【验收证据】：Docker unit `454 passed`，相关 integration `20 passed`；隔离 MySQL strong-read/旧 lease、HMAC/Compose 配置、真实算法 fixture runner、并发排队/超时回收、A/B pool、故障 generation/cancel 和容器日志敏感字段扫描均按脚本记录。
+  - 【边界与风险】：MySQL 使用最小隔离 schema；算法调用、`2 running + 4 queued`、RSS/CPU 为受控 fixture/容器基线，不构成生产容量或性能承诺；真实容器调用已验证健康、鉴权和结构化响应，但极小输入仍返回 `execution_failed`，完整 P3 worker HTTP 接入、迁移链路和生产规模验收尚未完成。

@@ -25,6 +25,7 @@
 | `db-bootstrap` | 一次性 MySQL/Alembic/PostgreSQL 初始化 |
 | `app` | Flask Web，暴露 5001 |
 | `worker` | Agent Job worker |
+| `causal-mcp` | 私有 Streamable HTTP 因果算法服务；只加入内部网络，不映射宿主端口 |
 | `monitor` | 数据库共享快照采集 |
 | `checkpoint-cleanup` | 跨库 checkpoint 删除 |
 | `rag-eval-worker` | 独立领取 RAG 摄取、候选、评测和治理队列任务 |
@@ -32,7 +33,7 @@
 | `searxng` / `valkey` | 固定版本的 SearXNG 联网学术搜索及其缓存/队列依赖 |
 | `loki` / `alloy` / `grafana` | 开发环境运行日志采集、存储和查看；只加入独立的 observability network |
 
-`app`、Agent worker、monitor、RAG evaluation worker 和 cleanup 依赖 `db-bootstrap` 成功退出；`searxng` 依赖 Valkey 健康和 `searxng-init` 成功退出。联网搜索是 Job 级可选能力，默认拓扑不让 `app` 或 Agent worker 等待 SearXNG 健康，运行期不可用时由 Web Search 子图重试并降级；非搜索 Job 不会因此阻止启动。开发拓扑当前不提供自动故障切换。启动命令见 [`setup.md`](setup.md)。
+`app`、Agent worker、`causal-mcp`、monitor、RAG evaluation worker 和 cleanup 依赖 `db-bootstrap` 成功退出；`causal-mcp` 另外等待 `mysql-primary` 健康，并以 `/health`/`/ready` 提供进程、MySQL strong read 和进程池就绪边界。`causal-mcp` 不映射宿主端口，算法仅在有界进程池运行；Bearer/HMAC 密钥只通过环境变量或部署 secret 注入。当前 worker 仍沿用旧 stdio 运行路径，P3 完成前不会把新 HTTP 服务声称为生产 worker 路径。`searxng` 依赖 Valkey 健康和 `searxng-init` 成功退出。联网搜索是 Job 级可选能力，默认拓扑不让 `app` 或 Agent worker 等待 SearXNG 健康，运行期不可用时由 Web Search 子图重试并降级；非搜索 Job 不会因此阻止启动。开发拓扑当前不提供自动故障切换。启动命令见 [`setup.md`](setup.md)。
 
 ## 联网搜索（SearXNG）
 
@@ -48,7 +49,7 @@
 
 ## 生产部署
 
-`docker-compose.prod.yml` 使用生产 MySQL、PostgreSQL checkpoint、统一 bootstrap、Web、Agent worker、monitor、checkpoint cleanup 和独立 `rag-eval-worker`；生产环境不挂载源代码，使用独立卷、网络和日志轮转设置。RAG evaluation worker 与主系统进程隔离，并通过独立评测卷共享必要的运行产物；它不带开发可观测性标签，不应把评测日志混入主系统观测流。当前生产 Compose 是单独的生产配置，不能假设它自动提供开发 Compose 的 MySQL replica、SearXNG、Loki/Alloy/Grafana 或故障切换能力。
+`docker-compose.prod.yml` 使用生产 MySQL、PostgreSQL checkpoint、统一 bootstrap、Web、Agent worker、独立 `causal-mcp`、monitor、checkpoint cleanup 和独立 `rag-eval-worker`；生产环境不挂载源代码，使用独立卷、网络和日志轮转设置。`causal-mcp` 使用独立不可变镜像、单 ASGI worker、默认 2 个 CPU 进程和 4 个等待队列，不开放宿主端口；镜像内的 CDMIR 固定到受控 commit，并使用 CPU Torch 依赖闭合 `pip check`。RAG evaluation worker 与主系统进程隔离，并通过独立评测卷共享必要的运行产物；它不带开发可观测性标签，不应把评测日志混入主系统观测流。当前生产 Compose 是单独的生产配置，不能假设它自动提供开发 Compose 的 MySQL replica、SearXNG、Loki/Alloy/Grafana 或故障切换能力。
 当前生产 Compose 未定义 SearXNG 服务；如果生产环境启用 `web_search_enabled`，必须另外提供可访问的 `SEARXNG_URL` 和对应的搜索服务部署，搜索不可用时仍遵循 worker 运行期降级语义。
 
 ## RAG release 与 worker 生命周期
