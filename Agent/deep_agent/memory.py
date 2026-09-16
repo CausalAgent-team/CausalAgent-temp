@@ -190,8 +190,8 @@ def trusted_memory_namespace(value: Any) -> tuple[str, ...]:
         context = getattr(value, "context", None)
         if context is not None:
             identity = context
-    if hasattr(value, "trusted_identity"):
-        identity = getattr(value, "trusted_identity")
+    if hasattr(identity, "trusted_identity"):
+        identity = getattr(identity, "trusted_identity")
 
     if hasattr(identity, "user_id"):
         user_id = getattr(identity, "user_id")

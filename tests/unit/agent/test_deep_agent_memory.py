@@ -1,5 +1,7 @@
 """P2-U 内存 Store、权限和 raw result 协议测试。"""
 
+from types import SimpleNamespace
+
 import pytest
 
 from Agent.deep_agent.memory import (
@@ -43,4 +45,15 @@ def test_namespace_comes_from_trusted_identity_not_model_arguments() -> None:
         trusted_identity = Identity()
 
     assert trusted_memory_namespace(Runtime()) == ("causalagent", "memory", "42")
+
+
+def test_namespace_unwraps_langgraph_runtime_context() -> None:
+    """官方 StoreBackend 传入 Runtime 时仍须读取可信 context identity。"""
+    runtime = SimpleNamespace(
+        context=SimpleNamespace(
+            trusted_identity=SimpleNamespace(user_id=43),
+        )
+    )
+
+    assert trusted_memory_namespace(runtime) == ("causalagent", "memory", "43")
 
