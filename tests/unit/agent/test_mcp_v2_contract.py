@@ -567,31 +567,113 @@ class _FakeHttpClient:
         return None
 
 
-def test_client_pool_uses_one_scheduler_for_a_and_b_modes() -> None:
+def test_client_pool_separates_execute_and_control_lanes() -> None:
     async def scenario():
-        for max_in_flight in (1, 2):
-            pool = McpClientPool(
-                McpClientPoolConfig(
-                    url="http://causal-mcp:8080/mcp",
-                    service_token="token",
-                    pool_size=2,
-                    max_in_flight_per_client=max_in_flight,
-                    acquire_timeout_seconds=0.01,
-                    max_connections=4,
-                    max_keepalive_connections=4,
-                ),
-                http_client=_FakeHttpClient(),
-                client_factory=_FakeClient,
-                transport_factory=lambda *_args, **_kwargs: object(),
-            )
-            await pool.start()
-            leases = [await pool.acquire() for _ in range(2 * max_in_flight)]
-            try:
-                with pytest.raises(McpPoolError):
-                    await pool.acquire()
-            finally:
-                await asyncio.gather(*(lease.release() for lease in leases))
-                await pool.close()
+        pool = McpClientPool(
+            McpClientPoolConfig(
+                url="http://causal-mcp:8080/mcp",
+                service_token="token",
+                pool_size=2,
+                max_in_flight_per_client=1,
+                acquire_timeout_seconds=0.01,
+                control_pool_size=1,
+                control_max_in_flight_per_client=2,
+                control_acquire_timeout_seconds=0.01,
+                max_connections=4,
+                max_keepalive_connections=4,
+            ),
+            http_client=_FakeHttpClient(),
+            client_factory=_FakeClient,
+            transport_factory=lambda *_args, **_kwargs: object(),
+        )
+        await pool.start()
+        execute = [await pool.acquire("execute") for _ in range(2)]
+        control = [await pool.acquire("control") for _ in range(2)]
+        try:
+            assert {lease.member.lane for lease in execute} == {"execute"}
+            assert {lease.member.lane for lease in control} == {"control"}
+            assert len({lease.member.member_id for lease in control}) == 1
+            with pytest.raises(McpPoolError):
+                await pool.acquire("execute")
+            with pytest.raises(McpPoolError):
+                await pool.acquire("control")
+        finally:
+            await asyncio.gather(*(lease.release() for lease in execute + control))
+            await pool.close()
+
+    asyncio.run(scenario())
+
+
+def test_client_pool_rejects_insufficient_http_or_control_capacity() -> None:
+    base = dict(
+        url="http://causal-mcp:8080/mcp",
+        service_token="token",
+        pool_size=2,
+        max_in_flight_per_client=1,
+        control_pool_size=1,
+        control_max_in_flight_per_client=2,
+        max_connections=4,
+        max_keepalive_connections=4,
+    )
+    with pytest.raises(ValueError, match="HTTP connection pool"):
+        McpClientPoolConfig(**{**base, "max_connections": 3}).validate()
+    with pytest.raises(ValueError, match="control capacity"):
+        McpClientPoolConfig(
+            **{**base, "control_max_in_flight_per_client": 1}
+        ).validate()
+
+
+def test_cancel_tool_uses_control_lane_while_execute_lane_is_full() -> None:
+    async def scenario():
+        pool = McpClientPool(
+            McpClientPoolConfig(
+                url="http://causal-mcp:8080/mcp",
+                service_token="token",
+                acquire_timeout_seconds=0.01,
+                control_acquire_timeout_seconds=0.01,
+            ),
+            http_client=_FakeHttpClient(),
+            client_factory=_FakeClient,
+            transport_factory=lambda *_args, **_kwargs: object(),
+        )
+        await pool.start()
+        execute = [await pool.acquire("execute") for _ in range(2)]
+        try:
+            response = await pool.cancel_tool({}, invocation_id="inv-control")
+            assert response.structured_content["ok"] is True
+            assert all(lease.member.lane == "execute" for lease in execute)
+        finally:
+            await asyncio.gather(*(lease.release() for lease in execute))
+            await pool.close()
+
+    asyncio.run(scenario())
+
+
+def test_control_member_reconnect_preserves_lane_and_close_drains_all_members() -> None:
+    async def scenario():
+        pool = McpClientPool(
+            McpClientPoolConfig(
+                url="http://causal-mcp:8080/mcp",
+                service_token="token",
+            ),
+            http_client=_FakeHttpClient(),
+            client_factory=_FakeClient,
+            transport_factory=lambda *_args, **_kwargs: object(),
+        )
+        await pool.start()
+        control = next(member for member in pool.members if member.lane == "control")
+        old_owner_tasks = [member.owner_task for member in pool.members]
+        await pool.ensure_reconnected(control.member_id, control.generation)
+        replacement = next(
+            member for member in pool.members if member.member_id == control.member_id
+        )
+        assert replacement.lane == "control"
+        assert replacement.generation == control.generation + 1
+        replacement_owner = replacement.owner_task
+        await pool.close()
+        assert not pool.members
+        assert all(task is not None and task.done() for task in old_owner_tasks)
+        assert replacement_owner is not None and replacement_owner.done()
 
     asyncio.run(scenario())
 
@@ -807,5 +889,108 @@ def test_executor_guard_revocation_cancels_the_remote_invocation() -> None:
             assert pool.cancel_calls == 1
         finally:
             JobExecutionGuard.reset(token)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("status"),
+    ["canceled", "cancel_pending", "already_canceled", "already_finished", "not_found"],
+)
+def test_cancel_remote_preserves_server_status(status: str) -> None:
+    context = _context()
+    command = _command(context)
+
+    class FakePool:
+        async def cancel_tool(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                structured_content={"cancellation": {"status": status}}
+            )
+
+    result = asyncio.run(
+        McpAlgorithmExecutor(FakePool(), signing_key="secret")._cancel_remote(
+            arguments={}, command=command, retry_ordinal=0
+        )
+    )
+    assert result == status
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_reason"),
+    [
+        (
+            McpPoolError(SafeErrorCode.MCP_CAPACITY_EXHAUSTED, lane="control"),
+            "control_capacity_timeout",
+        ),
+        (McpTransportError("mcp-control-1", 0), "transport_error"),
+        (ValueError("invalid response"), "invalid_response"),
+    ],
+)
+def test_cancel_remote_maps_failures_to_unknown(failure, expected_reason) -> None:
+    context = _context()
+    command = _command(context)
+    observed = []
+
+    class FakePool:
+        async def cancel_tool(self, *_args, **_kwargs):
+            raise failure
+
+    with patch(
+        "Agent.deep_agent_tools.mcp_algorithm_executor.log_event",
+        side_effect=lambda _logger, event, **kwargs: observed.append(
+            (event, kwargs.get("details"))
+        ),
+    ):
+        result = asyncio.run(
+            McpAlgorithmExecutor(FakePool(), signing_key="secret")._cancel_remote(
+                arguments={}, command=command, retry_ordinal=0
+            )
+        )
+    assert result == "unknown"
+    assert observed[-1][1]["reason_code"] == expected_reason
+
+
+def test_cancel_remote_response_timeout_is_unknown() -> None:
+    context = _context()
+    command = _command(context)
+    observed = []
+
+    class FakePool:
+        async def cancel_tool(self, *_args, **_kwargs):
+            await asyncio.Event().wait()
+
+    with patch(
+        "Agent.deep_agent_tools.mcp_algorithm_executor.log_event",
+        side_effect=lambda _logger, event, **kwargs: observed.append(
+            (event, kwargs.get("details"))
+        ),
+    ):
+        result = asyncio.run(
+            McpAlgorithmExecutor(
+                FakePool(), signing_key="secret", cancel_timeout_seconds=0.01
+            )._cancel_remote(arguments={}, command=command, retry_ordinal=0)
+        )
+    assert result == "unknown"
+    assert observed[-1][1]["reason_code"] == "response_timeout"
+
+
+def test_cancel_remote_propagates_outer_cancellation() -> None:
+    context = _context()
+    command = _command(context)
+
+    class FakePool:
+        async def cancel_tool(self, *_args, **_kwargs):
+            await asyncio.Event().wait()
+
+    async def scenario():
+        task = asyncio.create_task(
+            McpAlgorithmExecutor(FakePool(), signing_key="secret")._cancel_remote(
+                arguments={}, command=command, retry_ordinal=0
+            )
+        )
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
     asyncio.run(scenario())

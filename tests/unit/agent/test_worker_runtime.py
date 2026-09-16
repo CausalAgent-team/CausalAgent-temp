@@ -1,7 +1,7 @@
 """验证 worker runtime 的依赖显式性和 slot 隔离边界。"""
 
 import asyncio
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, asynccontextmanager
 import runpy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -15,6 +15,7 @@ from app.agent.worker.runtime import (
     create_process_runtime,
     create_slot_runtime,
     inspect_rag_readiness,
+    initialize_production_runtime,
 )
 
 
@@ -312,3 +313,55 @@ def test_stop_event_prevents_idle_slot_from_claiming_more_jobs():
         claim_next_job.assert_not_called()
 
     asyncio.run(scenario())
+
+
+def test_production_runtime_waits_for_both_mcp_lanes_before_executor(monkeypatch):
+    """单一 pool 的 start 完成两类成员握手后才允许创建执行器。"""
+
+    order = []
+    pool = SimpleNamespace(close=AsyncMock())
+
+    async def start_pool():
+        order.extend(["execute_ready", "control_ready"])
+
+    pool.start = start_pool
+
+    def build_executor(received_pool, **_kwargs):
+        assert received_pool is pool
+        assert order == ["execute_ready", "control_ready"]
+        order.append("executor_created")
+        return Mock(name="executor")
+
+    @asynccontextmanager
+    async def store_context():
+        yield Mock(name="store")
+
+    adapter = SimpleNamespace(raw_backend=Mock(name="backend"))
+    monkeypatch.setenv("CAUSAL_MCP_SIGNING_KEY_CURRENT", "test-signing-key")
+    with (
+        patch("app.agent.worker.runtime.create_llm", return_value=Mock(name="llm")),
+        patch("app.agent.worker.runtime.open_async_postgres_store", return_value=store_context()),
+        patch("app.agent.worker.runtime.McpClientPoolConfig.from_env", return_value=Mock()),
+        patch("app.agent.worker.runtime.McpClientPool", return_value=pool) as pool_cls,
+        patch("app.agent.worker.runtime.McpAlgorithmExecutor", side_effect=build_executor),
+        patch("app.agent.worker.runtime.build_default_adapters", return_value={"pc": adapter}),
+        patch("app.agent.worker.runtime.build_default_registry", return_value=Mock(name="registry")),
+        patch("app.agent.worker.runtime.build_algorithm_tools", return_value=()),
+        patch("app.agent.worker.runtime.build_default_rag_evidence_tool", return_value=Mock()),
+        patch("app.agent.worker.runtime.build_default_web_evidence_tool", return_value=Mock()),
+        patch("app.agent.worker.runtime.inspect_rag_readiness", return_value=RagReadiness("rag_unavailable")),
+        patch("app.agent.worker.runtime.create_deep_agent_model", return_value=Mock()),
+        patch("app.agent.worker.runtime._required_positive_environment_integer", return_value=1000),
+        patch("app.agent.worker.runtime.build_checkpointer", return_value=Mock()),
+        patch("app.agent.worker.runtime.build_deep_agent", return_value=Mock()),
+        patch("Agent.causal_agent.graph.build_deep_agent_parent_graph", return_value=Mock()),
+    ):
+        async def scenario():
+            async with AsyncExitStack() as stack:
+                return await initialize_production_runtime(Mock(), stack)
+
+        runtime = asyncio.run(scenario())
+
+    pool_cls.assert_called_once()
+    assert runtime.mcp_pool is pool
+    assert order == ["execute_ready", "control_ready", "executor_created"]

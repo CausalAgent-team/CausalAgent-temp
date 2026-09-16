@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import logging
 import os
 import traceback
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from Agent.deep_agent_tools.error_codes import SafeErrorCode
 
@@ -37,9 +37,10 @@ logging.getLogger("asyncio").addFilter(_ExpectedMcpCleanupLogFilter())
 
 
 class McpPoolError(RuntimeError):
-    def __init__(self, code: SafeErrorCode) -> None:
+    def __init__(self, code: SafeErrorCode, *, lane: str | None = None) -> None:
         super().__init__(code.value)
         self.safe_error_code = code
+        self.lane = lane
 
 
 class McpTransportError(McpPoolError):
@@ -125,6 +126,9 @@ class McpClientPoolConfig:
     pool_size: int = 2
     max_in_flight_per_client: int = 1
     acquire_timeout_seconds: float = 5.0
+    control_pool_size: int = 1
+    control_max_in_flight_per_client: int = 2
+    control_acquire_timeout_seconds: float = 1.0
     max_connections: int = 8
     max_keepalive_connections: int = 4
     read_timeout_seconds: float = 660.0
@@ -144,6 +148,13 @@ class McpClientPoolConfig:
             acquire_timeout_seconds=float(
                 os.getenv("CAUSAL_MCP_POOL_ACQUIRE_TIMEOUT_SECONDS", "5")
             ),
+            control_pool_size=integer("CAUSAL_MCP_CONTROL_POOL_SIZE", 1),
+            control_max_in_flight_per_client=integer(
+                "CAUSAL_MCP_CONTROL_MAX_IN_FLIGHT_PER_CLIENT", 2
+            ),
+            control_acquire_timeout_seconds=float(
+                os.getenv("CAUSAL_MCP_CONTROL_ACQUIRE_TIMEOUT_SECONDS", "1")
+            ),
             max_connections=integer("CAUSAL_MCP_HTTP_MAX_CONNECTIONS", 8),
             max_keepalive_connections=integer(
                 "CAUSAL_MCP_HTTP_MAX_KEEPALIVE_CONNECTIONS", 4
@@ -156,17 +167,30 @@ class McpClientPoolConfig:
     def validate(self) -> None:
         if not self.url or not self.service_token:
             raise ValueError("CAUSAL_MCP_URL and CAUSAL_MCP_SERVICE_TOKEN are required")
-        if self.pool_size <= 0 or self.max_in_flight_per_client <= 0:
+        if (
+            self.pool_size <= 0
+            or self.max_in_flight_per_client <= 0
+            or self.control_pool_size <= 0
+            or self.control_max_in_flight_per_client <= 0
+        ):
             raise ValueError("MCP client pool sizes must be positive")
-        if self.max_connections < self.pool_size * self.max_in_flight_per_client:
+        if self.acquire_timeout_seconds <= 0 or self.control_acquire_timeout_seconds <= 0:
+            raise ValueError("MCP client pool acquire timeouts must be positive")
+        execute_capacity = self.pool_size * self.max_in_flight_per_client
+        control_capacity = self.control_pool_size * self.control_max_in_flight_per_client
+        if control_capacity < execute_capacity:
+            raise ValueError("MCP control capacity must be at least execute capacity")
+        total_capacity = execute_capacity + control_capacity
+        if self.max_connections < total_capacity:
             raise ValueError("HTTP connection pool is smaller than MCP in-flight capacity")
-        if self.max_keepalive_connections < self.pool_size * self.max_in_flight_per_client:
+        if self.max_keepalive_connections < total_capacity:
             raise ValueError("HTTP keepalive pool is smaller than MCP in-flight capacity")
 
 
 @dataclass
 class McpClientMember:
     member_id: str
+    lane: Literal["execute", "control"]
     generation: int
     mcp_session_id: str | None
     max_in_flight: int
@@ -218,7 +242,7 @@ class McpClientPool:
         self._transport_factory = transport_factory
         self._members: dict[str, McpClientMember] = {}
         self._condition = asyncio.Condition()
-        self._round_robin = 0
+        self._round_robin: dict[str, int] = {"execute": 0, "control": 0}
         self._started = False
         self._closed = False
 
@@ -250,11 +274,24 @@ class McpClientPool:
             )
             await self._http_client.__aenter__()
         for index in range(self.config.pool_size):
-            member = await self._create_member(f"mcp-{index + 1}", generation=0)
+            member = await self._create_member(
+                f"mcp-execute-{index + 1}", generation=0, lane="execute"
+            )
+            self._members[member.member_id] = member
+        for index in range(self.config.control_pool_size):
+            member = await self._create_member(
+                f"mcp-control-{index + 1}", generation=0, lane="control"
+            )
             self._members[member.member_id] = member
         self._started = True
 
-    async def _create_member(self, member_id: str, *, generation: int) -> McpClientMember:
+    async def _create_member(
+        self,
+        member_id: str,
+        *,
+        generation: int,
+        lane: Literal["execute", "control"],
+    ) -> McpClientMember:
         from mcp.client import Client
         from mcp.client.streamable_http import streamable_http_client
 
@@ -284,7 +321,12 @@ class McpClientPool:
             member_id=member_id,
             generation=generation,
             mcp_session_id=None,
-            max_in_flight=self.config.max_in_flight_per_client,
+            lane=lane,
+            max_in_flight=(
+                self.config.max_in_flight_per_client
+                if lane == "execute"
+                else self.config.control_max_in_flight_per_client
+            ),
             inflight=0,
             healthy=False,
             draining=False,
@@ -333,9 +375,16 @@ class McpClientPool:
         else:
             await _close_context_safely(member.client_context)
 
-    async def acquire(self) -> _MemberLease:
+    async def acquire(self, lane: Literal["execute", "control"] = "execute") -> _MemberLease:
         if not self._started or self._closed:
             raise McpPoolError(SafeErrorCode.MCP_TRANSPORT_FAILED)
+        if lane not in {"execute", "control"}:
+            raise ValueError(f"unknown MCP pool lane: {lane}")
+        acquire_timeout = (
+            self.config.acquire_timeout_seconds
+            if lane == "execute"
+            else self.config.control_acquire_timeout_seconds
+        )
 
         async def wait_for_member() -> McpClientMember:
             async with self._condition:
@@ -343,6 +392,7 @@ class McpClientPool:
                     candidates = [
                         member
                         for member in self._members.values()
+                        if member.lane == lane
                         if member.healthy
                         and not member.draining
                         and member.inflight < member.max_in_flight
@@ -357,18 +407,18 @@ class McpClientPool:
                             for member in candidates
                             if member.inflight / member.max_in_flight == lowest_load
                         ]
-                        member = loaded[self._round_robin % len(loaded)]
-                        self._round_robin += 1
+                        member = loaded[self._round_robin[lane] % len(loaded)]
+                        self._round_robin[lane] += 1
                         member.inflight += 1
                         return member
                     await self._condition.wait()
 
         try:
             member = await asyncio.wait_for(
-                wait_for_member(), self.config.acquire_timeout_seconds
+                wait_for_member(), acquire_timeout
             )
         except asyncio.TimeoutError as exc:
-            raise McpPoolError(SafeErrorCode.MCP_CAPACITY_EXHAUSTED) from exc
+            raise McpPoolError(SafeErrorCode.MCP_CAPACITY_EXHAUSTED, lane=lane) from exc
         return _MemberLease(self, member)
 
     async def release(self, member: McpClientMember) -> None:
@@ -402,7 +452,10 @@ class McpClientPool:
         tool_name: str,
         arguments: dict[str, Any],
     ) -> Any:
-        lease = await self.acquire()
+        lane: Literal["execute", "control"] = (
+            "control" if tool_name == "cancel_algorithm" else "execute"
+        )
+        lease = await self.acquire(lane=lane)
         member = lease.member
         request_task = asyncio.create_task(
             member.client.call_tool(tool_name, arguments)
@@ -458,6 +511,7 @@ class McpClientPool:
             replacement = await self._create_member(
                 member.member_id,
                 generation=member.generation + 1,
+                lane=member.lane,
             )
             async with self._condition:
                 self._members[member.member_id] = replacement
@@ -469,7 +523,10 @@ class McpClientPool:
                 log_event(
                     logging.getLogger(__name__),
                     "mcp.client.reconnected",
-                    details={"generation": replacement.generation},
+                    details={
+                        "generation": replacement.generation,
+                        "pool_lane": replacement.lane,
+                    },
                 )
             except Exception:
                 pass

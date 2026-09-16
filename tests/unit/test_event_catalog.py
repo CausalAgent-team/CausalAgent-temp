@@ -197,3 +197,29 @@ def test_last_login_update_failure_has_stable_message_and_reason_contract():
     assert resolved is spec
     assert safe == {"reason_code": "unexpected_error"}
     assert violation is None
+
+
+def test_mcp_cancel_failure_reasons_and_reconnect_lane_are_catalogued():
+    for reason_code in (
+        "control_capacity_timeout",
+        "response_timeout",
+        "transport_error",
+        "invalid_response",
+    ):
+        _spec, safe, violation = validate_event_details(
+            "mcp.client.cancel.failed",
+            {"capability": "causal.pc", "reason_code": reason_code},
+        )
+        assert violation is None
+        assert safe == {
+            "capability": "causal.pc",
+            "reason_code": reason_code,
+        }
+
+    for lane in ("execute", "control"):
+        _spec, safe, violation = validate_event_details(
+            "mcp.client.reconnected",
+            {"generation": 1, "pool_lane": lane},
+        )
+        assert violation is None
+        assert safe == {"generation": 1, "pool_lane": lane}

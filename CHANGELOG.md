@@ -1322,15 +1322,15 @@
 - 【P3 worker 与父图接入】：在普通 merge 合入 MCP 协作代码后，接入进程级 MCP client pool、真实 executor、官方 PostgreSQL Store 装配、静态 Algorithm Registry、Deep Agent 子图及外层 `agent → fold/preprocess → deep_agent → finalization_gate → report` 路径；生产路径不按 slot 启动 stdio session。
 - 【P4 结果与事件收口】：加入 AlgorithmSpec 驱动的同响应 ToolNode dispatch、RAG evidence 惰性初始化、FinalizationGate 一次修正与二次 degraded 报告、公共 Tool result 安全字段和 `finalization_status`；未删除旧兼容文件或重要产物。
 
-- 【修复部分问题】
-  - 【数据库配置隔离】：新增独立 `DatabaseConfig`/`database_settings`，让 `app.db` 不再导入完整 `config.settings`；App/Worker 仍保留 `API_KEY`、`BASE_URL`、`MODEL` 的 fail-fast 校验和兼容的 `MYSQL_*` 字段。
-  - 【MCP 启动边界】：开发、预发和生产的 `causal-mcp` 配置不注入应用/模型密钥；开发 Compose 同时移除不必要的 `SECRET_KEY`，并补充无模型环境导入与 Compose 契约回归测试。
 
-  - 【Deep Agent 恢复边界】：生产装配让父图与 Deep Agent child 共用 worker 创建的 PostgreSQL saver，但使用独立稳定的 child thread/`deep_agent_v1` namespace；child scope 绑定 Job、attempt、lease 和冻结输入 hash，父图只投影 child 引用/status、结果、Ledger、证据和 Gate 所需事实，完整 messages/内部计划留在 child checkpoint。真实 PostgreSQL 重启恢复仍未作为 P5 通过项。
-  - 【Ledger 与结果加固】：InvocationRecord 新记录强制携带当前 Job、attempt、lease、worker 和输入 hash 归属，FinalizationGate 对缺失或错配归属 fail-closed；`AlgorithmResult.result_ref` 必须严格由自身 invocation 和规范非负 result index 构成，executor、Adapter 和 Gate 均复核 input/result_ref 契约。
-  - 【撤销与 MCP 语义】：`JobExecutionRevoked`/`CancelledError` 继续作为控制流传播，不生成普通失败 AlgorithmResult、不进入 FinalizationGate/degraded；MCP stale lease 映射为撤销，在途调用按 at-least-once 语义重建，不承诺从 HTTP 中途恢复。
-  - 【工具生命周期与 RAG】：算法、RAG、Web Tool 在真实外部调用前后通过 worker `OrderedEventWriter` 写入有序 lifecycle start/result，并用稳定 `event_key` 支持重放幂等；RAG readiness、release id 和输入快照绑定已传入实际 RAG Tool，未就绪或 release 不匹配时调用前短路。新增取消事件同键 payload 一致性回归，避免 sink 与 stream 产生幂等冲突。
-  - 【Ledger 归属补强与最终验证】：FinalizationGate 现在先对 Ledger 中指向当前 Job 的所有 invocation 统一校验 identity 与所有权字段，再仅纳入当前 attempt、lease、worker 和输入 hash 的算法记录；缺失、跨 Job 污染和当前 Job 的非法 invocation identity 均 fail-closed。新增相关回归后 Docker Agent unit/integration 共 `368 passed`；LangSmith 外部上报因测试环境 DNS 不可达产生告警，但不影响测试结果。
+- 【数据库配置隔离】：新增独立 `DatabaseConfig`/`database_settings`，让 `app.db` 不再导入完整 `config.settings`；App/Worker 仍保留 `API_KEY`、`BASE_URL`、`MODEL` 的 fail-fast 校验和兼容的 `MYSQL_*` 字段。
+- 【MCP 启动边界】：开发、预发和生产的 `causal-mcp` 配置不注入应用/模型密钥；开发 Compose 同时移除不必要的 `SECRET_KEY`，并补充无模型环境导入与 Compose 契约回归测试。
+
+- 【Deep Agent 恢复边界】：生产装配让父图与 Deep Agent child 共用 worker 创建的 PostgreSQL saver，但使用独立稳定的 child thread/`deep_agent_v1` namespace；child scope 绑定 Job、attempt、lease 和冻结输入 hash，父图只投影 child 引用/status、结果、Ledger、证据和 Gate 所需事实，完整 messages/内部计划留在 child checkpoint。真实 PostgreSQL 重启恢复仍未作为 P5 通过项。
+- 【Ledger 与结果加固】：InvocationRecord 新记录强制携带当前 Job、attempt、lease、worker 和输入 hash 归属，FinalizationGate 对缺失或错配归属 fail-closed；`AlgorithmResult.result_ref` 必须严格由自身 invocation 和规范非负 result index 构成，executor、Adapter 和 Gate 均复核 input/result_ref 契约。
+- 【撤销与 MCP 语义】：`JobExecutionRevoked`/`CancelledError` 继续作为控制流传播，不生成普通失败 AlgorithmResult、不进入 FinalizationGate/degraded；MCP stale lease 映射为撤销，在途调用按 at-least-once 语义重建，不承诺从 HTTP 中途恢复。
+- 【工具生命周期与 RAG】：算法、RAG、Web Tool 在真实外部调用前后通过 worker `OrderedEventWriter` 写入有序 lifecycle start/result，并用稳定 `event_key` 支持重放幂等；RAG readiness、release id 和输入快照绑定已传入实际 RAG Tool，未就绪或 release 不匹配时调用前短路。新增取消事件同键 payload 一致性回归，避免 sink 与 stream 产生幂等冲突。
+- 【Ledger 归属补强与最终验证】：FinalizationGate 现在先对 Ledger 中指向当前 Job 的所有 invocation 统一校验 identity 与所有权字段，再仅纳入当前 attempt、lease、worker 和输入 hash 的算法记录；缺失、跨 Job 污染和当前 Job 的非法 invocation identity 均 fail-closed。新增相关回归后 Docker Agent unit/integration 共 `368 passed`；LangSmith 外部上报因测试环境 DNS 不可达产生告警，但不影响测试结果。
 
 ---
 2026.9.16
@@ -1347,3 +1347,8 @@
 - 【MCP 架构文档】：新增 MCP 客户端池与服务端算法执行池说明，完整记录 Worker 通信、Streamable HTTP/HTTP/1.1/TCP 分层、容量计算、generation 重连、精确取消、进程终止、一致性边界和运维注意事项，并加入技术文档导航。
 - 【OLC 默认停用】：以 `DEFAULT_ALGORITHM_SPECS` 作为 worker Adapter 与 MCP runner 的共同 allowlist，当前只注册 PC、DirectLiNGAM；OLC 的 Spec、Adapter、runner 和算法实现继续保留，旧兼容 MCP 入口也取消工具装饰器，后续可通过恢复 allowlist 注册重新启用。
 - 【FinalizationGate 修复】：补齐父图子图包装器传入的 `config` 参数，修复最终节点因签名不匹配导致的 `TypeError`；新增真实 LangGraph 包装执行回归，并同步两算法 schema 快照与架构/测试文档。Docker Agent unit/integration 共 `380 passed`，注册面调整后的定向回归 `38 passed`；测试容器的 LangSmith DNS 上报告警不影响断言结果。
+- 【开发产物忽略】：忽略 Playwright CLI 在仓库根目录生成的 `.playwright-cli/` 页面快照与控制台产物，避免浏览器验证文件进入版本控制候选。
+
+- 【MCP 控制 lane】：将 Worker MCP 客户端池拆为 execute/control 两个独立请求 lane；默认普通容量 `2 × 1`、控制容量 `1 × 2`，取消不再受普通请求占满影响，重连保留 lane 并记录 `pool_lane`。
+- 【取消预算与原因】：新增控制槽获取 1 秒、取消确认总预算 6 秒配置；取消失败细分为 `control_capacity_timeout`、`response_timeout`、`transport_error` 和 `invalid_response`，外层 `CancelledError` 继续传播。
+- 【部署与验收】：同步开发、预发、生产 Compose 与 `.env.example`，补充 lane/容量/事件目录契约测试及真实 HTTP 饱和并发验收场景；Docker 定向回归 `62 passed`、完整单元测试 `575 passed`，MCP spike 与真实 HTTP 饱和/双取消验收通过。

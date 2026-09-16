@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Any
 
 from Agent.deep_agent_tools.algorithm_executor import (
@@ -31,6 +32,9 @@ from observability.logging_runtime import log_context, log_event
 
 
 LOGGER = logging.getLogger(__name__)
+_CANCELLATION_STATUSES = frozenset(
+    {"canceled", "cancel_pending", "already_canceled", "already_finished", "not_found"}
+)
 
 
 class McpAlgorithmExecutor:
@@ -43,11 +47,19 @@ class McpAlgorithmExecutor:
         signing_key: str,
         max_retries: int = 2,
         retry_backoff_seconds: float = 0.05,
+        cancel_timeout_seconds: float | None = None,
     ) -> None:
         self.pool = pool
         self.signing_key = signing_key
         self.max_retries = max_retries
         self.retry_backoff_seconds = retry_backoff_seconds
+        self.cancel_timeout_seconds = (
+            float(os.getenv("CAUSAL_MCP_CANCEL_TIMEOUT_SECONDS", "6"))
+            if cancel_timeout_seconds is None
+            else cancel_timeout_seconds
+        )
+        if self.cancel_timeout_seconds <= 0:
+            raise ValueError("MCP cancel timeout must be positive")
 
     @staticmethod
     def _remote_lease_revoked(invocation_id: str) -> JobExecutionRevoked:
@@ -93,7 +105,9 @@ class McpAlgorithmExecutor:
             )
         )
         try:
-            response = await asyncio.wait_for(asyncio.shield(cancel_task), timeout=5.0)
+            response = await asyncio.wait_for(
+                asyncio.shield(cancel_task), timeout=self.cancel_timeout_seconds
+            )
             payload = getattr(response, "structured_content", None)
             if payload is None:
                 payload = getattr(response, "structuredContent", None)
@@ -103,7 +117,7 @@ class McpAlgorithmExecutor:
                 if isinstance(cancellation, dict)
                 else None
             )
-            if not isinstance(status, str) or not status:
+            if status not in _CANCELLATION_STATUSES:
                 raise ValueError("MCP cancellation response is invalid")
             log_event(
                 LOGGER,
@@ -114,6 +128,11 @@ class McpAlgorithmExecutor:
                 },
             )
             return status
+        except asyncio.CancelledError:
+            if not cancel_task.done():
+                cancel_task.cancel()
+                await asyncio.gather(cancel_task, return_exceptions=True)
+            raise
         except asyncio.TimeoutError:
             cancel_task.cancel()
             await asyncio.gather(cancel_task, return_exceptions=True)
@@ -122,11 +141,55 @@ class McpAlgorithmExecutor:
                 "mcp.client.cancel.failed",
                 details={
                     "capability": command.capability_id,
-                    "reason_code": "timeout",
+                    "reason_code": "response_timeout",
                 },
             )
             return "unknown"
-        except BaseException:
+        except McpPoolError as exc:
+            if not cancel_task.done():
+                cancel_task.cancel()
+                await asyncio.gather(cancel_task, return_exceptions=True)
+            reason_code = (
+                "control_capacity_timeout"
+                if exc.safe_error_code == SafeErrorCode.MCP_CAPACITY_EXHAUSTED
+                else "transport_error"
+            )
+            log_event(
+                LOGGER,
+                "mcp.client.cancel.failed",
+                details={
+                    "capability": command.capability_id,
+                    "reason_code": reason_code,
+                },
+            )
+            return "unknown"
+        except (McpTransportError, OSError, ConnectionError) as exc:
+            if not cancel_task.done():
+                cancel_task.cancel()
+                await asyncio.gather(cancel_task, return_exceptions=True)
+            log_event(
+                LOGGER,
+                "mcp.client.cancel.failed",
+                details={
+                    "capability": command.capability_id,
+                    "reason_code": "transport_error",
+                },
+            )
+            return "unknown"
+        except (ValueError, TypeError, KeyError, AttributeError):
+            if not cancel_task.done():
+                cancel_task.cancel()
+                await asyncio.gather(cancel_task, return_exceptions=True)
+            log_event(
+                LOGGER,
+                "mcp.client.cancel.failed",
+                details={
+                    "capability": command.capability_id,
+                    "reason_code": "invalid_response",
+                },
+            )
+            return "unknown"
+        except Exception:
             if not cancel_task.done():
                 cancel_task.cancel()
                 await asyncio.gather(cancel_task, return_exceptions=True)

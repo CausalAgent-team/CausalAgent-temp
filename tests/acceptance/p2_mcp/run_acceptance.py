@@ -131,6 +131,33 @@ def _request() -> tuple[AlgorithmExecutionCommand, McpInvocationContext, str]:
     return command, context, sign_invocation(context, command, SIGNING_KEY)
 
 
+def _request_for(index: int) -> tuple[AlgorithmExecutionCommand, McpInvocationContext, str]:
+    """Build a distinct signed invocation while preserving one worker identity."""
+
+    command, context, _signature = _request()
+    invocation_id = f"00000000-0000-0000-0000-{index:012d}"
+    context = context.model_copy(update={"invocation_id": invocation_id})
+    command = command.model_copy(
+        update={
+            "invocation_id": invocation_id,
+            "provider_call_id": f"p2-acceptance-call-{index}",
+        }
+    )
+    return command, context, sign_invocation(context, command, SIGNING_KEY)
+
+
+def _arguments_for(index: int) -> tuple[dict[str, Any], AlgorithmExecutionCommand]:
+    command, context, signature = _request_for(index)
+    return (
+        {
+            "command": command.model_dump(mode="json"),
+            "trusted_context": context.model_dump(mode="json"),
+            "signature": signature,
+        },
+        command,
+    )
+
+
 def _safe_algorithm_call(fn: Any, csv_data: str) -> dict[str, Any]:
     output = io.StringIO()
     started = time.perf_counter()
@@ -350,9 +377,10 @@ async def start_server(
     csv_data: str,
     *,
     registry: RunnerRegistry | None = None,
+    process_workers: int = 1,
 ) -> tuple[uvicorn.Server, asyncio.Task[Any]]:
     app = create_app(
-        _config(process_workers=1, queue_capacity=4),
+        _config(process_workers=process_workers, queue_capacity=4),
         registry=registry,
         authority_reader=lambda _context: csv_data,
         database_probe=lambda: True,
@@ -441,6 +469,138 @@ async def remote_cancel_control(csv_data: str) -> dict[str, Any]:
         await server_task
 
 
+async def saturated_execute_lane_control_acceptance(csv_data: str) -> dict[str, Any]:
+    """Prove real HTTP cancellation bypasses a saturated execute lane."""
+
+    registry = RunnerRegistry(
+        [
+            RunnerSpec(
+                capability_id=PC_SPEC.capability_id,
+                version=PC_SPEC.version,
+                spec_digest=PC_SPEC.spec_digest,
+                timeout_seconds=30,
+                concurrency=2,
+                runner=_slow_pc_runner,
+            )
+        ]
+    )
+    server, server_task = await start_server(
+        csv_data, registry=registry, process_workers=2
+    )
+    pool = McpClientPool(
+        McpClientPoolConfig(
+            url=f"http://127.0.0.1:{PORT}/mcp",
+            service_token=TOKEN,
+            pool_size=2,
+            max_in_flight_per_client=1,
+            acquire_timeout_seconds=5,
+            control_pool_size=1,
+            control_max_in_flight_per_client=2,
+            control_acquire_timeout_seconds=1,
+            max_connections=4,
+            max_keepalive_connections=4,
+            read_timeout_seconds=30,
+        )
+    )
+    try:
+        await pool.start()
+        args_a, command_a = _arguments_for(401)
+        args_b, command_b = _arguments_for(402)
+        args_c, command_c = _arguments_for(403)
+        call_a = asyncio.create_task(
+            pool.call_tool(args_a, invocation_id=command_a.invocation_id)
+        )
+        call_b = asyncio.create_task(
+            pool.call_tool(args_b, invocation_id=command_b.invocation_id)
+        )
+        await asyncio.sleep(0.2)
+        call_c = asyncio.create_task(
+            pool.call_tool(args_c, invocation_id=command_c.invocation_id)
+        )
+        await asyncio.sleep(0.05)
+        c_waited_for_execute = not call_c.done()
+
+        cancel_started = time.perf_counter()
+        cancel_a = await pool.cancel_tool(
+            args_a, invocation_id=command_a.invocation_id
+        )
+        cancel_elapsed = time.perf_counter() - cancel_started
+        cancel_a_status = (
+            getattr(cancel_a, "structured_content", None) or {}
+        ).get("cancellation", {}).get("status")
+        a_payload, b_payload, c_payload = [
+            getattr(value, "structured_content", None) or {}
+            for value in await asyncio.gather(call_a, call_b, call_c)
+        ]
+        repeated = await pool.cancel_tool(
+            args_a, invocation_id=command_a.invocation_id
+        )
+        repeated_status = (
+            getattr(repeated, "structured_content", None) or {}
+        ).get("cancellation", {}).get("status")
+
+        args_d, command_d = _arguments_for(404)
+        args_e, command_e = _arguments_for(405)
+        call_d = asyncio.create_task(
+            pool.call_tool(args_d, invocation_id=command_d.invocation_id)
+        )
+        call_e = asyncio.create_task(
+            pool.call_tool(args_e, invocation_id=command_e.invocation_id)
+        )
+        await asyncio.sleep(0.2)
+        cancel_d, cancel_e = await asyncio.gather(
+            pool.cancel_tool(args_d, invocation_id=command_d.invocation_id),
+            pool.cancel_tool(args_e, invocation_id=command_e.invocation_id),
+        )
+        simultaneous_statuses = [
+            (getattr(value, "structured_content", None) or {})
+            .get("cancellation", {})
+            .get("status")
+            for value in (cancel_d, cancel_e)
+        ]
+        d_payload, e_payload = [
+            getattr(value, "structured_content", None) or {}
+            for value in await asyncio.gather(call_d, call_e)
+        ]
+
+        execute_errors = [
+            payload.get("error", {}).get("code")
+            for payload in (a_payload, d_payload, e_payload)
+        ]
+        sibling_ok = b_payload.get("ok") is True
+        queued_ok = c_payload.get("ok") is True
+        passed = (
+            c_waited_for_execute
+            and cancel_a_status in {"canceled", "cancel_pending"}
+            and cancel_elapsed < 1.5
+            and repeated_status == "already_canceled"
+            and sibling_ok
+            and queued_ok
+            and all(status in {"canceled", "cancel_pending"} for status in simultaneous_statuses)
+            and all(code == "ALGORITHM_CANCELED" for code in execute_errors)
+            and all(member.inflight == 0 for member in pool.members)
+        )
+        return {
+            "status": "PASS" if passed else "FAIL",
+            "c_waited_for_execute_lane": c_waited_for_execute,
+            "cancel_a_status": cancel_a_status,
+            "cancel_a_elapsed_seconds": round(cancel_elapsed, 3),
+            "repeated_cancel_status": repeated_status,
+            "sibling_b_completed": sibling_ok,
+            "queued_c_completed": queued_ok,
+            "simultaneous_cancel_statuses": simultaneous_statuses,
+            "execute_cancel_error_codes": execute_errors,
+            "members_drained_before_close": all(
+                member.inflight == 0 for member in pool.members
+            ),
+            "scope": "real MCP HTTP execute/control lanes and one control member with two in-flight requests",
+        }
+    finally:
+        await pool.close()
+        server.should_exit = True
+        await server_task
+
+
 async def client_pool_modes_and_fault(csv_data: str) -> dict[str, Any]:
     command, context, signature = _request()
     args = {
@@ -459,6 +619,8 @@ async def client_pool_modes_and_fault(csv_data: str) -> dict[str, Any]:
                     pool_size=2,
                     max_in_flight_per_client=max_in_flight,
                     acquire_timeout_seconds=0.2,
+                    control_pool_size=1,
+                    control_max_in_flight_per_client=expected_capacity,
                     max_connections=8,
                     max_keepalive_connections=8,
                     read_timeout_seconds=30,
@@ -552,6 +714,9 @@ async def main() -> None:
         "deadline_and_late_result": await timeout_and_late_result(),
         "rss_cpu": await resource_sample(_resource_fixture()),
         "remote_cancel_control": await remote_cancel_control(csv_data),
+        "saturated_execute_lane_control": await saturated_execute_lane_control_acceptance(
+            csv_data
+        ),
         "client_pool": await client_pool_modes_and_fault(csv_data),
         "mysql_strong_read_and_old_lease": {
             "status": "NOT_RUN",

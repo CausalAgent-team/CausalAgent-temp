@@ -24,6 +24,16 @@ def _assert_mcp_does_not_receive_app_or_model_config(block: str) -> None:
         assert not re.search(rf"(?m)^\s*-?\s*{re.escape(name)}(?:=|:)", block)
 
 
+def _assert_worker_control_lane_config(block: str) -> None:
+    for name in (
+        "CAUSAL_MCP_CONTROL_POOL_SIZE",
+        "CAUSAL_MCP_CONTROL_MAX_IN_FLIGHT_PER_CLIENT",
+        "CAUSAL_MCP_CONTROL_ACQUIRE_TIMEOUT_SECONDS",
+        "CAUSAL_MCP_CANCEL_TIMEOUT_SECONDS",
+    ):
+        assert name in block
+
+
 def test_development_mcp_is_private_and_worker_waits_for_health() -> None:
     compose = (PROJECT_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     mcp = _service_block(compose, "causal-mcp")
@@ -37,6 +47,7 @@ def test_development_mcp_is_private_and_worker_waits_for_health() -> None:
     _assert_mcp_does_not_receive_app_or_model_config(mcp)
     assert "causal-mcp:" in worker
     assert "condition: service_healthy" in worker
+    _assert_worker_control_lane_config(worker)
 
 
 def test_staging_and_production_mcp_keep_private_image_boundary() -> None:
@@ -44,6 +55,8 @@ def test_staging_and_production_mcp_keep_private_image_boundary() -> None:
     production = (PROJECT_ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8")
     staging_mcp = _service_block(staging, "causal-mcp")
     production_mcp = _service_block(production, "causal-mcp")
+    staging_worker = _service_block(staging, "worker")
+    production_worker = _service_block(production, "worker")
 
     assert "STAGING_MCP_IMAGE" in staging_mcp
     assert "CAUSAL_MCP_IMAGE" in production_mcp
@@ -54,3 +67,5 @@ def test_staging_and_production_mcp_keep_private_image_boundary() -> None:
         assert "CAUSAL_MCP_SERVICE_TOKEN" in block
         assert "CAUSAL_MCP_SIGNING_KEY_CURRENT" in block
         _assert_mcp_does_not_receive_app_or_model_config(block)
+    _assert_worker_control_lane_config(staging_worker)
+    _assert_worker_control_lane_config(production_worker)
