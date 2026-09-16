@@ -26,6 +26,7 @@ MODEL_NAMES = (
     "GraphEdge",
     "InvocationRecord",
     "McpInvocationContext",
+    "PublicDecision",
     "RawResultMetadata",
     "ResultAssessment",
     "RevisionProposal",

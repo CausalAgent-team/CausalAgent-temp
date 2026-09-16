@@ -27,6 +27,7 @@ from .fault_tolerance import (
 import logging
 from collections.abc import Mapping
 import asyncio
+import hashlib
 import inspect
 from dataclasses import replace
 from typing import Any
@@ -51,6 +52,7 @@ from Agent.deep_agent_tools.models import (
     AlgorithmResult,
     EvidenceResult,
     WebEvidenceResult,
+    canonical_json_bytes,
 )
 
 
@@ -656,6 +658,13 @@ async def _finalization_gate_node(
             ),
         }
 
+    _emit_public_final_decision(
+        runtime=runtime,
+        identity=identity,
+        decision=decision,
+        algorithm_results=state.get("deep_agent_algorithm_results") or {},
+        registry=getattr(gate, "registry", None),
+    )
     return {
         "deep_agent_decision": decision,
         "deep_agent_structured_response": decision,
@@ -668,6 +677,63 @@ async def _finalization_gate_node(
             finalization_status="valid",
         ),
     }
+
+
+def _emit_public_final_decision(
+    *,
+    runtime: Any,
+    identity: Any,
+    decision: Any,
+    algorithm_results: Mapping[str, Any],
+    registry: Any,
+) -> None:
+    """把 Gate 已验证的内部引用转换成算法名称并发布最终决策说明。"""
+
+    result_names: dict[str, str] = {}
+    for result_ref, raw_result in algorithm_results.items():
+        try:
+            result = AlgorithmResult.model_validate(raw_result)
+            entry = registry.get(result.capability_id)
+        except Exception:
+            continue
+        result_names[str(result_ref)] = entry.spec.public_name
+
+    disposition_labels = {
+        "primary": "主结果",
+        "supporting": "辅助结果",
+        "discarded": "未采用",
+    }
+    selections = [
+        (
+            f"{result_names[assessment.result_ref]}："
+            f"{disposition_labels[assessment.disposition]}（{assessment.rationale}）"
+        )
+        for assessment in decision.result_assessments
+        if assessment.result_ref in result_names
+    ]
+    summary_parts = []
+    if selections:
+        summary_parts.append("；".join(selections) + "。")
+    summary_parts.append(decision.selection_rationale)
+    confidence_labels = {"low": "低", "medium": "中等", "high": "高"}
+    summary_parts.append(f"置信度：{confidence_labels[decision.confidence]}")
+    summary = " ".join(part for part in summary_parts if part).strip()
+    if not summary or len(summary) > 1200:
+        return
+    payload = {
+        "type": "decision",
+        "decision_kind": "final",
+        "summary": summary,
+        "confidence": decision.confidence,
+    }
+    payload_digest = hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
+    attempt_count = int(identity.attempt_count)
+    payload["_event_key"] = (
+        f"deep-agent-final-decision:{attempt_count}:{payload_digest}"
+    )
+    writer = getattr(runtime, "stream_writer", None)
+    if callable(writer):
+        writer(payload)
 
 
 def _finalization_router(state) -> str:

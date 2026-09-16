@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from Agent.deep_agent.context import AgentRunContext
 
 from .adapters.base import AdapterInput
+from .algorithm_specs import build_model_tool_input_schema
 from .models import (
     ActionAttempt,
     AlgorithmResult,
@@ -27,6 +28,7 @@ from .registry import AlgorithmRegistry, RegistryEntry
 from .runtime_updates import (
     build_terminal_invocation,
     build_tool_command,
+    emit_public_decision_event,
     emit_tool_lifecycle_event,
     resolve_runtime_invocation,
     with_tool_runtime_schema,
@@ -336,6 +338,14 @@ class AlgorithmTool:
             active_adapter_input = self.adapter_input or self._adapter_input_from_runtime(
                 runtime
             )
+            public_decision = kwargs.pop("public_decision", None)
+            if public_decision is not None:
+                await emit_public_decision_event(
+                    runtime,
+                    identity=identity,
+                    tool_name=self.name,
+                    public_decision=public_decision,
+                )
             await emit_tool_lifecycle_event(
                 runtime,
                 event_type="tool_call_start",
@@ -411,7 +421,7 @@ class AlgorithmTool:
         # 仍只暴露 AlgorithmSpec 中的科学参数，不让模型填写内部身份。
         call.__annotations__["runtime"] = ToolRuntime
         runtime_args_schema = with_tool_runtime_schema(
-            self.args_schema,
+            build_model_tool_input_schema(self.args_schema),
             tool_name=self.name,
             tool_runtime_type=ToolRuntime,
         )

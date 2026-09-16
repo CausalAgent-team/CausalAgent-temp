@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+from functools import lru_cache
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic.json_schema import WithJsonSchema
+from typing_extensions import Annotated
 
-from .models import ContractModel, StandardizedGraph, canonical_json_bytes
+from .models import ContractModel, PublicDecision, StandardizedGraph, canonical_json_bytes
 
 
 AlgorithmKind = Literal[
@@ -17,6 +20,29 @@ AlgorithmKind = Literal[
 ]
 
 Availability = Literal["available", "unavailable", "unknown"]
+
+
+@lru_cache(maxsize=None)
+def build_model_tool_input_schema(base_schema: type[BaseModel]) -> type[BaseModel]:
+    """给模型工具 envelope 增加公开说明，不改变算法科学参数契约。"""
+
+    decision_schema = PublicDecision.model_json_schema()
+    tolerant_decision_type = Annotated[Any, WithJsonSchema(decision_schema)]
+    return type(
+        f"{base_schema.__name__}ToolInput",
+        (base_schema,),
+        {
+            "__annotations__": {"public_decision": tolerant_decision_type | None},
+            "__module__": base_schema.__module__,
+            "public_decision": Field(
+                default=None,
+                description=(
+                    "面向当前用户公开的算法选择依据；应在同一次 Tool Call 中提供。"
+                    "该字段不属于算法科学参数。"
+                ),
+            ),
+        },
+    )
 
 
 class CausalPcInput(ContractModel):
@@ -150,7 +176,9 @@ class AlgorithmSpec(ContractModel):
         return {
             "name": self.tool_name,
             "description": self.description,
-            "parameters": self.model_input_schema.model_json_schema(),
+            "parameters": build_model_tool_input_schema(
+                self.model_input_schema
+            ).model_json_schema(),
         }
 
 

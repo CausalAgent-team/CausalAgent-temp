@@ -28,3 +28,12 @@ test('active API metadata cannot advance the rendered event cursor', () => {
     assert.equal(merged.last_event_id, 12);
     assert.equal(merged.rendered_event_id, 12);
 });
+
+test('step details that arrive before their parent are deferred and replayed once', () => {
+    const pending = new Map();
+    const event = { type: 'decision', step_id: 'deep-step', summary: '选择 PC' };
+
+    assert.equal(phaseState.deferStepEvent(pending, event), true);
+    assert.deepEqual(phaseState.takeDeferredStepEvents(pending, 'deep-step'), [event]);
+    assert.deepEqual(phaseState.takeDeferredStepEvents(pending, 'deep-step'), []);
+});

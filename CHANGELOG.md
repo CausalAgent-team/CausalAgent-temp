@@ -1348,7 +1348,8 @@
 - 【OLC 默认停用】：以 `DEFAULT_ALGORITHM_SPECS` 作为 worker Adapter 与 MCP runner 的共同 allowlist，当前只注册 PC、DirectLiNGAM；OLC 的 Spec、Adapter、runner 和算法实现继续保留，旧兼容 MCP 入口也取消工具装饰器，后续可通过恢复 allowlist 注册重新启用。
 - 【FinalizationGate 修复】：补齐父图子图包装器传入的 `config` 参数，修复最终节点因签名不匹配导致的 `TypeError`；新增真实 LangGraph 包装执行回归，并同步两算法 schema 快照与架构/测试文档。Docker Agent unit/integration 共 `380 passed`，注册面调整后的定向回归 `38 passed`；测试容器的 LangSmith DNS 上报告警不影响断言结果。
 - 【开发产物忽略】：忽略 Playwright CLI 在仓库根目录生成的 `.playwright-cli/` 页面快照与控制台产物，避免浏览器验证文件进入版本控制候选。
-
 - 【MCP 控制 lane】：将 Worker MCP 客户端池拆为 execute/control 两个独立请求 lane；默认普通容量 `2 × 1`、控制容量 `1 × 2`，取消不再受普通请求占满影响，重连保留 lane 并记录 `pool_lane`。
 - 【取消预算与原因】：新增控制槽获取 1 秒、取消确认总预算 6 秒配置；取消失败细分为 `control_capacity_timeout`、`response_timeout`、`transport_error` 和 `invalid_response`，外层 `CancelledError` 继续传播。
 - 【部署与验收】：同步开发、预发、生产 Compose 与 `.env.example`，补充 lane/容量/事件目录契约测试及真实 HTTP 饱和并发验收场景；Docker 定向回归 `62 passed`、完整单元测试 `575 passed`，MCP spike 与真实 HTTP 饱和/双取消验收通过。
+- 【Deep Agent 公开决策与刷新恢复】：算法 Tool Call 新增可选 `public_decision.summary` 公开说明 envelope，dependency middleware 在调度和执行前剥离该字段并将有效说明持久化为幂等 `decision` 事件；FinalizationGate 通过后再把内部结果引用映射为公开算法名和最终选择说明，degraded 路径不公开未验证决策。
+- 【前端历史回放】：确认现有 Deep Agent lifecycle 已完整落入 `analysis_job_events` 并能由 `/api/load_session` 重建；前端增加明细先于父阶段到达时的 `step_id` 暂存补绘，并为相关静态脚本增加版本参数，避免缓存旧恢复代码。

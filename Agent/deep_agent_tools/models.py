@@ -30,6 +30,21 @@ class ContractModel(BaseModel):
     )
 
 
+class PublicDecision(ContractModel):
+    """模型在 Tool Call 中显式生成、可直接展示的简短决策说明。"""
+
+    summary: str = Field(min_length=1, max_length=400)
+
+    @field_validator("summary")
+    @classmethod
+    def validate_summary(cls, value: str) -> str:
+        if value != value.strip():
+            raise ValueError("summary must not contain surrounding whitespace")
+        if any(ord(character) < 32 for character in value):
+            raise ValueError("summary must be a single line without control characters")
+        return value
+
+
 def _non_blank(value: str, *, field_name: str) -> str:
     if not isinstance(value, str) or not value or not value.strip():
         raise ValueError(f"{field_name} must be a non-blank string")

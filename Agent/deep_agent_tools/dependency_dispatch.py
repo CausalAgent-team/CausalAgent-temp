@@ -21,6 +21,7 @@ from .dependency_planner import (
     build_dependency_plan,
     execute_dependency_plan,
 )
+from .runtime_updates import emit_public_decision_event, resolve_runtime_invocation
 from .models import DataProfile
 from .registry import AlgorithmRegistry
 
@@ -259,7 +260,11 @@ class AlgorithmDependencyDispatchMiddleware(AgentMiddleware):
             ToolCallRequest(
                 call_id=str(call["id"]),
                 tool_name=str(call["name"]),
-                arguments=call.get("args") or {},
+                arguments={
+                    key: value
+                    for key, value in (call.get("args") or {}).items()
+                    if key != "public_decision"
+                },
             )
             for call in calls
         )
@@ -270,8 +275,20 @@ class AlgorithmDependencyDispatchMiddleware(AgentMiddleware):
             tool = tool_by_name.get(planned.tool_name)
             if tool is None:
                 raise RuntimeError("registered algorithm tool is unavailable")
-            raw_call = call_by_id[planned.call_id]
+            source_call = call_by_id[planned.call_id]
+            raw_arguments = dict(source_call.get("args") or {})
+            public_decision = raw_arguments.pop("public_decision", None)
+            raw_call = dict(source_call)
+            raw_call["args"] = raw_arguments
             tool_runtime = replace(request.runtime, tool_call_id=planned.call_id)
+            if public_decision is not None:
+                identity = resolve_runtime_invocation(tool_runtime)
+                await emit_public_decision_event(
+                    tool_runtime,
+                    identity=identity,
+                    tool_name=planned.tool_name,
+                    public_decision=public_decision,
+                )
             tool_request = LangToolCallRequest(
                 tool_call=raw_call,
                 tool=tool,

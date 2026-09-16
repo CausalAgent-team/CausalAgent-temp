@@ -177,6 +177,34 @@ class LangGraphEventAdapter:
         if not isinstance(data, dict):
             return []
         event_type = data.get("type")
+        if event_type == "decision":
+            decision_kind = data.get("decision_kind")
+            summary = data.get("summary")
+            if decision_kind not in {"algorithm", "final"}:
+                return []
+            if not isinstance(summary, str) or not summary or len(summary) > 1200:
+                return []
+            step = (
+                self._active_step("deep_agent")
+                if decision_kind == "algorithm"
+                else self._active_step("finalization_gate")
+            )
+            if step is None:
+                return []
+            event = self._base("decision", step)
+            event["decision_kind"] = decision_kind
+            event["summary"] = summary
+            if decision_kind == "algorithm":
+                event["tool_name"] = self._safe_public_tool_name(
+                    data.get("tool_name")
+                )
+            confidence = data.get("confidence")
+            if confidence in {"low", "medium", "high"}:
+                event["confidence"] = confidence
+            supplied_event_key = str(data.get("_event_key") or "")
+            if supplied_event_key and len(supplied_event_key) <= 255:
+                event["_event_key"] = supplied_event_key
+            return [event]
         if event_type in {"tool_call_start", "tool_call_result"}:
             step = self._lifecycle_step(data)
             tool_name = self._safe_public_tool_name(data.get("tool_name"))

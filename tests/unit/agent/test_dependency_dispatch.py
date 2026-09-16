@@ -36,11 +36,13 @@ IDENTITY = TrustedJobIdentity(
 
 def test_tool_node_dispatches_each_algorithm_call_once() -> None:
     executor = FakeAlgorithmExecutor()
+    events = []
     context = AgentRunContext(
         execution_guard=None,
         trusted_identity=IDENTITY,
         algorithm_executor=executor,
         filesystem_backend=build_in_memory_backend(user_id=7),
+        event_sink=lambda payload: events.append(dict(payload)),
     )
     registry = build_default_registry(
         build_default_adapters(
@@ -87,13 +89,22 @@ def test_tool_node_dispatches_each_algorithm_call_once() -> None:
                         tool_calls=[
                             {
                                 "name": "causal_pc",
-                                "args": {"alpha": 0.05},
+                                "args": {
+                                    "alpha": 0.05,
+                                    "public_decision": {
+                                        "summary": "使用 PC 检查条件独立结构。"
+                                    },
+                                },
                                 "id": "dispatch-pc-1",
                                 "type": "tool_call",
                             },
                             {
                                 "name": "causal_direct_lingam",
-                                "args": {},
+                                "args": {
+                                    "public_decision": {
+                                        "summary": "使用 DirectLiNGAM 比较线性非高斯假设。"
+                                    }
+                                },
                                 "id": "dispatch-direct-lingam-1",
                                 "type": "tool_call",
                             },
@@ -121,3 +132,5 @@ def test_tool_node_dispatches_each_algorithm_call_once() -> None:
     assert {
         record.provider_call_id for record in state["action_ledger"].values()
     } == {"dispatch-pc-1", "dispatch-direct-lingam-1"}
+    assert [event["type"] for event in events].count("decision") == 2
+    assert all("public_decision" not in call.command.parameters for call in executor.calls)

@@ -12,7 +12,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from .identity import build_deep_agent_step_id, build_invocation_id
-from .models import ActionAttempt, InvocationRecord, canonical_json_bytes
+from .models import ActionAttempt, InvocationRecord, PublicDecision, canonical_json_bytes
 
 
 def _tool_result_summary(status: str | None, safe_error_code: str | None) -> str:
@@ -97,6 +97,54 @@ async def emit_tool_lifecycle_event(
     writer = getattr(runtime, "stream_writer", None)
     if callable(writer):
         writer(payload)
+
+
+async def emit_public_decision_event(
+    runtime: Any,
+    *,
+    identity: RuntimeInvocationIdentity,
+    tool_name: str,
+    public_decision: Any,
+) -> bool:
+    """校验并发布同一 Tool Call 携带的公开算法选择说明。"""
+
+    try:
+        decision = PublicDecision.model_validate(public_decision)
+    except Exception:
+        return False
+    trusted_identity = identity.runtime_context.trusted_identity
+    invocation_id = build_invocation_id(
+        job_id=trusted_identity.job_id,
+        response_identity=identity.response_identity,
+        provider_call_id=identity.provider_call_id,
+    )
+    step_id = getattr(identity.runtime_context, "deep_agent_step_id", None)
+    if not isinstance(step_id, str) or len(step_id) != 24:
+        step_id = build_deep_agent_step_id(
+            job_id=trusted_identity.job_id,
+            attempt_count=int(trusted_identity.attempt_count),
+            task_id="deep_agent",
+        )
+    payload = {
+        "type": "decision",
+        "decision_kind": "algorithm",
+        "step_id": step_id,
+        "node_name": "deep_agent",
+        "title": "执行 Deep Agent 分析",
+        "attempt": int(trusted_identity.attempt_count),
+        "tool_name": tool_name,
+        "summary": decision.summary,
+        "_event_key": f"deep-agent-tool:{invocation_id}:decision",
+    }
+    sink = getattr(identity.runtime_context, "event_sink", None)
+    if callable(sink):
+        result = sink(payload)
+        if inspect.isawaitable(result):
+            await result
+    writer = getattr(runtime, "stream_writer", None)
+    if callable(writer):
+        writer(payload)
+    return True
 
 
 @dataclass(frozen=True)

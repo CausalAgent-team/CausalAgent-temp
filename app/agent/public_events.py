@@ -9,7 +9,7 @@ _COMMON_FIELDS = {"type", "step_id", "node_name", "title"}
 _EVENT_FIELDS = {
     "node_start": set(),
     "progress": {"summary"},
-    "decision": {"summary"},
+    "decision": {"summary", "decision_kind", "tool_name", "confidence"},
     "tool_call_start": {"tool_name", "argument_keys"},
     "tool_call_result": {"tool_name", "summary", "status", "safe_error_code"},
     "node_retry": {"message", "discard_stream_id"},

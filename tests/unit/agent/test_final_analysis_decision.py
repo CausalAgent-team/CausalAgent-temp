@@ -21,6 +21,7 @@ from Agent.deep_agent.finalization import (
     validate_structured_response,
 )
 from Agent.causal_agent.graph import (
+    _emit_public_final_decision,
     _legacy_rag_evidence_result,
     _legacy_web_evidence_result,
 )
@@ -142,6 +143,37 @@ def test_finalization_gate_accepts_only_ledger_backed_primary_result() -> None:
     )
 
     assert accepted.primary_result_ref == result.result_ref
+
+
+def test_gate_validated_decision_is_projected_with_public_algorithm_names() -> None:
+    identity, registry, result, _ledger = _algorithm_execution()
+    decision = validate_structured_response({
+        **_decision(),
+        "primary_result_ref": result.result_ref,
+        "result_assessments": [{
+            "result_ref": result.result_ref,
+            "disposition": "primary",
+            "rationale": "该结果通过稳定性诊断。",
+        }],
+        "selection_rationale": "诊断结果支持该选择。",
+    })
+    events = []
+
+    _emit_public_final_decision(
+        runtime=type("Runtime", (), {"stream_writer": events.append})(),
+        identity=identity,
+        decision=decision,
+        algorithm_results={result.result_ref: result},
+        registry=registry,
+    )
+
+    assert len(events) == 1
+    assert events[0]["decision_kind"] == "final"
+    assert "PC 因果发现：主结果" in events[0]["summary"]
+    assert "该结果通过稳定性诊断" in events[0]["summary"]
+    assert "置信度：中等" in events[0]["summary"]
+    assert events[0]["_event_key"].startswith("deep-agent-final-decision:0:")
+    assert result.result_ref not in repr(events[0])
 
 
 def test_finalization_gate_rejects_incomplete_current_ledger_ownership() -> None:

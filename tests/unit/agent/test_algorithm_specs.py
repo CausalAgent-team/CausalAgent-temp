@@ -39,8 +39,11 @@ def test_spec_digest_and_tool_schema_are_stable() -> None:
     assert first_digest == second_digest
 
     schema = PC_SPEC.build_tool_schema()
+    assert PC_SPEC.spec_digest == first_digest
     assert set(schema) == {"name", "description", "parameters"}
     assert schema["name"] == "causal_pc"
+    assert "public_decision" in schema["parameters"]["properties"]
+    assert "public_decision" not in CausalPcInput.model_fields
     assert "user_id" not in json.dumps(schema, ensure_ascii=False)
     assert "job_id" not in json.dumps(schema, ensure_ascii=False)
     assert schema["parameters"]["additionalProperties"] is False

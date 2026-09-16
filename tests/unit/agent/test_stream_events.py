@@ -244,6 +244,41 @@ class StreamEventAdapterTests(unittest.TestCase):
         )
         self.assertNotIn("private", repr(events[0]))
 
+    def test_public_algorithm_and_final_decisions_bind_to_their_parent_steps(self):
+        deep_step = self.adapter.convert(task_start("task-deep", "deep_agent"))[0]
+        algorithm = self.adapter.convert({
+            "type": "custom",
+            "ns": (),
+            "data": {
+                "type": "decision",
+                "decision_kind": "algorithm",
+                "tool_name": "causal_pc",
+                "summary": "连续数据适合使用 PC。",
+            },
+        })[0]
+        gate_step = self.adapter.convert(task_start("task-gate", "finalization_gate"))[0]
+        final = self.adapter.convert({
+            "type": "custom",
+            "ns": (),
+            "data": {
+                "type": "decision",
+                "decision_kind": "final",
+                "summary": "PC：主结果。诊断更稳定。置信度：中等",
+                "confidence": "medium",
+            },
+        })[0]
+
+        self.assertEqual(algorithm["step_id"], deep_step["step_id"])
+        self.assertEqual(algorithm["decision_kind"], "algorithm")
+        self.assertEqual(algorithm["tool_name"], "causal_pc")
+        self.assertEqual(final["step_id"], gate_step["step_id"])
+        self.assertEqual(final["decision_kind"], "final")
+        self.assertEqual(final["confidence"], "medium")
+
+        public = _public_event_payload(final)
+        self.assertEqual(public["summary"], final["summary"])
+        self.assertEqual(public["confidence"], "medium")
+
     def test_sse_public_payload_removes_backend_attempt(self):
         """job attempt 可以持久化，但不能进入普通用户 SSE 协议。"""
         payload = {

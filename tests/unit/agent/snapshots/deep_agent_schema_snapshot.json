@@ -241,6 +241,16 @@
       "sha256": "d07f8d4b713ce44abb36454327ba09e8c91896551350922a55a541d96721246f",
       "title": "McpInvocationContext"
     },
+    "PublicDecision": {
+      "properties": [
+        "summary"
+      ],
+      "required": [
+        "summary"
+      ],
+      "sha256": "479bffd16be16def248e67d0812322dbd37ce5ee4dc21200e588a342d64e09e8",
+      "title": "PublicDecision"
+    },
     "RawResultMetadata": {
       "properties": [
         "raw_result_ref",
@@ -357,13 +367,13 @@
   "tools": [
     {
       "capability_id": "causal.direct_lingam",
-      "schema_sha256": "8b0feb822302bf217f332b35bd58d4ecbaefacc5309a042793565a9a678a5ab2",
+      "schema_sha256": "80dbc7da012e4f57b1b1c203d7131feb9e3cb1598b66f4b5052914111ede3c8b",
       "spec_digest": "718ac64c3efe7790b5bda8a2b700e850cfa554500ad11a095d8fba9450898915",
       "tool_name": "causal_direct_lingam"
     },
     {
       "capability_id": "causal.pc",
-      "schema_sha256": "96e8aae99ad6c0a2609db45d287d65ffe43c5a1fc176d5a9f8272c59048ecfac",
+      "schema_sha256": "37d03c700d9b6d96ca64a89a08ed7a6650ad2df1a9c6f4cec391c58d31c48073",
       "spec_digest": "2be84a02ec63d244fbc0533f130fdf5c3f7ea1f43364414d9a3bb8d4c56036db",
       "tool_name": "causal_pc"
     }
