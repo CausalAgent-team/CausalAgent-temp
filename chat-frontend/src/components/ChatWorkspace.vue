@@ -17,7 +17,7 @@ import SettingsDialog from './SettingsDialog.vue'
 
 const props = defineProps<{ controller: JobController }>()
 const emit = defineEmits<{ error: [error: unknown, fallback: string]; logout: [] }>()
-const { text, toggle } = useLocale()
+const { text } = useLocale()
 const auth = useAuthStore()
 const sessions = useSessionsStore()
 const files = useFilesStore()
@@ -186,13 +186,14 @@ function openAdmin(): void {
     <button class="menu-button" type="button" aria-label="打开菜单" @click="sidebarOpen = !sidebarOpen">☰</button>
     <aside class="sidebar" :class="{ open: sidebarOpen }">
       <div class="sidebar-header">
-        <h1>CausalAgent</h1>
-        <button class="icon-button" type="button" aria-label="关闭菜单" @click="sidebarOpen = false">×</button>
+        <h3>CausalAgent</h3>
+        <button class="icon-button" type="button" aria-label="关闭菜单" @click="sidebarOpen = false">☰</button>
       </div>
       <div class="sidebar-content">
-        <button class="sidebar-primary" type="button" @click="createNewSession">{{ text.newChat }}</button>
-        <div class="sidebar-section">
-          <h2>{{ text.newChat }}</h2>
+        <div class="sidebar-primary-wrap">
+          <button class="sidebar-primary" type="button" @click="createNewSession">{{ text.newChat }}</button>
+        </div>
+        <div class="sidebar-section history-section">
           <p v-if="!sessions.items.length" class="sidebar-empty">{{ text.noHistory }}</p>
           <div v-for="session in sessions.items" :key="session.id" class="sidebar-item session-item" :class="{ selected: session.id === sessions.currentId }">
             <button class="sidebar-item-main" type="button" @click="selectSession(session.id)">
@@ -222,37 +223,39 @@ function openAdmin(): void {
         <button class="secondary-button" type="button" @click="settingsOpen = true">{{ text.settings }}</button>
         <button class="avatar-button" type="button" :aria-expanded="userMenuOpen" @click="userMenuOpen = !userMenuOpen">{{ auth.username?.charAt(0).toUpperCase() }}</button>
       </div>
-      <div v-if="userMenuOpen" class="user-menu" role="menu">
-        <p>{{ text.accountPrefix }}{{ auth.username }}</p>
-        <button v-if="auth.role === 'admin'" type="button" @click="openAdmin">{{ text.adminPortal }}</button>
-        <button type="button" @click="emit('logout')">{{ text.logout }}</button>
+      <div v-if="userMenuOpen" class="user-menu" role="dialog" aria-modal="true" :aria-label="text.userInfo">
+        <h3>{{ text.userInfo }}</h3>
+        <div class="user-info-content">{{ text.accountPrefix }}{{ auth.username }}</div>
+        <div class="popup-button-container">
+          <button v-if="auth.role === 'admin'" class="admin-button" type="button" @click="openAdmin">{{ text.adminPortal }}</button>
+          <button class="logout-button" type="button" @click="emit('logout')">{{ text.logout }}</button>
+          <button class="close-button" type="button" @click="userMenuOpen = false">{{ text.close }}</button>
+        </div>
       </div>
     </aside>
-    <main class="main-container">
-      <header class="app-header">
-        <span class="header-title">{{ sessions.current?.preview || text.welcomeTitle }}</span>
-        <button class="language-button" type="button" @click="toggle">{{ text.toggleLanguage }}</button>
-      </header>
-      <section class="conversation-area" :class="{ 'is-new-chat': !sessions.messages.length }">
-        <div v-if="!sessions.messages.length" class="welcome-panel">
+    <main class="main-container" :class="sessions.messages.length ? 'is-conversation' : 'is-new-chat'">
+      <section class="conversation-area">
+        <MessageTimeline :messages="sessions.messages" />
+      </section>
+      <div class="new-chat-stage">
+        <div class="welcome-panel">
           <h2>{{ text.welcomeTitle }}</h2>
           <p>{{ text.welcomeDescription }}</p>
         </div>
-        <MessageTimeline :messages="sessions.messages" />
-      </section>
-      <Composer
-        :draft="composer.draft"
-        :web-search-enabled="composer.webSearchEnabled"
-        :selected-file="files.selected"
-        :active-job="activeJob"
-        :sending="composer.sending"
-        @update:draft="composer.setDraft"
-        @update:web-search="composer.setWebSearch"
-        @send="send"
-        @cancel="cancel"
-        @upload="upload"
-        @clear-file="files.clearSelection(); composer.setSelectedFile(null)"
-      />
+        <Composer
+          :draft="composer.draft"
+          :web-search-enabled="composer.webSearchEnabled"
+          :selected-file="files.selected"
+          :active-job="activeJob"
+          :sending="composer.sending"
+          @update:draft="composer.setDraft"
+          @update:web-search="composer.setWebSearch"
+          @send="send"
+          @cancel="cancel"
+          @upload="upload"
+          @clear-file="files.clearSelection(); composer.setSelectedFile(null)"
+        />
+      </div>
     </main>
     <SettingsDialog :open="settingsOpen" @close="settingsOpen = false" />
   </div>

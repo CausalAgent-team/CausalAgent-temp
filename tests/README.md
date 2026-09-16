@@ -25,6 +25,21 @@ tests/
 
 `integration/deployment/` 只做不启动容器的 Compose 部署契约检查；SearXNG 的 init、healthcheck 和幂等性真实容器验证通过 `tests/run_searxng_docker_validation.ps1` 手工执行，不属于默认 pytest 范围。
 
+## 普通用户 Vue 前端
+
+`chat-frontend/` 是独立的 Vue 3 + TypeScript 工程，不加入根级 npm workspace。进入该目录后执行 `npm ci` 安装锁定依赖，`npm run check` 依次执行 Lint、类型检查、unit/contract、组件测试、Mock Playwright E2E 和生产构建。Mock E2E 只使用模拟 API，不等价于真实 Flask、数据库、worker、模型或浏览器验收。
+
+普通端 Flask 唯一 Vue 入口和 Docker 构建契约由本地/发布前手工检查：
+
+```powershell
+python -m pytest -p no:cacheprovider tests/integration/deployment/test_chat_frontend.py
+docker compose -f docker-compose.yml config --quiet
+docker compose -f docker-compose.staging.yml config --quiet
+docker compose -f docker-compose.prod.yml config --quiet
+```
+
+`/` 是普通用户正式 Vue 入口，`/chat-next` 是兼容别名；项目不再读取或向 Compose 传递 `CHAT_FRONTEND_ENTRY`。未执行的真实验收、Docker 镜像构建或运行时检查必须在报告中明确保留。
+
 ## Docker 单元测试环境（推荐）
 
 `docker-compose.test.yml` 提供独立的 `unit-test` 服务。Dockerfile 的 `test` 目标在共享 Python 项目依赖上安装 `requirements-test.txt`，不会把 `pytest` 临时安装到正在运行的应用容器。

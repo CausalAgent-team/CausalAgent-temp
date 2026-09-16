@@ -180,16 +180,6 @@ class AppConfig:
             "DB_MONITOR_INTEGRITY_INTERVAL_SECONDS",
             default=86400,
         )
-        self.CHAT_FRONTEND_ENTRY = self._get_config(
-            "CHAT_FRONTEND_ENTRY",
-            required=False,
-            default="legacy",
-        )
-        if self.CHAT_FRONTEND_ENTRY not in {"legacy", "vue"}:
-            raise ValueError(
-                "配置错误: 环境变量 'CHAT_FRONTEND_ENTRY' 只能是 legacy 或 vue，"
-                f"当前值为 '{self.CHAT_FRONTEND_ENTRY}'。"
-            )
         self.CHAT_FRONTEND_DIST_DIR = self._get_config(
             "CHAT_FRONTEND_DIST_DIR",
             required=False,

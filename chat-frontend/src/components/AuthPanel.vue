@@ -45,9 +45,8 @@ function toggleMode(): void {
 <template>
   <section class="auth-panel" aria-labelledby="auth-title">
     <form class="auth-card" @submit.prevent="submit">
-      <h1 id="auth-title">CausalAgent</h1>
-      <h2>{{ mode === 'login' ? text.login : text.register }}</h2>
-      <p v-if="error || localError" class="form-error" role="alert">{{ localError || error }}</p>
+      <h2 id="auth-title">{{ mode === 'login' ? text.login : text.register }}</h2>
+      <p class="form-error" role="alert">{{ localError || error || '' }}</p>
       <label>
         {{ text.username }}
         <input v-model="username" type="text" autocomplete="username" required :disabled="busy" />

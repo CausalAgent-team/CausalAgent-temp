@@ -23,8 +23,20 @@ const { text } = useLocale()
 const textarea = ref<HTMLTextAreaElement | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 const isWaiting = computed(() => props.activeJob?.uiState === 'waiting_input')
-const isRunning = computed(() => props.activeJob && ['queued', 'running', 'canceling'].includes(props.activeJob.uiState))
+const isRunning = computed(() => Boolean(props.activeJob && ['queued', 'running', 'canceling'].includes(props.activeJob.uiState)))
+const isCanceling = computed(() => props.activeJob?.uiState === 'canceling')
 const placeholder = computed(() => isWaiting.value ? text.value.waitingPlaceholder : text.value.inputPlaceholder)
+const selectedFileType = computed(() => {
+  const extension = props.selectedFile?.filename.split('.').pop()?.trim()
+  return extension ? extension.toUpperCase() : 'FILE'
+})
+const selectedFileSize = computed(() => {
+  const size = props.selectedFile?.fileSize
+  if (size === undefined || !Number.isFinite(size) || size < 0) return ''
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(size < 10 * 1024 ? 1 : 0)} KB`
+  return `${(size / (1024 * 1024)).toFixed(size < 10 * 1024 * 1024 ? 1 : 0)} MB`
+})
 
 function resize(): void {
   if (!textarea.value) return
@@ -50,15 +62,28 @@ function onKeydown(event: KeyboardEvent): void {
   }
 }
 
+function onPrimaryAction(): void {
+  if (isRunning.value) {
+    emit('cancel')
+    return
+  }
+  emit('send')
+}
+
 watch(() => props.draft, () => { void nextTick(resize) })
 </script>
 
 <template>
   <section class="composer" aria-label="消息输入区">
-    <div v-if="selectedFile" class="selected-file-chip">
-      <span class="file-chip-type">CSV</span>
-      <span class="file-chip-name" :title="selectedFile.filename">{{ selectedFile.filename }}</span>
-      <button type="button" :aria-label="text.clearFile" @click="emit('clear-file')">×</button>
+    <div v-if="selectedFile" class="selected-file-draft">
+      <div class="selected-file-card">
+        <span class="selected-file-icon" aria-hidden="true">{{ selectedFileType }}</span>
+        <span class="selected-file-details">
+          <strong class="selected-file-name" :title="selectedFile.filename">{{ selectedFile.filename }}</strong>
+          <span class="selected-file-meta">{{ selectedFileType }} {{ selectedFileSize }}</span>
+        </span>
+        <button class="clear-selected-file-button" type="button" :aria-label="text.clearFile" @click="emit('clear-file')">×</button>
+      </div>
     </div>
     <textarea
       ref="textarea"
@@ -74,12 +99,18 @@ watch(() => props.draft, () => { void nextTick(resize) })
       <button class="secondary-button web-search-button" :class="{ active: webSearchEnabled }" type="button" :aria-pressed="webSearchEnabled" @click="emit('update:web-search', !webSearchEnabled)">
         {{ webSearchEnabled ? text.webSearchOn : text.webSearchOff }}
       </button>
-      <button class="secondary-button" type="button" :disabled="sending || Boolean(isRunning)" @click="triggerUpload">{{ text.upload }}</button>
-      <button v-if="isWaiting || isRunning" class="secondary-button cancel-button" type="button" :disabled="sending || activeJob?.uiState === 'canceling'" @click="emit('cancel')">
-        {{ activeJob?.uiState === 'canceling' ? text.canceling : text.cancelJob }}
-      </button>
-      <button class="primary-button send-button" type="button" :disabled="sending || Boolean(isRunning && !isWaiting) || !draft.trim()" @click="emit('send')">
-        {{ sending ? text.loading : isWaiting ? text.send : text.send }}
+      <button class="secondary-button upload-button" type="button" :disabled="sending || Boolean(isRunning)" @click="triggerUpload">{{ text.upload }}</button>
+      <button
+        class="primary-button send-button"
+        :class="{ 'is-running': isRunning }"
+        type="button"
+        :aria-label="isRunning ? text.cancelJob : text.send"
+        :title="isRunning ? text.cancelJob : text.send"
+        :disabled="sending || isCanceling || (!isRunning && !draft.trim())"
+        @click="onPrimaryAction"
+      >
+        <span class="send-button-label">{{ sending ? text.loading : text.send }}</span>
+        <span class="send-button-stop" aria-hidden="true"></span>
       </button>
     </div>
   </section>

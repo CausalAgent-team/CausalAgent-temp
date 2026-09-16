@@ -43,23 +43,25 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="thinking-block">
+  <div class="thinking-block thinking-bubble">
     <button class="thinking-header" type="button" :aria-expanded="expanded" @click="expanded = !expanded">
       <span>{{ statusText() }}</span>
       <span class="thinking-duration">{{ formatElapsed(elapsed) }}</span>
       <span v-if="thinking.status === 'active'" class="thinking-dots" aria-hidden="true">...</span>
       <span class="disclosure">{{ expanded ? '▾' : '▸' }}</span>
     </button>
-    <div v-if="expanded" class="thinking-detail">
-      <div v-for="stepId in thinking.stepOrder" :key="stepId" class="thinking-step" :class="`is-${thinking.steps[stepId]?.status || 'completed'}`">
-        <button class="step-header" type="button" @click="toggleStep(stepId)">
-          <span class="step-status" aria-hidden="true"></span>
-          <span class="step-name">{{ thinking.steps[stepId]?.title }}</span>
-          <span class="step-time">{{ thinking.steps[stepId]?.duration !== null ? `${thinking.steps[stepId]?.duration}s` : text.inProgress }}</span>
-          <span class="disclosure">{{ expandedSteps[stepId] ? '▾' : '▸' }}</span>
-        </button>
-        <div v-if="expandedSteps[stepId]" class="step-details">
-          <p v-for="(detail, index) in thinking.steps[stepId]?.details" :key="`${stepId}-${index}`">{{ detail }}</p>
+    <div v-if="expanded" class="thinking-detail-container">
+      <div class="thinking-detail">
+        <div v-for="stepId in thinking.stepOrder" :key="stepId" class="thinking-step step-item" :class="`is-${thinking.steps[stepId]?.status || 'completed'}`">
+          <button class="step-header" type="button" @click="toggleStep(stepId)">
+            <span class="step-status" aria-hidden="true"></span>
+            <span class="step-name">{{ thinking.steps[stepId]?.title }}</span>
+            <span class="step-time">{{ thinking.steps[stepId]?.duration !== null ? `${thinking.steps[stepId]?.duration}s` : text.inProgress }}</span>
+            <span class="disclosure">{{ expandedSteps[stepId] ? '▾' : '▸' }}</span>
+          </button>
+          <div v-if="expandedSteps[stepId]" class="step-details">
+            <p v-for="(detail, index) in thinking.steps[stepId]?.details" :key="`${stepId}-${index}`">{{ detail }}</p>
+          </div>
         </div>
       </div>
     </div>

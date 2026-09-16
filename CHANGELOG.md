@@ -1308,3 +1308,22 @@
   - 【构建环境】：修复 GitHub Windows runner 未创建 `.venv-desktop`、而打包脚本只接受该虚拟环境所导致的 onefile 构建失败；依赖安装、逻辑测试、PyInstaller 构建和冻结标记检查统一使用桌面虚拟环境。
   - 【恢复入口】：为 workflow 增加显式手动补齐模式，从原 tag 重新检出和构建，只允许向已发布且未锁定的 Release 上传缺失附件；不改变正式版或 Pre-release 属性，并拒绝移动 tag、修改说明或覆盖同名附件。
   - 【文档与测试】：增加 workflow 静态安全契约测试，并同步桌面发布、CD 恢复流程和 v0.1.0 Release Notes 的验收边界。
+
+---
+2026.9.15
+- 【普通端 Vue 并行迁移】
+  - 【工程与传输层】：新增独立 `chat-frontend/` Vue 3 + TypeScript 工程，按 API schema、Pinia、Job runtime、组件和渲染器分域；普通端 SSE 改用 `fetch()` + `ReadableStream`，手工解析 `id/event/data`，保留 Flask SSE 路径和公共内容，增加未知事件游标、协议坏包和有界重连处理。
+  - 【入口与构建】：增加 `/chat-next`、`/chat-legacy`、`/chat-assets/` 和 `CHAT_FRONTEND_ENTRY`/`CHAT_FRONTEND_DIST_DIR`/`CHAT_VITE_DEV_SERVER_URL`；Docker 通过 Node 24 `chat-builder` 构建 Vue 产物，最终 runtime 不包含 Node/npm。迁移期根入口默认仍为旧版。
+  - 【文档与验证】：同步 `Document/`、`tests/README.md` 和普通端基线，明确启动配置错误以 `web.startup.failed` 日志加非零进程退出为失败证据。前端 Lint、类型检查、23 项 unit/contract、3 项组件、1 项 Mock E2E 和生产构建已通过；真实 Flask/数据库/worker/模型、Chrome/Edge、桌面壳等人工等价验收尚未完成，未切换根入口或删除旧版。
+- 【普通端 Vue 视觉等价修复】
+  - 【布局骨架】：以旧版 HTML/CSS/JS 为事实基线，恢复默认收起的 300px 抽屉侧栏、无顶部标题栏的主内容区，以及欢迎区与输入卡居中、会话输入卡置底的双状态 880px 内容列。
+  - 【视觉语义】：恢复浅绿用户气泡、无卡片 AI 与思考文本流、旧版输入卡/按钮/文件草稿、认证遮罩、设置弹窗、用户信息弹窗、报告和因果图样式，并把语言切换入口放回设置菜单。
+
+
+---
+2026.9.16
+- 【普通端 Vue 单架构收敛】
+  - 【布局与任务交互】：侧栏内容区改为占满剩余高度，使设置与用户入口固定在底部；Thinking 标题和执行步骤统一左对齐；移除独立取消按钮，运行时发送键显示旋转进度环与中心停止方块，再次点击沿用 Job 取消接口。
+  - 【入口与部署】：根路由固定提供 Vue 构建产物，`/chat-next` 仅保留兼容别名，移除 `/chat-legacy` 和 `CHAT_FRONTEND_ENTRY` 的路由、配置及三个 Compose 引用；缺少 Vue dist 时继续返回带 request ID 的稳定 503。
+  - 【旧文件边界】：旧普通端静态文件已经退出运行时引用；受仓库禁止 agent 删除重要文件的规则限制，物理文件仍保留并在普通端文档中列出人工删除清单，独立 RAG 工作台不在清理范围内。
+

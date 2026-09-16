@@ -2,7 +2,7 @@
 app.main.routes - 主路由
 
 - 根路由
-- 普通端 Vue/legacy 双入口
+- 普通端 Vue 入口
 - 普通端 Vue 静态资源
 - 设置路由
 
@@ -21,7 +21,6 @@ main_bp = Blueprint('main', __name__)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SETTING_DIR = os.path.join(BASE_DIR, "setting")
 PROJECT_ROOT = Path(BASE_DIR)
-STATIC_DIR = PROJECT_ROOT / "app" / "static"
 LOGGER = logging.getLogger(__name__)
 
 ## 设置
@@ -64,11 +63,6 @@ def _chat_frontend_missing_response():
     }), 503
 
 
-def _serve_legacy_chat():
-    """固定返回未迁移的普通端入口，不为尾斜杠建立别名。"""
-    return send_from_directory(str(STATIC_DIR), "chat.html")
-
-
 def _serve_chat_index(dist_dir: Path):
     """提供入口 HTML，并禁止入口缓存住旧的 hash 资源清单。"""
     response = send_from_directory(str(dist_dir), "index.html")
@@ -93,22 +87,14 @@ def _serve_vue_chat():
 # 根路由
 @main_bp.route('/')
 def index():
-    """按配置选择根入口，默认保持旧版普通端行为。"""
-    if settings.CHAT_FRONTEND_ENTRY == "vue":
-        return _serve_vue_chat()
-    return _serve_legacy_chat()
+    """提供唯一的普通用户 Vue 入口。"""
+    return _serve_vue_chat()
 
 
 @main_bp.route('/chat-next')
 def chat_next():
-    """固定提供普通端 Vue 入口，不受根入口开关影响。"""
+    """保留迁移期 Vue 地址作为兼容别名。"""
     return _serve_vue_chat()
-
-
-@main_bp.route('/chat-legacy')
-def chat_legacy():
-    """固定提供旧版普通端入口，保留回滚路径。"""
-    return _serve_legacy_chat()
 
 
 @main_bp.route('/chat-assets/<path:filename>')

@@ -23,5 +23,5 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="container" class="causal-graph" role="img" aria-label="因果关系图"></div>
+  <div ref="container" class="causal-graph causal-graph-container" role="img" aria-label="因果关系图"></div>
 </template>

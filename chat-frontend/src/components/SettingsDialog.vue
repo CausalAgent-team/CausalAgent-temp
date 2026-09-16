@@ -6,7 +6,7 @@ import { renderMarkdown } from '../renderers/markdown-adapter'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
-const { text } = useLocale()
+const { text, toggle } = useLocale()
 const topic = ref<'userAgreement' | 'userManual' | 'checkUpdate' | null>(null)
 const content = ref('')
 const loading = ref(false)
@@ -48,6 +48,7 @@ async function selectTopic(value: 'userAgreement' | 'userManual' | 'checkUpdate'
         <button type="button" @click="selectTopic('userAgreement')">{{ text.userAgreement }}</button>
         <button type="button" @click="selectTopic('userManual')">{{ text.userManual }}</button>
         <button type="button" @click="selectTopic('checkUpdate')">{{ text.checkUpdate }}</button>
+        <button type="button" @click="toggle">{{ text.toggleLanguage }}</button>
       </div>
       <div v-else class="settings-content">
         <p v-if="loading">{{ text.loading }}</p>

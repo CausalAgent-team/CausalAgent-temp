@@ -80,6 +80,20 @@ $env:CAUSALAGENT_DESKTOP_URL = "http://127.0.0.1:5001/"
 
 配置优先级为命令行 `--url` > `CAUSALAGENT_DESKTOP_URL` > 模式默认值。Release 包使用构建时嵌入的 HTTPS origin，强制关闭 debug 和开发者工具；它不能通过桌面壳切换到任意外部页面。WebView2 的 Cookie/localStorage 数据目录是 `%LOCALAPPDATA%\CausalAgent\WebView`，用于按服务器 Session 策略跨重启保存登录状态。
 
+## 普通用户 Vue 前端开发
+
+普通用户 Vue 工程位于 `chat-frontend/`，开发服务器默认使用 5174 端口和 `/chat-assets/` base：
+
+```powershell
+Push-Location chat-frontend
+npm ci
+npm run dev
+Pop-Location
+```
+
+Vite 将 `/api` 代理到 `http://127.0.0.1:5001`。如果希望通过 Flask 页面跳转到 Vite，设置 `CHAT_VITE_DEV_SERVER_URL=http://127.0.0.1:5174`；正式入口 `/` 和兼容别名 `/chat-next` 都会跳转到 `/chat-assets/`。未设置该变量时，Vue 页面从 `chat-frontend/dist/` 或 `CHAT_FRONTEND_DIST_DIR` 指定目录由 Flask 提供。
+如果不设置CHAT_VITE_DEV_SERVER_URL=http://127.0.0.1:5174，也可以通过直接访问http://127.0.0.1:5174/chat-assets/进行热重载更新
+
 ## 管理员前端开发
 
 管理员 Vue 源码位于 `admin-frontend/`。需要热更新时执行：

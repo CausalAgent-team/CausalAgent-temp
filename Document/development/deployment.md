@@ -10,9 +10,12 @@
 
 1. `python-deps` 安装基础 Python 依赖和 CPU PyTorch。
 2. `test` 在共享依赖上安装 `requirements-test.txt`，默认执行 `tests/unit`。
-3. `admin-builder` 使用 Node 24 Alpine 执行管理员前端构建，`runtime` 是最终 Python 镜像，将产物复制到 `/opt/causalagent-admin`。
+3. `admin-builder` 使用 Node 24 Alpine 执行管理员前端构建，产物复制到 `/opt/causalagent-admin`。
+4. `chat-builder` 使用 Node 24 Alpine 执行普通用户 Vue 前端构建，产物复制到 `/opt/causalagent-chat`。
 
-最终运行镜像不包含 Node，不启动 Vite，不开放 Node 端口；Gunicorn 默认绑定 `0.0.0.0:5001`，由 `WEB_WORKERS`、`WEB_THREADS` 和 `WEB_TIMEOUT` 调整 Web 进程参数。
+最终运行镜像不包含 Node、npm，不启动 Vite，不开放 Node 端口；Gunicorn 默认绑定 `0.0.0.0:5001`，由 `WEB_WORKERS`、`WEB_THREADS` 和 `WEB_TIMEOUT` 调整 Web 进程参数。
+
+普通用户 Vue 的运行时目录由 `CHAT_FRONTEND_DIST_DIR` 指定，Compose 默认使用 `/opt/causalagent-chat`；源码卷不能覆盖该目录。根路由 `/` 始终返回 Vue，`/chat-next` 只作为兼容别名。`/chat-assets/` 的入口 HTML 不缓存，带 hash 的 `assets/` 资源使用长期 immutable 缓存；dist 缺失时根入口、兼容别名和资源路径统一返回带 request ID 的 503，不回退到其他前端。
 
 ## 开发部署
 

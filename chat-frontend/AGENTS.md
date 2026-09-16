@@ -1,0 +1,11 @@
+# 普通用户 Vue 前端局部约束
+
+生效目录：`chat-frontend/` 及其子目录。
+
+- 该目录是普通用户主应用的独立 Vue 3 工程；不得在普通组件任务中顺带修改 Flask、数据库、worker、Docker 或管理员端。
+- 所有后端响应先按 `unknown` 接收，再通过 Zod schema 解析；禁止使用 `response.json() as SomeDto`。
+- `Pinia` 只能保存可序列化的领域状态。`AbortController`、ReadableStream reader、定时器、DOM 节点和 vis-network 实例只能由组件生命周期或 runtime controller 持有。
+- Job SSE 必须使用 `fetch()` 和 `ReadableStream`，不得使用原生 `EventSource`。未知但结构合法的命名事件推进传输游标；坏包不推进游标，并进入有界、可观察的错误路径。
+- Markdown 只通过 `src/renderers/markdown-adapter.ts` 调用 vendored marked；不得在组件中访问全局 marked。当前原始 HTML 行为是有意保留的兼容风险，不在本轮加入清洗策略。
+- 图形库必须延迟加载，并在组件卸载时销毁实例；初始入口不得静态包含 vis-network。
+- 修改后至少运行 `npm ci`、`npm run lint`、`npm run typecheck`、单元测试、组件测试、Mock Playwright E2E 和 `npm run build`（在环境可行范围内）。Mock E2E 不得表述为真实 Flask、worker 或模型验收。
