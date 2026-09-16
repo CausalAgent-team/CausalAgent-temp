@@ -181,16 +181,25 @@ async def _run_job(
         )
         terminal_logged = True
 
-    def log_failed(phase: str, reason_code: str, *, exc_info: Any = None) -> None:
+    def log_failed(
+        phase: str,
+        reason_code: str,
+        *,
+        error_category: str | None = None,
+        exc_info: Any = None,
+    ) -> None:
         nonlocal terminal_logged
         if terminal_logged:
             return
+        # details 必须是字典字面量（静态日志政策要求）；error_category 为 None 时
+        # validate_event_details 会跳过该键，无需在调用处分支。
         log_event(
             LOGGER,
             "worker.job.failed",
             details={
                 "failure_phase": phase,
                 "reason_code": reason_code,
+                "error_category": error_category,
                 "attempt": attempt_count,
                 "duration_ms": _duration_ms(started_at),
             },
@@ -275,7 +284,13 @@ async def _run_job(
                 },
             )
         elif terminal_type == "error":
-            log_failed("graph_terminal", "node_error")
+            diagnostic = getattr(writer, "terminal_diagnostic", None)
+            log_failed(
+                "graph_terminal",
+                diagnostic.reason_code if diagnostic else "node_error",
+                error_category=diagnostic.error_category if diagnostic else None,
+                exc_info=diagnostic.exc_info if diagnostic else None,
+            )
         else:
             log_event(
                 LOGGER,
