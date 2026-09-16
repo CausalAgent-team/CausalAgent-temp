@@ -262,6 +262,8 @@ def create_deep_agent_model() -> ChatOpenAI:
         api_key=api_key,
         streaming=False,
         use_responses_api=True,
+        output_version="responses/v1",
+        reasoning={"effort": "none"},
     )
 
 

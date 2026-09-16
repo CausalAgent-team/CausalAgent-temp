@@ -11,6 +11,7 @@ from app.agent.worker.runtime import (
     ProcessRuntime,
     RagReadiness,
     SlotRuntime,
+    create_deep_agent_model,
     create_process_runtime,
     create_slot_runtime,
     inspect_rag_readiness,
@@ -50,6 +51,28 @@ def test_process_runtime_returns_explicit_llm_and_rag_state():
     assert runtime.rag_available is False
     assert runtime.rag_status == "rag_unavailable"
     assert runtime.rag_error_code == "active_release_missing"
+
+
+def test_deep_agent_model_uses_validated_responses_profile(monkeypatch):
+    """生产模型必须沿用 P0 验证过的无 reasoning Responses 配置。"""
+    monkeypatch.setenv("DEEP_AGENT_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("DEEP_AGENT_BASE_URL", "https://provider.example")
+    monkeypatch.setenv("DEEP_AGENT_API_KEY", "test-only")
+    configured = Mock(name="deep-agent-model")
+
+    with patch("app.agent.worker.runtime.ChatOpenAI", return_value=configured) as model_cls:
+        model = create_deep_agent_model()
+
+    assert model is configured
+    model_cls.assert_called_once_with(
+        model="deepseek-v4-flash",
+        base_url="https://provider.example",
+        api_key="test-only",
+        streaming=False,
+        use_responses_api=True,
+        output_version="responses/v1",
+        reasoning={"effort": "none"},
+    )
 
 
 def test_rag_readiness_returns_release_identity_without_heavy_runtime_creation():
