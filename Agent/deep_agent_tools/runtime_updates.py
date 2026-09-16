@@ -15,6 +15,27 @@ from .identity import build_deep_agent_step_id, build_invocation_id
 from .models import ActionAttempt, InvocationRecord, canonical_json_bytes
 
 
+def _tool_result_summary(status: str | None, safe_error_code: str | None) -> str:
+    """把受控工具状态转换为用户可区分的简短文案。"""
+
+    normalized_status = str(status or "").lower()
+    normalized_code = str(safe_error_code or "").upper()
+    if normalized_status == "succeeded":
+        return "调用完成"
+    if normalized_status in {"canceled", "cancelled"}:
+        return "调用已取消"
+    if normalized_status in {"timed_out", "timeout"}:
+        return "调用超时"
+    if normalized_code == "WEB_SEARCH_DISABLED":
+        return "未启用"
+    if normalized_status == "not_ready" or normalized_code in {
+        "RAG_RETRIEVAL_UNAVAILABLE",
+        "WEB_SEARCH_UNAVAILABLE",
+    }:
+        return "暂不可用"
+    return "调用失败"
+
+
 async def emit_tool_lifecycle_event(
     runtime: Any,
     *,
@@ -55,10 +76,9 @@ async def emit_tool_lifecycle_event(
     if event_type == "tool_call_start":
         payload["argument_keys"] = []
     elif normalized_status is not None:
-        payload["summary"] = (
-            "调用完成" if normalized_status == "succeeded" else "调用失败"
-            if normalized_status not in {"canceled", "cancelled"}
-            else "调用已取消"
+        payload["summary"] = _tool_result_summary(
+            normalized_status,
+            safe_error_code,
         )
         payload["status"] = normalized_status
     if safe_error_code:

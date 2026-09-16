@@ -301,10 +301,11 @@ class McpClientPool:
                 await context.enter_async_context(client)
                 # Handshake/readiness only; never use this list to register model tools.
                 tools = await client.list_tools()
-                if not any(
-                    getattr(tool, "name", None) == "execute_algorithm"
+                advertised = {
+                    getattr(tool, "name", None)
                     for tool in getattr(tools, "tools", ())
-                ):
+                }
+                if not {"execute_algorithm", "cancel_algorithm"}.issubset(advertised):
                     raise RuntimeError("causal-mcp capability handshake failed")
                 session = getattr(client, "session", None)
                 member.mcp_session_id = getattr(session, "session_id", None)
@@ -383,10 +384,28 @@ class McpClientPool:
         invocation_id: str,
         retry_ordinal: int = 0,
     ) -> Any:
+        return await self._call_named_tool("execute_algorithm", arguments)
+
+    async def cancel_tool(
+        self,
+        arguments: dict[str, Any],
+        *,
+        invocation_id: str,
+        retry_ordinal: int = 0,
+    ) -> Any:
+        """通过同一受认证连接池发送 invocation 级控制面取消请求。"""
+
+        return await self._call_named_tool("cancel_algorithm", arguments)
+
+    async def _call_named_tool(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> Any:
         lease = await self.acquire()
         member = lease.member
         request_task = asyncio.create_task(
-            member.client.call_tool("execute_algorithm", arguments)
+            member.client.call_tool(tool_name, arguments)
         )
         try:
             return await asyncio.shield(request_task)

@@ -552,7 +552,7 @@ def test_rag_finalize_result_keeps_public_event_projection():
     })
 
     assert [event["type"] for event in events] == ["tool_call_result"]
-    assert events[0]["summary"] == "调用失败"
+    assert events[0]["summary"] == "暂不可用"
 
 
 @pytest.mark.parametrize("cancel_exception", [JobExecutionRevoked("revoked"), asyncio.CancelledError()])

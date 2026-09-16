@@ -287,3 +287,17 @@ async def _revoke_after(guard: JobExecutionGuard, delay: float) -> None:
     """在 retry sleep 中撤销 Guard。"""
     await asyncio.sleep(delay)
     guard.mark_revoked()
+
+
+def test_guard_revocation_wakes_long_running_dependency_waiter() -> None:
+    async def scenario():
+        guard = JobExecutionGuard("job-1", "worker-a", 1, 1)
+        waiter = asyncio.create_task(guard.wait_revoked())
+        await asyncio.sleep(0)
+        assert waiter.done() is False
+        guard.mark_revoked(status="canceled", execution_state="draining")
+        await asyncio.wait_for(waiter, timeout=0.1)
+        assert guard.revoked is True
+        assert guard.last_status == "canceled"
+
+    asyncio.run(scenario())

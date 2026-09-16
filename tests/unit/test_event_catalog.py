@@ -47,7 +47,16 @@ EXPECTED_CODES = {
     "rag.multimodal.parse_failed",
     "mcp.tool.finished",
     "mcp.tool.failed",
+    "mcp.tool.canceled",
+    "mcp.tool.slow",
+    "mcp.request.received",
+    "mcp.request.rejected",
     "mcp.request.accepted",
+    "mcp.cancel.finished",
+    "mcp.client.call.started",
+    "mcp.client.cancel.requested",
+    "mcp.client.cancel.finished",
+    "mcp.client.cancel.failed",
     "mcp.capacity.rejected",
     "mcp.process.recycled",
     "mcp.client.reconnected",
@@ -96,7 +105,9 @@ def _sample_value(field: str, rule):
         "outbox_id",
         "consecutive_failures",
         "generation",
+        "retry_ordinal",
         "retry_after_seconds",
+        "timeout_seconds",
     }:
         return 1
     if field.endswith("_count") or field in {

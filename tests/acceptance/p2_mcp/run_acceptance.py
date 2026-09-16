@@ -34,7 +34,11 @@ from Agent.CausalAgentMCP.executor_pool import (
     BoundedProcessPool,
     PoolExecutionError,
 )
-from Agent.CausalAgentMCP.runner_registry import build_default_registry
+from Agent.CausalAgentMCP.runner_registry import (
+    RunnerRegistry,
+    RunnerSpec,
+    build_default_registry,
+)
 from Agent.CausalAgentMCP.service import CausalMcpService
 from Agent.CausalAgentMCP.app import create_app
 from Agent.deep_agent_tools.algorithm_specs import (
@@ -58,6 +62,11 @@ def _sleep_runner(_csv_data: str, parameters: dict[str, Any]) -> dict[str, Any]:
 
 
 def _quick_runner(_csv_data: str, _parameters: dict[str, Any]) -> dict[str, Any]:
+    return {"success": True, "data": {"nodes": [], "edges": []}}
+
+
+def _slow_pc_runner(_csv_data: str, _parameters: dict[str, Any]) -> dict[str, Any]:
+    time.sleep(2.0)
     return {"success": True, "data": {"nodes": [], "edges": []}}
 
 
@@ -337,9 +346,14 @@ async def resource_sample(csv_data: str) -> dict[str, Any]:
     return {"status": "PARTIAL" if any(v["status"] == "NOT_RUN" for v in samples.values()) else "PASS", "algorithms": samples}
 
 
-async def start_server(csv_data: str) -> tuple[uvicorn.Server, asyncio.Task[Any]]:
+async def start_server(
+    csv_data: str,
+    *,
+    registry: RunnerRegistry | None = None,
+) -> tuple[uvicorn.Server, asyncio.Task[Any]]:
     app = create_app(
         _config(process_workers=1, queue_capacity=4),
+        registry=registry,
         authority_reader=lambda _context: csv_data,
         database_probe=lambda: True,
     )
@@ -352,6 +366,79 @@ async def start_server(csv_data: str) -> tuple[uvicorn.Server, asyncio.Task[Any]
             return server, task
         await asyncio.sleep(0.05)
     raise RuntimeError("local MCP server did not start")
+
+
+async def remote_cancel_control(csv_data: str) -> dict[str, Any]:
+    """通过真实 HTTP 控制面终止目标进程，并验证幂等取消结果。"""
+
+    command, context, signature = _request()
+    args = {
+        "command": command.model_dump(mode="json"),
+        "trusted_context": context.model_dump(mode="json"),
+        "signature": signature,
+    }
+    registry = RunnerRegistry(
+        [
+            RunnerSpec(
+                capability_id=PC_SPEC.capability_id,
+                version=PC_SPEC.version,
+                spec_digest=PC_SPEC.spec_digest,
+                timeout_seconds=30,
+                concurrency=1,
+                runner=_slow_pc_runner,
+            )
+        ]
+    )
+    server, server_task = await start_server(csv_data, registry=registry)
+    pool = McpClientPool(
+        McpClientPoolConfig(
+            url=f"http://127.0.0.1:{PORT}/mcp",
+            service_token=TOKEN,
+            pool_size=2,
+            max_in_flight_per_client=1,
+            acquire_timeout_seconds=1,
+            max_connections=4,
+            max_keepalive_connections=4,
+            read_timeout_seconds=30,
+        )
+    )
+    try:
+        await pool.start()
+        execute_task = asyncio.create_task(
+            pool.call_tool(args, invocation_id=context.invocation_id)
+        )
+        await asyncio.sleep(0.2)
+        cancel_response = await pool.cancel_tool(
+            args,
+            invocation_id=context.invocation_id,
+        )
+        execute_response = await execute_task
+        cancel_payload = getattr(cancel_response, "structured_content", None) or {}
+        execute_payload = getattr(execute_response, "structured_content", None) or {}
+        repeated_response = await pool.cancel_tool(
+            args,
+            invocation_id=context.invocation_id,
+        )
+        repeated_payload = getattr(repeated_response, "structured_content", None) or {}
+        cancel_status = (cancel_payload.get("cancellation") or {}).get("status")
+        repeated_status = (repeated_payload.get("cancellation") or {}).get("status")
+        execute_code = (execute_payload.get("error") or {}).get("code")
+        passed = (
+            cancel_status == "canceled"
+            and repeated_status == "already_canceled"
+            and execute_code == "ALGORITHM_CANCELED"
+        )
+        return {
+            "status": "PASS" if passed else "FAIL",
+            "cancel_status": cancel_status,
+            "repeated_cancel_status": repeated_status,
+            "execute_error_code": execute_code,
+            "scope": "real MCP HTTP control tool and process termination; synthetic slow runner",
+        }
+    finally:
+        await pool.close()
+        server.should_exit = True
+        await server_task
 
 
 async def client_pool_modes_and_fault(csv_data: str) -> dict[str, Any]:
@@ -464,6 +551,7 @@ async def main() -> None:
         "capacity_window": await capacity_window(),
         "deadline_and_late_result": await timeout_and_late_result(),
         "rss_cpu": await resource_sample(_resource_fixture()),
+        "remote_cancel_control": await remote_cancel_control(csv_data),
         "client_pool": await client_pool_modes_and_fault(csv_data),
         "mysql_strong_read_and_old_lease": {
             "status": "NOT_RUN",
@@ -471,7 +559,7 @@ async def main() -> None:
         },
         "stderr_sensitive_zero_hit": {
             "status": "NOT_RUN",
-            "reason": "Requires real causal-mcp container logs; image/Compose build blocked by Docker Hub token network failure.",
+            "reason": "This one-shot runner does not retain a named causal-mcp container for post-run Docker log scanning.",
         },
     }
     print(json.dumps(report, ensure_ascii=False, indent=2))

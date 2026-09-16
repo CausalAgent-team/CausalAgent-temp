@@ -275,7 +275,7 @@ class WebEvidenceTool:
                 event_type="tool_call_result",
                 identity=identity,
                 tool_name=self.name,
-                status=("succeeded" if attempt_status == "succeeded" else "failed"),
+                status=attempt_status,
                 safe_error_code=safe_error_code,
             )
             evidence_by_ref = {

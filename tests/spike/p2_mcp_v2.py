@@ -120,6 +120,7 @@ async def run() -> dict[str, object]:
                 assert ready.status_code == 200
                 assert unauthorized.status_code == 401
                 assert "execute_algorithm" in {tool.name for tool in tools.tools}
+                assert "cancel_algorithm" in {tool.name for tool in tools.tools}
                 assert isinstance(payload, dict) and payload.get("ok") is True
                 bad_signature = await client.call_tool(
                     "execute_algorithm",

@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+import time
+from unittest.mock import patch
 
 import pytest
 
@@ -36,6 +39,7 @@ from app.agent.worker.mcp_client_pool import (
     McpTransportError,
 )
 from app.agent.worker.execution_guard import JobExecutionGuard, JobExecutionRevoked
+from observability.logging_runtime import current_log_context
 
 
 def _context() -> McpInvocationContext:
@@ -75,6 +79,11 @@ def _config() -> McpServerConfig:
         signing_key_id="current",
         signing_key_previous_id="previous",
     )
+
+
+def _sleep_runner(_csv_data, parameters):
+    time.sleep(parameters["delay"])
+    return {"ok": True, "delay": parameters["delay"]}
 
 
 def test_hmac_binds_command_and_rejects_expired_context() -> None:
@@ -145,6 +154,58 @@ def test_service_returns_normalized_result_without_raw_runner_text() -> None:
     assert payload["result"]["status"] == "valid"
     assert payload["result"]["standardized_graph"]["edges"][0]["source"] == "A"
     assert "runner" not in payload["result"]
+
+
+def test_service_logs_job_invocation_timeline_and_slow_threshold() -> None:
+    class SlowPool:
+        def ready(self) -> bool:
+            return True
+
+        async def execute(self, **kwargs):
+            await kwargs["before_start"](0.01)
+            await asyncio.sleep(0.03)
+            return ExecutionOutcome(
+                value={"success": True, "data": {"nodes": [], "edges": []}},
+                executor_slot_id="process-0",
+            )
+
+    async def scenario():
+        context = _context()
+        command = _command(context)
+        service = CausalMcpService(
+            config=replace(_config(), slow_log_seconds=0.01),
+            registry=build_default_registry(),
+            executor_pool=SlowPool(),
+            authority_reader=lambda _context: "A,B\n1,2\n3,4\n",
+            database_probe=lambda: True,
+        )
+        observed = []
+
+        def capture(_logger, event_code, **kwargs):
+            observed.append((event_code, kwargs.get("details"), current_log_context()))
+
+        with patch("Agent.CausalAgentMCP.service.log_event", side_effect=capture):
+            payload = await service.execute_payload(
+                {
+                    "command": command.model_dump(mode="json"),
+                    "trusted_context": context.model_dump(mode="json"),
+                    "signature": sign_invocation(context, command, "secret"),
+                }
+            )
+        return payload, observed
+
+    payload, observed = asyncio.run(scenario())
+    assert payload["ok"] is True
+    assert [item[0] for item in observed] == [
+        "mcp.request.received",
+        "mcp.request.accepted",
+        "mcp.tool.slow",
+        "mcp.tool.finished",
+    ]
+    for _event, _details, context_fields in observed:
+        assert context_fields["job_id"] == _context().job_id
+        assert context_fields["invocation_id"] == _context().invocation_id
+        assert context_fields["tool"] == PC_SPEC.capability_id
 
 
 def test_bounded_pool_times_out_before_returning_late_result() -> None:
@@ -244,44 +305,60 @@ def test_bounded_pool_releases_capability_after_global_admission_timeout() -> No
     asyncio.run(scenario())
 
 
-def test_recycle_terminates_old_generation_before_replacement() -> None:
-    lifecycle = []
-
-    class FakeProcess:
-        alive = True
-
-        def is_alive(self):
-            return self.alive
-
-        def terminate(self):
-            lifecycle.append("terminate")
-            self.alive = False
-
-        def join(self, _timeout):
-            lifecycle.append("join")
-
-    class FakeExecutor:
-        def __init__(self, *, max_workers):
-            lifecycle.append(f"create:{max_workers}")
-            self._processes = {1: FakeProcess()}
-
-        def shutdown(self, *, wait, cancel_futures):
-            assert wait is False
-            assert cancel_futures is True
-            lifecycle.append("shutdown")
-
+def test_cancel_terminates_only_the_target_invocation_process() -> None:
     async def scenario():
         pool = BoundedProcessPool(
-            process_workers=1,
-            executor_factory=FakeExecutor,
+            process_workers=2,
+            queue_capacity=1,
         )
         await pool.start()
-        await pool.recycle()
-        assert pool.ready() is True
+        identity = ("job-1", 1, 1, "worker-1")
+        canceled = asyncio.create_task(
+            pool.execute(
+                capability_id="test.cancel",
+                runner=_sleep_runner,
+                csv_data="A\n1\n",
+                parameters={"delay": 2.0},
+                timeout_seconds=5,
+                concurrency=2,
+                invocation_id="inv-cancel",
+                execution_identity=identity,
+            )
+        )
+        sibling = asyncio.create_task(
+            pool.execute(
+                capability_id="test.cancel",
+                runner=_sleep_runner,
+                csv_data="A\n1\n",
+                parameters={"delay": 0.1},
+                timeout_seconds=5,
+                concurrency=2,
+                invocation_id="inv-sibling",
+                execution_identity=identity,
+            )
+        )
+        await asyncio.sleep(0.05)
+        cancellation = await pool.cancel(
+            "inv-cancel",
+            execution_identity=identity,
+        )
+        assert cancellation.status == "canceled"
+        with pytest.raises(PoolExecutionError) as error:
+            await canceled
+        assert error.value.safe_error_code == SafeErrorCode.ALGORITHM_CANCELED
+        assert (await sibling).value["ok"] is True
+        assert (
+            await pool.cancel("inv-cancel", execution_identity=identity)
+        ).status == "already_canceled"
+        assert (
+            await pool.cancel(
+                "inv-cancel",
+                execution_identity=("job-other", 1, 1, "worker-1"),
+            )
+        ).status == "identity_mismatch"
         await pool.close()
 
     asyncio.run(scenario())
-    assert lifecycle[:5] == ["create:1", "shutdown", "terminate", "join", "create:1"]
 
 
 def test_authority_reader_failure_is_mapped_to_safe_transport_error() -> None:
@@ -405,6 +482,44 @@ def test_service_exposes_algorithm_timeout_as_result_status() -> None:
     assert payload["result"]["status"] == "timed_out"
 
 
+def test_service_cancel_is_identity_bound_and_idempotent() -> None:
+    class CancelPool:
+        def ready(self) -> bool:
+            return True
+
+        async def cancel(self, invocation_id, *, execution_identity):
+            assert invocation_id == _context().invocation_id
+            assert execution_identity == (
+                _context().job_id,
+                1,
+                4,
+                "worker-1",
+            )
+            return SimpleNamespace(status="canceled", invocation_id=invocation_id)
+
+    async def scenario():
+        context = _context()
+        command = _command(context)
+        service = CausalMcpService(
+            config=_config(),
+            registry=build_default_registry(),
+            executor_pool=CancelPool(),
+            authority_reader=lambda _context: "A,B\n1,2\n",
+            database_probe=lambda: True,
+        )
+        return await service.cancel_payload(
+            {
+                "command": command.model_dump(mode="json"),
+                "trusted_context": context.model_dump(mode="json"),
+                "signature": sign_invocation(context, command, "secret"),
+            }
+        )
+
+    payload = asyncio.run(scenario())
+    assert payload["ok"] is True
+    assert payload["cancellation"]["status"] == "canceled"
+
+
 class _FakeClient:
     def __init__(self, _transport, **_kwargs):
         self.session = None
@@ -416,7 +531,12 @@ class _FakeClient:
         return None
 
     async def list_tools(self):
-        return SimpleNamespace(tools=[SimpleNamespace(name="execute_algorithm")])
+        return SimpleNamespace(
+            tools=[
+                SimpleNamespace(name="execute_algorithm"),
+                SimpleNamespace(name="cancel_algorithm"),
+            ]
+        )
 
     async def call_tool(self, _name, arguments):
         return SimpleNamespace(structured_content={"ok": True, "arguments": arguments})
@@ -599,6 +719,17 @@ def test_executor_marks_canceled_remote_call_with_same_invocation_identity() -> 
         async def call_tool(self, *_args, **_kwargs):
             raise asyncio.CancelledError()
 
+        async def cancel_tool(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                structured_content={
+                    "ok": True,
+                    "cancellation": {
+                        "status": "canceled",
+                        "invocation_id": command.invocation_id,
+                    },
+                }
+            )
+
     with pytest.raises(asyncio.CancelledError) as error:
         asyncio.run(
             McpAlgorithmExecutor(FakePool(), signing_key="secret").execute(
@@ -606,4 +737,55 @@ def test_executor_marks_canceled_remote_call_with_same_invocation_identity() -> 
             )
         )
     assert error.value.invocation_id == command.invocation_id
-    assert error.value.remote_execution_status == "unknown"
+    assert error.value.remote_execution_status == "canceled"
+
+
+def test_executor_guard_revocation_cancels_the_remote_invocation() -> None:
+    context = _context()
+    command = _command(context)
+    guard = JobExecutionGuard(context.job_id, context.worker_id, 1, 4)
+
+    async def ensure_active():
+        if guard.revoked:
+            raise JobExecutionRevoked("revoked")
+
+    guard.ensure_active = ensure_active
+    guard.check_after_call = ensure_active
+
+    class FakePool:
+        cancel_calls = 0
+
+        async def call_tool(self, *_args, **_kwargs):
+            await asyncio.Event().wait()
+
+        async def cancel_tool(self, *_args, **_kwargs):
+            self.cancel_calls += 1
+            return SimpleNamespace(
+                structured_content={
+                    "ok": True,
+                    "cancellation": {
+                        "status": "canceled",
+                        "invocation_id": command.invocation_id,
+                    },
+                }
+            )
+
+    async def scenario():
+        pool = FakePool()
+        token = guard.install()
+        try:
+            task = asyncio.create_task(
+                McpAlgorithmExecutor(pool, signing_key="secret").execute(
+                    command, context
+                )
+            )
+            await asyncio.sleep(0.01)
+            guard.mark_revoked(status="canceled", execution_state="draining")
+            with pytest.raises(JobExecutionRevoked) as error:
+                await task
+            assert error.value.remote_execution_status == "canceled"
+            assert pool.cancel_calls == 1
+        finally:
+            JobExecutionGuard.reset(token)
+
+    asyncio.run(scenario())

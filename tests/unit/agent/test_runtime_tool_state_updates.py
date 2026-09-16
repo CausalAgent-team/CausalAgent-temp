@@ -280,6 +280,10 @@ def test_canceled_tool_lifecycle_uses_same_summary_for_sink_and_stream() -> None
 
 def test_web_tool_honors_trusted_runtime_switch() -> None:
     calls = []
+    events = []
+
+    async def sink(payload):
+        events.append(dict(payload))
 
     def search(query, *, max_results):
         calls.append(query)
@@ -289,6 +293,7 @@ def test_web_tool_honors_trusted_runtime_switch() -> None:
         execution_guard=None,
         trusted_identity=IDENTITY,
         web_search_enabled=False,
+        event_sink=sink,
     )
     tool = WebEvidenceTool(search).to_langchain_tool()
     command = asyncio.run(
@@ -304,10 +309,22 @@ def test_web_tool_honors_trusted_runtime_switch() -> None:
     ledger = next(iter(command.update["action_ledger"].values()))
     assert ledger.final_status == "not_ready"
     assert ledger.attempts[0].safe_error_code == "WEB_SEARCH_DISABLED"
+    assert events[1]["status"] == "not_ready"
+    assert events[1]["summary"] == "未启用"
 
 
 def test_evidence_unavailable_is_recorded_without_leaking_exception() -> None:
-    context = _context()
+    events = []
+
+    async def sink(payload):
+        events.append(dict(payload))
+
+    context = AgentRunContext(
+        execution_guard=None,
+        trusted_identity=IDENTITY,
+        algorithm_executor=FakeAlgorithmExecutor(),
+        event_sink=sink,
+    )
 
     class BrokenRetriever:
         def get_evidence(self, query, *, max_contexts=None):
@@ -326,6 +343,8 @@ def test_evidence_unavailable_is_recorded_without_leaking_exception() -> None:
     assert "private failure" not in str(payload)
     assert ledger.final_status == "failed"
     assert ledger.attempts[0].safe_error_code == "RAG_RETRIEVAL_UNAVAILABLE"
+    assert events[1]["status"] == "failed"
+    assert events[1]["summary"] == "暂不可用"
 
 
 def test_runtime_identity_has_no_static_fallback() -> None:

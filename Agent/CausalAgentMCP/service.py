@@ -29,6 +29,7 @@ from .config import McpServerConfig
 from .executor_pool import BoundedProcessPool, PoolExecutionError
 from .models import ExecuteAlgorithmRequest, error_payload
 from .runner_registry import RunnerRegistry, RunnerRegistryError
+from observability.logging_runtime import log_context, log_event
 
 
 LOGGER = logging.getLogger(__name__)
@@ -200,6 +201,18 @@ def _failure_status(code: SafeErrorCode) -> str:
     return "execution_failed"
 
 
+def _rejection_reason(code: SafeErrorCode) -> str:
+    if code == SafeErrorCode.MCP_AUTH_FAILED:
+        return "auth_failed"
+    if code == SafeErrorCode.MCP_LEASE_STALE:
+        return "fenced"
+    if code == SafeErrorCode.MCP_TRANSPORT_FAILED:
+        return "transport_error"
+    if code == SafeErrorCode.MCP_CAPACITY_EXHAUSTED:
+        return "pool_exhausted"
+    return "invalid_schema"
+
+
 def _error_result(
     command: AlgorithmExecutionCommand,
     context: McpInvocationContext,
@@ -300,6 +313,11 @@ class CausalMcpService:
         try:
             request = ExecuteAlgorithmRequest.model_validate(payload)
         except Exception:
+            log_event(
+                LOGGER,
+                "mcp.request.rejected",
+                details={"capability": "unknown", "reason_code": "invalid_schema"},
+            )
             return error_payload(SafeErrorCode.MCP_CONTEXT_INVALID.value)
 
         command = request.command
@@ -310,8 +328,24 @@ class CausalMcpService:
             "retry_ordinal": request.retry_ordinal,
         }
         if command.invocation_id != context.invocation_id:
+            log_event(
+                LOGGER,
+                "mcp.request.rejected",
+                details={
+                    "capability": "unknown",
+                    "reason_code": "invalid_runtime_context",
+                },
+            )
             return error_payload(SafeErrorCode.MCP_CONTEXT_INVALID.value, trace=trace)
         if command.input_identity != context.input_snapshot_digest:
+            log_event(
+                LOGGER,
+                "mcp.request.rejected",
+                details={
+                    "capability": "unknown",
+                    "reason_code": "invalid_runtime_context",
+                },
+            )
             return error_payload(SafeErrorCode.MCP_CONTEXT_INVALID.value, trace=trace)
         try:
             verify_invocation(
@@ -321,14 +355,61 @@ class CausalMcpService:
                 keys=self.signing_keys,
                 clock_skew_seconds=self.config.clock_skew_seconds,
             )
+        except McpAuthError as exc:
+            log_event(
+                LOGGER,
+                "mcp.request.rejected",
+                details={"capability": "unknown", "reason_code": "auth_failed"},
+            )
+            return error_payload(exc.safe_error_code.value, trace=trace)
+        try:
             entry = self.registry.resolve(
                 command.capability_id,
                 command.capability_version,
                 command.spec_digest,
             )
-        except (McpAuthError, RunnerRegistryError) as exc:
+        except RunnerRegistryError as exc:
+            log_event(
+                LOGGER,
+                "mcp.request.rejected",
+                details={"capability": "unknown", "reason_code": "invalid_schema"},
+            )
             return error_payload(exc.safe_error_code.value, trace=trace)
 
+        with log_context(
+            user_id=context.user_id,
+            session_id=context.session_id,
+            job_id=context.job_id,
+            invocation_id=context.invocation_id,
+            worker_slot=context.worker_id.rsplit(":", 1)[-1],
+            node="mcp_tool_node",
+            tool=entry.capability_id,
+        ):
+            log_event(
+                LOGGER,
+                "mcp.request.received",
+                details={
+                    "capability": entry.capability_id,
+                    "retry_ordinal": request.retry_ordinal,
+                },
+            )
+            return await self._execute_verified(
+                request=request,
+                entry=entry,
+                trace=trace,
+                started_at=started_at,
+            )
+
+    async def _execute_verified(
+        self,
+        *,
+        request: ExecuteAlgorithmRequest,
+        entry: Any,
+        trace: dict[str, str | int | None],
+        started_at: float,
+    ) -> dict[str, Any]:
+        command = request.command
+        context = request.trusted_context
         try:
             csv_data = await self._read_authority(context)
             _validate_csv_limits(csv_data, self.config)
@@ -342,6 +423,14 @@ class CausalMcpService:
                 mode="json"
             )
         except McpServiceError as exc:
+            log_event(
+                LOGGER,
+                "mcp.request.rejected",
+                details={
+                    "capability": entry.capability_id,
+                    "reason_code": _rejection_reason(exc.safe_error_code),
+                },
+            )
             result = _error_result(
                 command,
                 context,
@@ -350,6 +439,14 @@ class CausalMcpService:
             )
             return {"ok": True, "result": result.model_dump(mode="json"), "trace": trace}
         except Exception:
+            log_event(
+                LOGGER,
+                "mcp.request.rejected",
+                details={
+                    "capability": entry.capability_id,
+                    "reason_code": "invalid_schema",
+                },
+            )
             result = _error_result(
                 command,
                 context,
@@ -368,28 +465,79 @@ class CausalMcpService:
             # A Job may lose its lease while waiting for process capacity.
             # Re-read the authoritative tuple immediately before submission.
             await self._read_authority(context)
-            from observability.logging_runtime import log_event
-
             log_event(
                 LOGGER,
                 "mcp.request.accepted",
                 details={
                     "capability": entry.capability_id,
+                    "retry_ordinal": request.retry_ordinal,
                     "queue_wait_ms": int(queue_wait_seconds * 1000),
+                    "timeout_seconds": timeout_seconds,
                 },
             )
 
         try:
-            outcome = await self.executor_pool.execute(
-                capability_id=entry.capability_id,
-                runner=entry.runner,
-                csv_data=csv_data,
-                parameters=parameters,
-                timeout_seconds=timeout_seconds,
-                concurrency=entry.concurrency,
-                before_start=before_process_start,
+            execution_task = asyncio.create_task(
+                self.executor_pool.execute(
+                    capability_id=entry.capability_id,
+                    runner=entry.runner,
+                    csv_data=csv_data,
+                    parameters=parameters,
+                    timeout_seconds=timeout_seconds,
+                    concurrency=entry.concurrency,
+                    before_start=before_process_start,
+                    invocation_id=command.invocation_id,
+                    execution_identity=(
+                        context.job_id,
+                        context.attempt_count,
+                        context.lease_epoch,
+                        context.worker_id,
+                    ),
+                )
             )
+            try:
+                outcome = await asyncio.wait_for(
+                    asyncio.shield(execution_task),
+                    timeout=self.config.slow_log_seconds,
+                )
+            except asyncio.TimeoutError:
+                log_event(
+                    LOGGER,
+                    "mcp.tool.slow",
+                    details={
+                        "capability": entry.capability_id,
+                        "duration_ms": int(
+                            (time.perf_counter() - started_at) * 1000
+                        ),
+                        "timeout_seconds": int(self.config.slow_log_seconds),
+                    },
+                )
+                outcome = await execution_task
+            except asyncio.CancelledError:
+                execution_task.cancel()
+                await asyncio.gather(execution_task, return_exceptions=True)
+                log_event(
+                    LOGGER,
+                    "mcp.tool.canceled",
+                    details={
+                        "capability": entry.capability_id,
+                        "retry_ordinal": request.retry_ordinal,
+                        "duration_ms": int(
+                            (time.perf_counter() - started_at) * 1000
+                        ),
+                        "reason_code": "canceled",
+                    },
+                )
+                raise
         except McpServiceError as exc:
+            log_event(
+                LOGGER,
+                "mcp.request.rejected",
+                details={
+                    "capability": entry.capability_id,
+                    "reason_code": _rejection_reason(exc.safe_error_code),
+                },
+            )
             result = _error_result(
                 command,
                 context,
@@ -398,31 +546,46 @@ class CausalMcpService:
             )
             return {"ok": True, "result": result.model_dump(mode="json"), "trace": trace}
         except PoolExecutionError as exc:
-            from observability.logging_runtime import log_event
-
-            log_event(
-                LOGGER,
-                "mcp.capacity.rejected"
-                if exc.safe_error_code == SafeErrorCode.MCP_CAPACITY_EXHAUSTED
-                else "mcp.tool.failed",
-                details={
-                    "reason_code": (
-                        "pool_exhausted"
-                        if exc.safe_error_code == SafeErrorCode.MCP_CAPACITY_EXHAUSTED
-                        else "timeout"
-                        if exc.safe_error_code == SafeErrorCode.ALGORITHM_TIMED_OUT
-                        else "tool_error"
-                    ),
-                    **(
-                        {"retry_after_seconds": exc.retry_after_seconds or 0}
-                        if exc.safe_error_code == SafeErrorCode.MCP_CAPACITY_EXHAUSTED
-                        else {
-                            "duration_ms": int((time.perf_counter() - started_at) * 1000),
-                            "input_bytes": len(csv_data.encode("utf-8")),
-                        }
-                    ),
-                },
-            )
+            if exc.safe_error_code == SafeErrorCode.MCP_CAPACITY_EXHAUSTED:
+                log_event(
+                    LOGGER,
+                    "mcp.capacity.rejected",
+                    details={
+                        "reason_code": "pool_exhausted",
+                        "retry_after_seconds": exc.retry_after_seconds or 0,
+                    },
+                )
+            elif exc.safe_error_code == SafeErrorCode.ALGORITHM_CANCELED:
+                log_event(
+                    LOGGER,
+                    "mcp.tool.canceled",
+                    details={
+                        "capability": entry.capability_id,
+                        "retry_ordinal": request.retry_ordinal,
+                        "duration_ms": int(
+                            (time.perf_counter() - started_at) * 1000
+                        ),
+                        "reason_code": "canceled",
+                    },
+                )
+            else:
+                log_event(
+                    LOGGER,
+                    "mcp.tool.failed",
+                    details={
+                        "capability": entry.capability_id,
+                        "retry_ordinal": request.retry_ordinal,
+                        "reason_code": (
+                            "timeout"
+                            if exc.safe_error_code == SafeErrorCode.ALGORITHM_TIMED_OUT
+                            else "tool_error"
+                        ),
+                        "duration_ms": int(
+                            (time.perf_counter() - started_at) * 1000
+                        ),
+                        "input_bytes": len(csv_data.encode("utf-8")),
+                    },
+                )
             trace["executor_slot_id"] = None
             if exc.safe_error_code in {
                 SafeErrorCode.ALGORITHM_TIMED_OUT,
@@ -451,6 +614,19 @@ class CausalMcpService:
             # became stale while the CPU-bound algorithm was running.
             await self._read_authority(context)
         except McpServiceError as exc:
+            log_event(
+                LOGGER,
+                "mcp.tool.failed",
+                details={
+                    "capability": entry.capability_id,
+                    "retry_ordinal": request.retry_ordinal,
+                    "duration_ms": int(
+                        (time.perf_counter() - started_at) * 1000
+                    ),
+                    "input_bytes": len(csv_data.encode("utf-8")),
+                    "reason_code": _rejection_reason(exc.safe_error_code),
+                },
+            )
             result = _error_result(
                 command,
                 context,
@@ -527,7 +703,6 @@ class CausalMcpService:
                     code=SafeErrorCode.ALGORITHM_RESULT_CONTRACT_INVALID,
                     capability_version=entry.version,
                 )
-        from observability.logging_runtime import log_event
 
         duration_ms = int((time.perf_counter() - started_at) * 1000)
         input_bytes = len(csv_data.encode("utf-8"))
@@ -536,6 +711,8 @@ class CausalMcpService:
                 LOGGER,
                 "mcp.tool.finished",
                 details={
+                    "capability": entry.capability_id,
+                    "retry_ordinal": request.retry_ordinal,
                     "duration_ms": duration_ms,
                     "input_bytes": input_bytes,
                     "result_kind": "structured_result",
@@ -556,12 +733,115 @@ class CausalMcpService:
                 LOGGER,
                 "mcp.tool.failed",
                 details={
+                    "capability": entry.capability_id,
+                    "retry_ordinal": request.retry_ordinal,
                     "duration_ms": duration_ms,
                     "input_bytes": input_bytes,
                     "reason_code": reason_code,
                 },
             )
         return {"ok": True, "result": result.model_dump(mode="json"), "trace": trace}
+
+    async def cancel_payload(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """鉴权并幂等取消一个精确的 MCP invocation。"""
+
+        try:
+            request = ExecuteAlgorithmRequest.model_validate(payload)
+        except Exception:
+            log_event(
+                LOGGER,
+                "mcp.request.rejected",
+                details={"capability": "unknown", "reason_code": "invalid_schema"},
+            )
+            return error_payload(SafeErrorCode.MCP_CONTEXT_INVALID.value)
+        command = request.command
+        context = request.trusted_context
+        trace = {
+            "service_instance_id": self.service_instance_id,
+            "invocation_id": context.invocation_id,
+            "retry_ordinal": request.retry_ordinal,
+        }
+        if (
+            command.invocation_id != context.invocation_id
+            or command.input_identity != context.input_snapshot_digest
+        ):
+            log_event(
+                LOGGER,
+                "mcp.request.rejected",
+                details={
+                    "capability": "unknown",
+                    "reason_code": "invalid_runtime_context",
+                },
+            )
+            return error_payload(SafeErrorCode.MCP_CONTEXT_INVALID.value, trace=trace)
+        try:
+            verify_invocation(
+                context,
+                command,
+                request.signature,
+                keys=self.signing_keys,
+                clock_skew_seconds=self.config.clock_skew_seconds,
+            )
+            entry = self.registry.resolve(
+                command.capability_id,
+                command.capability_version,
+                command.spec_digest,
+            )
+        except (McpAuthError, RunnerRegistryError) as exc:
+            log_event(
+                LOGGER,
+                "mcp.request.rejected",
+                details={
+                    "capability": "unknown",
+                    "reason_code": _rejection_reason(exc.safe_error_code),
+                },
+            )
+            return error_payload(exc.safe_error_code.value, trace=trace)
+
+        with log_context(
+            user_id=context.user_id,
+            session_id=context.session_id,
+            job_id=context.job_id,
+            invocation_id=context.invocation_id,
+            worker_slot=context.worker_id.rsplit(":", 1)[-1],
+            node="mcp_tool_node",
+            tool=entry.capability_id,
+        ):
+            cancellation = await self.executor_pool.cancel(
+                command.invocation_id,
+                execution_identity=(
+                    context.job_id,
+                    context.attempt_count,
+                    context.lease_epoch,
+                    context.worker_id,
+                ),
+            )
+            if cancellation.status == "identity_mismatch":
+                log_event(
+                    LOGGER,
+                    "mcp.request.rejected",
+                    details={
+                        "capability": entry.capability_id,
+                        "reason_code": "invalid_runtime_context",
+                    },
+                )
+                return error_payload(SafeErrorCode.MCP_CONTEXT_INVALID.value, trace=trace)
+            log_event(
+                LOGGER,
+                "mcp.cancel.finished",
+                details={
+                    "capability": entry.capability_id,
+                    "cancellation_status": cancellation.status,
+                },
+            )
+        return {
+            "ok": True,
+            "cancellation": {
+                "status": cancellation.status,
+                "invocation_id": cancellation.invocation_id,
+            },
+            "trace": trace,
+        }
 
     @staticmethod
     def _default_database_probe() -> bool:

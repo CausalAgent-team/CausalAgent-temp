@@ -14,7 +14,7 @@
         "revision",
         "status"
       ],
-      "sha256": "a819438b261b19e266e7247ebe0bd13fffd583e9899cc705fea505149873fe53",
+      "sha256": "ca1b54d755d4272899e3f971ab5aec93cc9a183ce0f8209ac0cd1af834593e75",
       "title": "ActionAttempt"
     },
     "AlgorithmExecutionCommand": {
@@ -69,7 +69,7 @@
         "status",
         "provenance"
       ],
-      "sha256": "f3da2d5ea12d252889bffbde7e0d1e3d52093ae326912884ece4e9c5be6c66d3",
+      "sha256": "ad83178522ddc5e54aaa50bf9433e75144898d99be5eba3c824fcaf26d7f63d1",
       "title": "AlgorithmResult"
     },
     "AlgorithmResultProvenance": {
@@ -120,7 +120,7 @@
         "variable_count"
       ],
       "required": [],
-      "sha256": "3019609254f33c8358b09640c552aa61f06329ee6f96c4b3a68ebb2cf0ecb7c5",
+      "sha256": "255efc66b0d713f12b59bd37f08be7f1c59553ab576b4b959a08d7839faf11bc",
       "title": "Diagnostics"
     },
     "EvidenceResult": {
@@ -208,7 +208,7 @@
         "tool_name",
         "final_status"
       ],
-      "sha256": "70978d15fdf05deaa9285316cc323d737c5e72be142137ace5e9665280f263f8",
+      "sha256": "6e875d0ac71965656d7c6c3ad62567c7683038e66c9324fb9e35002c148226fc",
       "title": "InvocationRecord"
     },
     "McpInvocationContext": {
@@ -295,7 +295,7 @@
         "code",
         "message"
       ],
-      "sha256": "b0a0feade026291864425b1bcef24f699f64320192895f18c6888a9d2c1fcb18",
+      "sha256": "f7eb121fdd4fa2bd6a26bf5c70ae39c0792e9259864a7c70cebc1e186279cf35",
       "title": "SafeWarning"
     },
     "ScientificConflict": {

@@ -41,6 +41,7 @@ class McpServerConfig:
     queue_capacity: int = 4
     enqueue_timeout_seconds: float = 5.0
     algorithm_deadline_seconds: int = 600
+    slow_log_seconds: float = 60.0
     input_max_bytes: int = 20 * 1024 * 1024
     input_max_rows: int = 100_000
     input_max_columns: int = 1_000
@@ -76,6 +77,7 @@ class McpServerConfig:
             algorithm_deadline_seconds=_int_env(
                 "CAUSAL_MCP_ALGORITHM_DEADLINE_SECONDS", 600
             ),
+            slow_log_seconds=_float_env("CAUSAL_MCP_SLOW_LOG_SECONDS", 60.0),
             input_max_bytes=_int_env("CAUSAL_MCP_INPUT_MAX_BYTES", 20 * 1024 * 1024),
             input_max_rows=_int_env("CAUSAL_MCP_INPUT_MAX_ROWS", 100_000),
             input_max_columns=_int_env("CAUSAL_MCP_INPUT_MAX_COLUMNS", 1_000),
@@ -99,6 +101,7 @@ class McpServerConfig:
             "queue_capacity": self.queue_capacity,
             "enqueue_timeout_seconds": self.enqueue_timeout_seconds,
             "algorithm_deadline_seconds": self.algorithm_deadline_seconds,
+            "slow_log_seconds": self.slow_log_seconds,
             "input_max_bytes": self.input_max_bytes,
             "input_max_rows": self.input_max_rows,
             "input_max_columns": self.input_max_columns,

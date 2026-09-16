@@ -96,6 +96,24 @@ def create_app(
             }
         )
 
+    @mcp.tool(name="cancel_algorithm", structured_output=True)
+    async def cancel_algorithm(
+        command: dict[str, Any],
+        trusted_context: dict[str, Any],
+        signature: str,
+        retry_ordinal: int = 0,
+    ) -> dict[str, Any]:
+        """Internal control tool; cancel only the signed invocation identity."""
+
+        return await service.cancel_payload(
+            {
+                "command": command,
+                "trusted_context": trusted_context,
+                "signature": signature,
+                "retry_ordinal": retry_ordinal,
+            }
+        )
+
     mcp_app = mcp.streamable_http_app(
         streamable_http_path="/mcp",
         json_response=True,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from Agent.deep_agent_tools.algorithm_executor import (
@@ -26,6 +27,10 @@ from app.agent.worker.mcp_client_pool import (
 from app.agent.worker.execution_guard import current_execution_guard
 
 from Agent.CausalAgentMCP.auth import sign_invocation
+from observability.logging_runtime import log_context, log_event
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class McpAlgorithmExecutor:
@@ -59,6 +64,87 @@ class McpAlgorithmExecutor:
         trusted_context: McpInvocationContext,
     ) -> AlgorithmResult:
         validate_executor_command(command, trusted_context=trusted_context)
+        with log_context(
+            invocation_id=command.invocation_id,
+            tool=command.capability_id,
+        ):
+            return await self._execute_bound(command, trusted_context)
+
+    async def _cancel_remote(
+        self,
+        *,
+        arguments: dict[str, Any],
+        command: AlgorithmExecutionCommand,
+        retry_ordinal: int,
+    ) -> str:
+        log_event(
+            LOGGER,
+            "mcp.client.cancel.requested",
+            details={
+                "capability": command.capability_id,
+                "retry_ordinal": retry_ordinal,
+            },
+        )
+        cancel_task = asyncio.create_task(
+            self.pool.cancel_tool(
+                {**arguments, "retry_ordinal": retry_ordinal},
+                invocation_id=command.invocation_id,
+                retry_ordinal=retry_ordinal,
+            )
+        )
+        try:
+            response = await asyncio.wait_for(asyncio.shield(cancel_task), timeout=5.0)
+            payload = getattr(response, "structured_content", None)
+            if payload is None:
+                payload = getattr(response, "structuredContent", None)
+            cancellation = payload.get("cancellation") if isinstance(payload, dict) else None
+            status = (
+                cancellation.get("status")
+                if isinstance(cancellation, dict)
+                else None
+            )
+            if not isinstance(status, str) or not status:
+                raise ValueError("MCP cancellation response is invalid")
+            log_event(
+                LOGGER,
+                "mcp.client.cancel.finished",
+                details={
+                    "capability": command.capability_id,
+                    "cancellation_status": status,
+                },
+            )
+            return status
+        except asyncio.TimeoutError:
+            cancel_task.cancel()
+            await asyncio.gather(cancel_task, return_exceptions=True)
+            log_event(
+                LOGGER,
+                "mcp.client.cancel.failed",
+                details={
+                    "capability": command.capability_id,
+                    "reason_code": "timeout",
+                },
+            )
+            return "unknown"
+        except BaseException:
+            if not cancel_task.done():
+                cancel_task.cancel()
+                await asyncio.gather(cancel_task, return_exceptions=True)
+            log_event(
+                LOGGER,
+                "mcp.client.cancel.failed",
+                details={
+                    "capability": command.capability_id,
+                    "reason_code": "transport_error",
+                },
+            )
+            return "unknown"
+
+    async def _execute_bound(
+        self,
+        command: AlgorithmExecutionCommand,
+        trusted_context: McpInvocationContext,
+    ) -> AlgorithmResult:
         signature = sign_invocation(trusted_context, command, self.signing_key)
         arguments = {
             "command": command.model_dump(mode="json"),
@@ -70,12 +156,43 @@ class McpAlgorithmExecutor:
             guard = current_execution_guard()
             if guard is not None:
                 await guard.ensure_active()
+            call_task: asyncio.Task[Any] | None = None
+            revoked_task: asyncio.Task[Any] | None = None
             try:
-                response = await self.pool.call_tool(
-                    {**arguments, "retry_ordinal": retry_ordinal},
-                    invocation_id=command.invocation_id,
-                    retry_ordinal=retry_ordinal,
+                log_event(
+                    LOGGER,
+                    "mcp.client.call.started",
+                    details={
+                        "capability": command.capability_id,
+                        "retry_ordinal": retry_ordinal,
+                    },
                 )
+                call_task = asyncio.create_task(
+                    self.pool.call_tool(
+                        {**arguments, "retry_ordinal": retry_ordinal},
+                        invocation_id=command.invocation_id,
+                        retry_ordinal=retry_ordinal,
+                    )
+                )
+                if guard is not None:
+                    revoked_task = asyncio.create_task(guard.wait_revoked())
+                    done, _pending = await asyncio.wait(
+                        {call_task, revoked_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if revoked_task in done and guard.revoked:
+                        call_task.cancel()
+                        await asyncio.gather(call_task, return_exceptions=True)
+                        remote_status = await self._cancel_remote(
+                            arguments=arguments,
+                            command=command,
+                            retry_ordinal=retry_ordinal,
+                        )
+                        error = JobExecutionRevoked("Job execution revoked during MCP call")
+                        error.invocation_id = command.invocation_id
+                        error.remote_execution_status = remote_status
+                        raise error
+                response = await call_task
                 # 远端响应可能在本地 Job 被取消后才抵达；此时只能丢弃响应，
                 # 不能把它标准化为 AlgorithmResult 或进入后续 Gate。
                 guard = current_execution_guard()
@@ -98,6 +215,11 @@ class McpAlgorithmExecutor:
                         safe_code = SafeErrorCode.MCP_TRANSPORT_FAILED
                     if safe_code == SafeErrorCode.MCP_LEASE_STALE:
                         raise self._remote_lease_revoked(command.invocation_id)
+                    if safe_code == SafeErrorCode.ALGORITHM_CANCELED:
+                        error = JobExecutionRevoked("MCP invocation was canceled")
+                        error.invocation_id = command.invocation_id
+                        error.remote_execution_status = "canceled"
+                        raise error
                     raise AlgorithmExecutorError(
                         "MCP call returned a safe error",
                         safe_error_code=safe_code,
@@ -115,11 +237,16 @@ class McpAlgorithmExecutor:
                     trusted_context=trusted_context,
                 )
             except asyncio.CancelledError as exc:
-                # call_tool 可能已经把请求交给远端；CancelledError 只向上传播，
-                # 并附带稳定 identity，供 cleanup/retry 审计按 pending/unknown
-                # 处理，而不是生成新的失败调用。
+                if call_task is not None and not call_task.done():
+                    call_task.cancel()
+                    await asyncio.gather(call_task, return_exceptions=True)
+                remote_status = await self._cancel_remote(
+                    arguments=arguments,
+                    command=command,
+                    retry_ordinal=retry_ordinal,
+                )
                 exc.invocation_id = command.invocation_id
-                exc.remote_execution_status = "unknown"
+                exc.remote_execution_status = remote_status
                 raise
             except McpTransportError as exc:
                 last_error = exc
@@ -134,6 +261,10 @@ class McpAlgorithmExecutor:
                     SafeErrorCode.MCP_TRANSPORT_FAILED,
                 }:
                     break
+            finally:
+                if revoked_task is not None:
+                    revoked_task.cancel()
+                    await asyncio.gather(revoked_task, return_exceptions=True)
             if retry_ordinal < self.max_retries:
                 guard = current_execution_guard()
                 if guard is not None:

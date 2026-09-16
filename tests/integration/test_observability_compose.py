@@ -183,9 +183,50 @@ def test_grafana_dashboard_only_surfaces_warning_and_above():
         "user_id",
         "session_id",
         "job_id",
+        "invocation_id",
         "worker_slot",
         "node",
         "tool",
         "instance",
     }
     assert forbidden_variables.isdisjoint(variables)
+
+
+def test_mcp_job_timeline_uses_json_fields_without_high_cardinality_labels():
+    dashboard_path = (
+        PROJECT_ROOT
+        / "observability/grafana/dashboards/causalagent-mcp-jobs.json"
+    )
+    dashboard = json.loads(dashboard_path.read_text(encoding="utf-8"))
+
+    assert dashboard["uid"] == "causalagent-mcp-jobs"
+    assert dashboard["title"] == "CausalAgent MCP Job 时间线"
+    assert dashboard["refresh"] == "10s"
+    assert dashboard["time"] == {"from": "now-1h", "to": "now"}
+    assert {panel["title"] for panel in dashboard["panels"]} == {
+        "慢调用数量",
+        "失败与取消",
+        "MCP 生命周期趋势",
+        "MCP Job 时间线",
+    }
+
+    variables = {item["name"]: item for item in dashboard["templating"]["list"]}
+    assert set(variables) == {"environment", "job_id", "tool"}
+    assert variables["environment"]["type"] == "query"
+    assert variables["job_id"]["type"] == "textbox"
+    assert variables["tool"]["type"] == "textbox"
+
+    targets = [target for panel in dashboard["panels"] for target in panel["targets"]]
+    expressions = [target["expr"] for target in targets]
+    assert all('{service_name=~"worker|mcp"' in expression for expression in expressions)
+    assert all("| json" in expression for expression in expressions)
+    assert all('job_id=~"${job_id:regex}"' in expression for expression in expressions)
+    assert all('tool=~"${tool:regex}"' in expression for expression in expressions)
+    assert not any("job_id=" in expression.split("}", 1)[0] for expression in expressions)
+    assert not any("tool=" in expression.split("}", 1)[0] for expression in expressions)
+
+    timeline = next(
+        panel for panel in dashboard["panels"] if panel["title"] == "MCP Job 时间线"
+    )
+    assert timeline["options"]["sortOrder"] == "Ascending"
+    assert timeline["targets"][0]["maxLines"] == 500

@@ -200,14 +200,7 @@ class LangGraphEventAdapter:
             if event_type == "tool_call_start":
                 event["argument_keys"] = []
             else:
-                event["summary"] = (
-                    "调用完成"
-                    if data.get("status") == "succeeded"
-                    else "调用已取消"
-                    if str(data.get("status") or "").lower()
-                    in {"canceled", "cancelled"}
-                    else "调用失败"
-                )
+                event["summary"] = self._tool_result_summary(data)
                 event["status"] = self._safe_result_status(data)
                 safe_error_code = self._safe_error_code(data)
                 if safe_error_code:
@@ -300,6 +293,35 @@ class LangGraphEventAdapter:
         candidate = str(getattr(candidate, "value", candidate) or "").strip()
         return candidate if _SAFE_ERROR_CODE.fullmatch(candidate) else None
 
+    @classmethod
+    def _tool_result_summary(cls, result: Any) -> str:
+        """根据受控状态和错误码生成可区分、无敏感信息的用户文案。"""
+
+        status = cls._safe_result_status(result)
+        safe_error_code = cls._safe_error_code(result)
+        raw_status = (
+            result.get("status")
+            if isinstance(result, dict)
+            else getattr(result, "status", None)
+        )
+        raw_status = str(getattr(raw_status, "value", raw_status) or "").lower()
+        if status == "succeeded":
+            return "调用完成"
+        if status == "canceled":
+            return "调用已取消"
+        if status == "timed_out":
+            return "调用超时"
+        if safe_error_code == "WEB_SEARCH_DISABLED":
+            return "未启用"
+        if (
+            raw_status == "unavailable"
+            or status == "not_ready"
+            or safe_error_code
+            in {"RAG_RETRIEVAL_UNAVAILABLE", "WEB_SEARCH_UNAVAILABLE"}
+        ):
+            return "暂不可用"
+        return "调用失败"
+
     @staticmethod
     def _safe_algorithm_tool_name(result: Any) -> str:
         capability = (
@@ -334,11 +356,7 @@ class LangGraphEventAdapter:
             event.update(
                 {
                     "tool_name": tool_name,
-                    "summary": (
-                        "调用完成"
-                        if self._safe_result_status(result) == "succeeded"
-                        else "调用失败"
-                    ),
+                    "summary": self._tool_result_summary(result),
                     "status": self._safe_result_status(result),
                 }
             )
@@ -405,11 +423,7 @@ class LangGraphEventAdapter:
                         "tool_name": self._safe_public_tool_name(
                             metadata.get("name") or tool_name
                         ),
-                        "summary": (
-                            "调用完成"
-                            if result.get("success") is not False
-                            else "调用失败"
-                        ),
+                        "summary": self._tool_result_summary(result),
                         "status": self._safe_result_status(result),
                     }
                 )

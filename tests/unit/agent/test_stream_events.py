@@ -292,6 +292,36 @@ class StreamEventAdapterTests(unittest.TestCase):
         })
 
         self.assertEqual(events[0]["status"], "canceled")
+        self.assertEqual(events[0]["summary"], "调用已取消")
+
+    def test_disabled_and_unavailable_tools_use_distinct_public_summaries(self):
+        self.adapter.convert(task_start("task-deep", "deep_agent"))
+
+        disabled = self.adapter.convert({
+            "type": "custom",
+            "ns": (),
+            "data": {
+                "type": "tool_call_result",
+                "tool_name": "web_evidence_search",
+                "status": "not_ready",
+                "safe_error_code": "WEB_SEARCH_DISABLED",
+            },
+        })[0]
+        unavailable = self.adapter.convert({
+            "type": "custom",
+            "ns": (),
+            "data": {
+                "type": "tool_call_result",
+                "tool_name": "rag_evidence_search",
+                "status": "failed",
+                "safe_error_code": "RAG_RETRIEVAL_UNAVAILABLE",
+            },
+        })[0]
+
+        self.assertEqual(disabled["summary"], "未启用")
+        self.assertEqual(disabled["status"], "not_ready")
+        self.assertEqual(unavailable["summary"], "暂不可用")
+        self.assertEqual(unavailable["status"], "failed")
 
 
 class RealLangGraphStreamTests(unittest.IsolatedAsyncioTestCase):
