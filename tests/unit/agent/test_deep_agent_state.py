@@ -48,7 +48,7 @@ def test_parent_projection_does_not_copy_job_or_runtime_fields() -> None:
         "deep_agent_web_evidence",
         "deep_agent_decision",
         "deep_agent_structured_response",
-        "deep_agent_messages",
+        "deep_agent_status",
     }
 
 

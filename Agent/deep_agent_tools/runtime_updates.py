@@ -5,12 +5,78 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
+import inspect
 from typing import Any, Literal
 
 from pydantic import Field
 
-from .identity import build_invocation_id
+from .identity import build_deep_agent_step_id, build_invocation_id
 from .models import ActionAttempt, InvocationRecord, canonical_json_bytes
+
+
+async def emit_tool_lifecycle_event(
+    runtime: Any,
+    *,
+    event_type: str,
+    identity: RuntimeInvocationIdentity,
+    tool_name: str,
+    status: str | None = None,
+    safe_error_code: str | None = None,
+) -> None:
+    """从真实 Tool 边界发出并先持久化安全公共事件。"""
+
+    trusted_identity = identity.runtime_context.trusted_identity
+    invocation_id = build_invocation_id(
+        job_id=trusted_identity.job_id,
+        response_identity=identity.response_identity,
+        provider_call_id=identity.provider_call_id,
+    )
+    event_key = hashlib.sha256(
+        f"{invocation_id}:{event_type}".encode("utf-8")
+    ).hexdigest()
+    step_id = getattr(identity.runtime_context, "deep_agent_step_id", None)
+    if not isinstance(step_id, str) or len(step_id) != 24:
+        step_id = build_deep_agent_step_id(
+            job_id=trusted_identity.job_id,
+            attempt_count=int(trusted_identity.attempt_count),
+            task_id="deep_agent",
+        )
+    normalized_status = status
+    payload: dict[str, Any] = {
+        "type": event_type,
+        "step_id": step_id,
+        "node_name": "deep_agent",
+        "title": "执行 Deep Agent 分析",
+        "attempt": int(trusted_identity.attempt_count),
+        "tool_name": tool_name,
+        "_event_key": f"deep-agent-tool:{event_key}",
+    }
+    if event_type == "tool_call_start":
+        payload["argument_keys"] = []
+    elif normalized_status is not None:
+        payload["summary"] = (
+            "调用完成" if normalized_status == "succeeded" else "调用失败"
+            if normalized_status not in {"canceled", "cancelled"}
+            else "调用已取消"
+        )
+        payload["status"] = normalized_status
+    if safe_error_code:
+        payload["safe_error_code"] = safe_error_code
+
+    # worker 传入的 sink 负责在真实外部调用前完成 fenced 落库；没有 worker
+    # sink 的 isolated graph/tool 测试仍可只走 LangGraph custom stream。
+    sink = getattr(identity.runtime_context, "event_sink", None)
+    if callable(sink):
+        result = sink(payload)
+        if inspect.isawaitable(result):
+            await result
+
+    # 保留 custom stream 供实时适配器使用。它使用相同的 payload/key，后续
+    # OrderedEventWriter 会按 event_key 幂等，不会产生第二条公共事件。
+    writer = getattr(runtime, "stream_writer", None)
+    if callable(writer):
+        writer(payload)
 
 
 @dataclass(frozen=True)
@@ -131,6 +197,11 @@ def build_terminal_invocation(
         tool_name=tool_name,
         final_status=final_status,
         result_ref=result_ref,
+        job_id=str(identity.runtime_context.trusted_identity.job_id),
+        attempt_count=int(identity.runtime_context.trusted_identity.attempt_count),
+        lease_epoch=int(identity.runtime_context.trusted_identity.lease_epoch),
+        worker_id=identity.runtime_context.trusted_identity.worker_id,
+        input_identity=identity.runtime_context.trusted_identity.input_identity,
         attempts={
             retry_ordinal: ActionAttempt(
                 retry_ordinal=retry_ordinal,

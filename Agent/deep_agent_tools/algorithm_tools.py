@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import inspect
+import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal
+
+from Agent.execution_control import JobExecutionRevoked
 
 if TYPE_CHECKING:
     from Agent.deep_agent.context import AgentRunContext
@@ -24,9 +27,24 @@ from .registry import AlgorithmRegistry, RegistryEntry
 from .runtime_updates import (
     build_terminal_invocation,
     build_tool_command,
+    emit_tool_lifecycle_event,
     resolve_runtime_invocation,
     with_tool_runtime_schema,
 )
+
+
+def _mark_unfinished_invocation(
+    error: BaseException,
+    *,
+    invocation_id: str,
+    pending_records: tuple[InvocationRecord, ...] = (),
+) -> None:
+    """在控制流异常上保留远端调用 identity，不构造失败结果。"""
+
+    error.invocation_id = invocation_id
+    error.remote_execution_status = "unknown"
+    if pending_records:
+        error.pending_ledger_records = pending_records
 
 
 @dataclass(frozen=True)
@@ -136,6 +154,11 @@ class AlgorithmTool:
                 else "failed"
             ),
             result_ref=result_ref,
+            job_id=str(active_context.trusted_identity.job_id),
+            attempt_count=int(active_context.trusted_identity.attempt_count),
+            lease_epoch=int(active_context.trusted_identity.lease_epoch),
+            worker_id=active_context.trusted_identity.worker_id,
+            input_identity=active_context.trusted_identity.input_identity,
             attempts={
                 retry_ordinal: ActionAttempt(
                     retry_ordinal=retry_ordinal,
@@ -185,17 +208,30 @@ class AlgorithmTool:
                 missing_values_present=bool(state.get("missing_values_present")),
                 dataset_authority_available=True,
             )
-        return await self.adapter.run(
-            parameters=dict(arguments or {}),
-            adapter_input=active_input,
-            trusted_context=active_context.trusted_identity,
-            provider_call_id=provider_call_id,
+        invocation_id = build_invocation_id(
+            job_id=active_context.trusted_identity.job_id,
             response_identity=response_identity,
-            retry_ordinal=retry_ordinal,
-            result_index=result_index,
-            executor=active_context.algorithm_executor,
-            raw_backend=active_context.filesystem_backend,
+            provider_call_id=provider_call_id,
         )
+        try:
+            result = await self.adapter.run(
+                parameters=dict(arguments or {}),
+                adapter_input=active_input,
+                trusted_context=active_context.trusted_identity,
+                provider_call_id=provider_call_id,
+                response_identity=response_identity,
+                retry_ordinal=retry_ordinal,
+                result_index=result_index,
+                executor=active_context.algorithm_executor,
+                raw_backend=active_context.filesystem_backend,
+            )
+            # Adapter/MCP 返回后必须再次确认 Job 资格，防止迟到结果进入
+            # ToolMessage、AlgorithmResult 或 FinalizationGate。
+            await active_context.ensure_active()
+            return result
+        except (JobExecutionRevoked, asyncio.CancelledError) as exc:
+            _mark_unfinished_invocation(exc, invocation_id=invocation_id)
+            raise
 
     async def ainvoke_with_ledger(
         self,
@@ -234,13 +270,21 @@ class AlgorithmTool:
         )
         # Adapter 会把可预期执行错误转换为 AlgorithmResult；这里仍会抛出的
         # 是取消、lease/guard 撤销或程序错误，不能在失去写资格后伪造 Ledger。
-        result = await self.ainvoke(
-            arguments,
-            provider_call_id=provider_call_id,
-            response_identity=response_identity,
-            retry_ordinal=retry_ordinal,
-            result_index=result_index,
-        )
+        try:
+            result = await self.ainvoke(
+                arguments,
+                provider_call_id=provider_call_id,
+                response_identity=response_identity,
+                retry_ordinal=retry_ordinal,
+                result_index=result_index,
+            )
+        except (JobExecutionRevoked, asyncio.CancelledError) as exc:
+            _mark_unfinished_invocation(
+                exc,
+                invocation_id=queued.invocation_id,
+                pending_records=(queued, running),
+            )
+            raise
 
         terminal_status = {
             "valid": "succeeded",
@@ -292,13 +336,40 @@ class AlgorithmTool:
             active_adapter_input = self.adapter_input or self._adapter_input_from_runtime(
                 runtime
             )
-            result = await self.ainvoke(
-                kwargs,
-                provider_call_id=identity.provider_call_id,
-                response_identity=identity.response_identity,
-                runtime_context=identity.runtime_context,
-                adapter_input=active_adapter_input,
+            await emit_tool_lifecycle_event(
+                runtime,
+                event_type="tool_call_start",
+                identity=identity,
+                tool_name=self.name,
             )
+            try:
+                result = await self.ainvoke(
+                    kwargs,
+                    provider_call_id=identity.provider_call_id,
+                    response_identity=identity.response_identity,
+                    runtime_context=identity.runtime_context,
+                    adapter_input=active_adapter_input,
+                )
+                await identity.runtime_context.ensure_active()
+            except (asyncio.CancelledError, JobExecutionRevoked):
+                await emit_tool_lifecycle_event(
+                    runtime,
+                    event_type="tool_call_result",
+                    identity=identity,
+                    tool_name=self.name,
+                    status="canceled",
+                )
+                raise
+            except Exception:
+                await emit_tool_lifecycle_event(
+                    runtime,
+                    event_type="tool_call_result",
+                    identity=identity,
+                    tool_name=self.name,
+                    status="failed",
+                    safe_error_code="ALGORITHM_RESULT_CONTRACT_INVALID",
+                )
+                raise
             attempt_status = {
                 "valid": "succeeded",
                 "timed_out": "timed_out",
@@ -310,6 +381,14 @@ class AlgorithmTool:
             safe_error_code = result.diagnostics.safe_error_code
             if hasattr(safe_error_code, "value"):
                 safe_error_code = safe_error_code.value
+            await emit_tool_lifecycle_event(
+                runtime,
+                event_type="tool_call_result",
+                identity=identity,
+                tool_name=self.name,
+                status=("succeeded" if result.status == "valid" else "failed"),
+                safe_error_code=safe_error_code,
+            )
             terminal = build_terminal_invocation(
                 identity=identity,
                 tool_name=self.name,

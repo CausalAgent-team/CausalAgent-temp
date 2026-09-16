@@ -11,6 +11,7 @@ from Agent.deep_agent_tools.models import (
     AlgorithmResult,
     FinalAnalysisDecision,
     InvocationRecord,
+    validate_result_ref_for_invocation,
 )
 
 
@@ -128,8 +129,6 @@ class FinalizationGate:
     ) -> dict[str, InvocationRecord]:
         current: dict[str, InvocationRecord] = {}
         for record in ledger.values():
-            if not self._is_algorithm_record(record):
-                continue
             try:
                 expected_id = build_invocation_id(
                     job_id=job_id,
@@ -139,8 +138,28 @@ class FinalizationGate:
             except (TypeError, ValueError) as exc:
                 raise StructuredResponseError("action ledger identity is invalid") from exc
             if expected_id != record.invocation_id:
-                # 这不是一个当前 Job 的算法调用；stale 记录仍可保留在
+                if record.job_id == job_id:
+                    # 当前 Job 上的记录却无法由其 response/provider identity
+                    # 重建出 invocation_id，不能把它当作普通 stale 历史吞掉。
+                    raise StructuredResponseError("action ledger identity is invalid")
+                # 这不是一个当前 Job 的调用；stale/foreign 记录仍可保留在
                 # checkpoint，但不得被当前 decision 引用或计入 no_valid。
+                continue
+            if (
+                record.job_id is None
+                or record.attempt_count is None
+                or record.lease_epoch is None
+                or record.worker_id is None
+                or record.input_identity is None
+            ):
+                raise StructuredResponseError(
+                    "action ledger ownership is incomplete"
+                )
+            if record.job_id != job_id:
+                # invocation_id 已经指向当前 Job，却声明了另一个 Job 的所有权，
+                # 这是跨 Job 污染而不是可忽略的 stale 记录。
+                raise StructuredResponseError("action ledger Job ownership mismatch")
+            if not self._is_algorithm_record(record):
                 continue
             if record.final_status == "pending" or not record.attempts:
                 raise StructuredResponseError("algorithm action ledger is not terminal")
@@ -154,6 +173,13 @@ class FinalizationGate:
         *,
         identity: Any,
     ) -> None:
+        try:
+            validate_result_ref_for_invocation(
+                result.result_ref,
+                result.invocation_id,
+            )
+        except ValueError as exc:
+            raise StructuredResponseError("algorithm result reference is invalid") from exc
         if record.provider_call_id != result.provider_call_id:
             raise StructuredResponseError("result and ledger provider call IDs differ")
         if record.tool_name != self._tool_name_for_result(result):
@@ -225,7 +251,19 @@ class FinalizationGate:
         results = self._coerce_results(algorithm_results)
         ledger = self._coerce_ledger(action_ledger)
         job_id = str(self._identity_value(trusted_identity, "job_id"))
+        current_attempt = int(self._identity_value(trusted_identity, "attempt_count"))
+        current_lease = int(self._identity_value(trusted_identity, "lease_epoch"))
+        current_worker = str(self._identity_value(trusted_identity, "worker_id"))
+        current_input = str(self._identity_value(trusted_identity, "input_identity"))
         current_ledger = self._current_ledger(ledger, job_id=job_id)
+        current_ledger = {
+            key: record
+            for key, record in current_ledger.items()
+            if record.attempt_count == current_attempt
+            and record.lease_epoch == current_lease
+            and record.worker_id == current_worker
+            and record.input_identity == current_input
+        }
 
         eligible: dict[str, AlgorithmResult] = {}
         for result in results.values():

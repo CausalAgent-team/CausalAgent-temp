@@ -68,7 +68,6 @@ class PostgresStoreConfig:
             "user": self.user,
             "password": self.password,
             "connect_timeout": self.connect_timeout_seconds,
-            "autocommit": True,
         }
 
     def connection_string(self) -> str:

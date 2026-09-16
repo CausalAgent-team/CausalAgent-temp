@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import inspect
+import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any, Protocol
+
+from Agent.execution_control import JobExecutionRevoked
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -15,6 +18,7 @@ from .models import WebEvidenceResult, canonical_json_bytes
 from .runtime_updates import (
     build_terminal_invocation,
     build_tool_command,
+    emit_tool_lifecycle_event,
     resolve_runtime_invocation,
     with_tool_runtime_schema,
 )
@@ -133,6 +137,8 @@ class WebEvidenceTool:
                 raw = self.searcher(search_query, max_results=request.max_results)
             if inspect.isawaitable(raw):
                 raw = await raw
+        except (asyncio.CancelledError, JobExecutionRevoked):
+            raise
         except Exception:
             return {
                 "status": "unavailable",
@@ -218,12 +224,39 @@ class WebEvidenceTool:
                 "web_search_enabled",
                 None,
             )
-            payload = await self.get_evidence(
-                query,
-                query_en=query_en,
-                max_results=max_results,
-                enabled=runtime_enabled if isinstance(runtime_enabled, bool) else None,
+            await emit_tool_lifecycle_event(
+                runtime,
+                event_type="tool_call_start",
+                identity=identity,
+                tool_name=self.name,
             )
+            try:
+                payload = await self.get_evidence(
+                    query,
+                    query_en=query_en,
+                    max_results=max_results,
+                    enabled=runtime_enabled if isinstance(runtime_enabled, bool) else None,
+                )
+                await identity.runtime_context.ensure_active()
+            except (asyncio.CancelledError, JobExecutionRevoked):
+                await emit_tool_lifecycle_event(
+                    runtime,
+                    event_type="tool_call_result",
+                    identity=identity,
+                    tool_name=self.name,
+                    status="canceled",
+                )
+                raise
+            except Exception:
+                await emit_tool_lifecycle_event(
+                    runtime,
+                    event_type="tool_call_result",
+                    identity=identity,
+                    tool_name=self.name,
+                    status="failed",
+                    safe_error_code="WEB_SEARCH_PROTOCOL_ERROR",
+                )
+                raise
             status = str(payload.get("status") or "protocol_error")
             attempt_status = (
                 "succeeded"
@@ -237,6 +270,14 @@ class WebEvidenceTool:
                 "unavailable": "WEB_SEARCH_UNAVAILABLE",
                 "protocol_error": "WEB_SEARCH_PROTOCOL_ERROR",
             }.get(status)
+            await emit_tool_lifecycle_event(
+                runtime,
+                event_type="tool_call_result",
+                identity=identity,
+                tool_name=self.name,
+                status=("succeeded" if attempt_status == "succeeded" else "failed"),
+                safe_error_code=safe_error_code,
+            )
             evidence_by_ref = {
                 str(ref): WebEvidenceResult.model_validate(value)
                 for ref, value in dict(payload.get("evidence_by_ref") or {}).items()

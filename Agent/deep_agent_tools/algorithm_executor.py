@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from .error_codes import SafeErrorCode
+from .identity import build_result_ref
 from .models import (
     AlgorithmExecutionCommand,
     AlgorithmResult,
@@ -44,6 +45,28 @@ class AlgorithmExecutorError(RuntimeError):
         self.safe_error_code = safe_error_code
 
 
+def validate_executor_command(
+    command: AlgorithmExecutionCommand,
+    *,
+    trusted_context: McpInvocationContext,
+) -> None:
+    """在任何外部执行前校验 command 与可信上下文的身份绑定。"""
+
+    checks = {
+        "invocation_id": (command.invocation_id, trusted_context.invocation_id),
+        "input_identity": (
+            command.input_identity,
+            trusted_context.input_snapshot_digest,
+        ),
+    }
+    for field_name, (actual, expected) in checks.items():
+        if actual != expected:
+            raise AlgorithmExecutorError(
+                f"command/context identity mismatch: {field_name}",
+                safe_error_code=SafeErrorCode.MCP_CONTEXT_INVALID,
+            )
+
+
 def validate_executor_result(
     result: AlgorithmResult,
     *,
@@ -56,6 +79,7 @@ def validate_executor_result(
     后续运行时和 causal-mcp 负责。
     """
 
+    validate_executor_command(command, trusted_context=trusted_context)
     checks = {
         "invocation_id": (result.invocation_id, command.invocation_id),
         "provider_call_id": (result.provider_call_id, command.provider_call_id),
@@ -69,6 +93,7 @@ def validate_executor_result(
             result.provenance.input_identity,
             command.input_identity,
         ),
+        "input_identity": (result.input_identity, command.input_identity),
         "provenance.job_id": (result.provenance.job_id, trusted_context.job_id),
         "provenance.attempt_count": (
             result.provenance.attempt_count,
@@ -85,4 +110,13 @@ def validate_executor_result(
                 f"executor result contract mismatch: {field_name}",
                 safe_error_code=SafeErrorCode.ALGORITHM_RESULT_CONTRACT_INVALID,
             )
+    expected_result_ref = build_result_ref(
+        invocation_id=command.invocation_id,
+        result_index=command.result_index,
+    )
+    if result.result_ref != expected_result_ref:
+        raise AlgorithmExecutorError(
+            "executor result contract mismatch: result_ref",
+            safe_error_code=SafeErrorCode.ALGORITHM_RESULT_CONTRACT_INVALID,
+        )
     return result

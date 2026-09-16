@@ -43,6 +43,7 @@ from .state import (
     ProjectDeepAgentState,
     from_deep_agent_output,
     initial_deep_agent_state,
+    retry_deep_agent_from_checkpoint,
     to_deep_agent_input,
 )
 
@@ -73,6 +74,7 @@ __all__ = [
     "deep_agent_invoke_config",
     "from_deep_agent_output",
     "initial_deep_agent_state",
+    "retry_deep_agent_from_checkpoint",
     "initialize_memory_files",
     "is_filesystem_write_allowed",
     "to_deep_agent_input",

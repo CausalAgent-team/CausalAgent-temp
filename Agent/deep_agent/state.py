@@ -45,6 +45,8 @@ class DeepAgentState(_OfficialDeepAgentState, total=False):
     finalization_retry_count: int
     model_call_count: int
     tool_call_count: int
+    deep_agent_run_id: str
+    execution_scope: str
 
 
 class ProjectDeepAgentState(DeepAgentState, total=False):
@@ -64,7 +66,8 @@ class ParentStateUpdate(TypedDict, total=False):
     deep_agent_web_evidence: dict[str, WebEvidenceResult]
     deep_agent_decision: FinalAnalysisDecision | None
     deep_agent_structured_response: FinalAnalysisDecision | None
-    deep_agent_messages: list[Any]
+    deep_agent_run_id: str
+    deep_agent_status: str
 
 
 def _as_data_profile(value: object, parent_state: Mapping[str, Any]) -> DataProfile:
@@ -130,6 +133,7 @@ def initial_deep_agent_state(
     rag_evidence: Mapping[str, Any] | None = None,
     web_evidence: Mapping[str, Any] | None = None,
     finalization_retry_count: int = 0,
+    deep_agent_run_id: str | None = None,
 ) -> ProjectDeepAgentState:
     """创建可直接 checkpoint 的最小内层 State。"""
 
@@ -147,6 +151,11 @@ def initial_deep_agent_state(
         web_evidence=dict(web_evidence or {}),
         structured_response=None,
         finalization_retry_count=finalization_retry_count,
+        **(
+            {"deep_agent_run_id": deep_agent_run_id}
+            if deep_agent_run_id
+            else {}
+        ),
         model_call_count=0,
         tool_call_count=0,
     )
@@ -171,11 +180,16 @@ def _missing_values_from_parent(parent_state: Mapping[str, Any]) -> bool:
     )
 
 
-def to_deep_agent_input(parent_state: Mapping[str, Any]) -> ProjectDeepAgentState:
+def to_deep_agent_input(
+    parent_state: Mapping[str, Any],
+    *,
+    reset_execution_artifacts: bool = False,
+) -> ProjectDeepAgentState:
     """只把 Deep Agent 所需字段投影到内层 State，不复制父状态。"""
 
-    existing_child_messages = parent_state.get("deep_agent_messages")
-    messages = existing_child_messages or parent_state.get("messages")
+    # 子图的完整 messages/官方内部字段由子图 checkpoint 持有；父图只在
+    # 首次进入边界时提供自己的输入消息，不回投影子图消息。
+    messages = parent_state.get("messages")
     if messages is None:
         messages = []
     if not isinstance(messages, list):
@@ -187,27 +201,30 @@ def to_deep_agent_input(parent_state: Mapping[str, Any]) -> ProjectDeepAgentStat
     if not isinstance(file_summary, Mapping):
         file_summary = {}
     data_profile = _as_data_profile(parent_state.get("data_profile"), parent_state)
-    if not existing_child_messages:
-        messages = [
-            *messages,
-            {
-                "role": "system",
-                "content": json.dumps(
-                    {
-                        "analysis_question": str(
-                            parent_state.get("analysis_question")
-                            or parent_state.get("user_question")
-                            or ""
-                        ),
-                        "data_profile": data_profile.model_dump(mode="json"),
-                        "analysis_parameters": dict(analysis_parameters),
-                    },
-                    ensure_ascii=False,
-                    sort_keys=True,
-                ),
-            },
-        ]
-    retry_instruction = parent_state.get("deep_agent_retry_instruction")
+    messages = [
+        *messages,
+        {
+            "role": "system",
+            "content": json.dumps(
+                {
+                    "analysis_question": str(
+                        parent_state.get("analysis_question")
+                        or parent_state.get("user_question")
+                        or ""
+                    ),
+                    "data_profile": data_profile.model_dump(mode="json"),
+                    "analysis_parameters": dict(analysis_parameters),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        },
+    ]
+    retry_instruction = (
+        None
+        if reset_execution_artifacts
+        else parent_state.get("deep_agent_retry_instruction")
+    )
     if isinstance(retry_instruction, str) and retry_instruction.strip():
         # 使用普通消息值而不是把 Runtime/异常对象放进 State；LangChain 会在
         # 真正模型调用前把标准 role/content mapping 转成 HumanMessage。
@@ -234,11 +251,34 @@ def to_deep_agent_input(parent_state: Mapping[str, Any]) -> ProjectDeepAgentStat
             else None
         ),
         missing_values_present=_missing_values_from_parent(parent_state),
-        algorithm_results=parent_state.get("deep_agent_algorithm_results"),
-        action_ledger=parent_state.get("deep_agent_action_ledger"),
-        rag_evidence=parent_state.get("deep_agent_rag_evidence"),
-        web_evidence=parent_state.get("deep_agent_web_evidence"),
-        finalization_retry_count=int(parent_state.get("finalization_retry_count") or 0),
+        algorithm_results=(
+            None
+            if reset_execution_artifacts
+            else parent_state.get("deep_agent_algorithm_results")
+        ),
+        action_ledger=(
+            None
+            if reset_execution_artifacts
+            else parent_state.get("deep_agent_action_ledger")
+        ),
+        rag_evidence=(
+            None if reset_execution_artifacts else parent_state.get("deep_agent_rag_evidence")
+        ),
+        web_evidence=(
+            None if reset_execution_artifacts else parent_state.get("deep_agent_web_evidence")
+        ),
+        finalization_retry_count=(
+            0
+            if reset_execution_artifacts
+            else int(parent_state.get("finalization_retry_count") or 0)
+        ),
+        # child run ID 由拥有可信 Job identity 的父图节点注入；这里不从
+        # 任意模型/测试 State 的 job_id 推导 checkpoint identity。
+        deep_agent_run_id=(
+            str(parent_state.get("deep_agent_run_id"))
+            if parent_state.get("deep_agent_run_id")
+            else None
+        ),
     )
 
 
@@ -252,9 +292,29 @@ def from_deep_agent_output(state: Mapping[str, Any]) -> ParentStateUpdate:
         "deep_agent_web_evidence": dict(state.get("web_evidence") or {}),
         "deep_agent_decision": state.get("structured_response"),
         "deep_agent_structured_response": state.get("structured_response"),
-        "deep_agent_messages": list(state.get("messages") or []),
+        "deep_agent_status": "completed",
     }
+    if state.get("deep_agent_run_id"):
+        result["deep_agent_run_id"] = str(state["deep_agent_run_id"])
     return result
+
+
+def retry_deep_agent_from_checkpoint(
+    child_state: Mapping[str, Any],
+    *,
+    retry_instruction: str,
+) -> ProjectDeepAgentState:
+    """从子图 checkpoint 构造一次 Gate 修正输入，不把内部状态投影给父图。"""
+
+    instruction = retry_instruction.strip()
+    if not instruction:
+        raise ValueError("retry_instruction must be non-blank")
+    messages = list(child_state.get("messages") or [])
+    messages.append({"role": "user", "content": instruction})
+    retry_input = dict(child_state)
+    retry_input["messages"] = messages
+    retry_input["structured_response"] = None
+    return ProjectDeepAgentState(**retry_input)
 
 
 def assert_checkpoint_state_safe(state: Mapping[str, Any]) -> None:

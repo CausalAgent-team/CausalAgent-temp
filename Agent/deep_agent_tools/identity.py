@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from uuid import UUID, uuid4, uuid5
 
 from .models import McpInvocationContext, canonical_json_bytes
@@ -10,6 +11,7 @@ from .models import McpInvocationContext, canonical_json_bytes
 
 # 固定项目命名空间，不是 secret；改变它会破坏 checkpoint replay 的身份稳定性。
 CAUSAL_INVOCATION_NAMESPACE = UUID("5f4b8f6b-0f3b-4c37-9e40-9d18a97a2e6f")
+DEEP_AGENT_RUN_NAMESPACE = UUID("7c1b3a10-5f2e-4e75-8e8c-1e9f8d4f1a2b")
 
 
 @dataclass(frozen=True)
@@ -96,6 +98,56 @@ def build_invocation_id(
             ),
         )
     )
+
+
+def build_deep_agent_run_id(*, job_id: str | UUID) -> str:
+    """为同一 Job 生成跨 worker 重启稳定的 Deep Agent child thread ID。"""
+
+    if isinstance(job_id, UUID):
+        canonical_job_id = str(job_id)
+    else:
+        try:
+            canonical_job_id = str(UUID(job_id))
+        except (ValueError, AttributeError, TypeError) as exc:
+            raise ValueError("job_id must be a UUID string") from exc
+    return f"deep-agent:{uuid5(DEEP_AGENT_RUN_NAMESPACE, canonical_job_id)}"
+
+
+def build_deep_agent_step_id(
+    *, job_id: str | UUID, attempt_count: int, task_id: str
+) -> str:
+    """为父图 Deep Agent task 生成与工具事件共享的 opaque step ID。"""
+
+    if attempt_count < 0:
+        raise ValueError("attempt_count must be non-negative")
+    payload = {
+        "job_id": str(job_id),
+        "attempt_count": int(attempt_count),
+        "task_id": _non_blank(task_id, field_name="task_id"),
+    }
+    return hashlib.sha256(canonical_json_bytes(payload)).hexdigest()[:24]
+
+
+def build_deep_agent_execution_scope(
+    *,
+    job_id: str | UUID,
+    attempt_count: int,
+    lease_epoch: int,
+    input_identity: str,
+) -> str:
+    """生成绑定当前 Job attempt/lease/输入快照的 child checkpoint scope。"""
+
+    if attempt_count < 0 or lease_epoch < 0:
+        raise ValueError("attempt_count and lease_epoch must be non-negative")
+    canonical_job_id = str(UUID(str(job_id)))
+    payload = {
+        "job_id": canonical_job_id,
+        "attempt_count": int(attempt_count),
+        "lease_epoch": int(lease_epoch),
+        "input_identity": _non_blank(input_identity, field_name="input_identity"),
+    }
+    digest = hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
+    return f"deep-agent-scope:{digest}"
 
 
 def build_result_ref(*, invocation_id: str | UUID, result_index: int = 0) -> str:

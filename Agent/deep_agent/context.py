@@ -60,6 +60,12 @@ class TrustedJobIdentity:
             or self.input_snapshot_digest != self.input_snapshot_digest.strip()
         ):
             raise ValueError("input_snapshot_digest must be blank or a trimmed string")
+        if self.input_snapshot_digest is not None and (
+            self.input_snapshot_digest != self.input_identity
+        ):
+            raise ValueError(
+                "input_snapshot_digest must equal input_identity for the frozen input hash"
+            )
 
     def to_mcp_context(
         self,
@@ -111,6 +117,14 @@ class AgentRunContext:
     # default tri-state prevents isolated Tool tests from silently changing
     # their explicitly constructed WebEvidenceTool behavior.
     web_search_enabled: bool | None = None
+    rag_available: bool | None = None
+    rag_release_id: str | None = None
+    rag_error_code: str | None = None
+    # 仅由 worker 注入的持久化事件边界；绝不进入 State/checkpoint。
+    event_sink: Any | None = None
+    # 父图 Deep Agent task 的 opaque step ID；只用于把 child tool 事件关联到
+    # 已持久化的父阶段，不进入 State/checkpoint。
+    deep_agent_step_id: str | None = None
 
     async def ensure_active(self) -> None:
         """在跨边界调用前复用已有 JobExecutionGuard 的资格检查。"""
@@ -122,6 +136,19 @@ class AgentRunContext:
         if ensure_active is None:
             return
         result = ensure_active()
+        if inspect.isawaitable(result):
+            await result
+
+    async def check_after_call(self) -> None:
+        """在跨边界调用返回后复用已有 JobExecutionGuard 的资格检查。"""
+
+        guard = self.execution_guard
+        if guard is None:
+            return
+        check_after_call = getattr(guard, "check_after_call", None)
+        if check_after_call is None:
+            return
+        result = check_after_call()
         if inspect.isawaitable(result):
             await result
 
@@ -140,6 +167,8 @@ class AgentRunContext:
                 "web_executor",
                 "filesystem_backend",
                 "trusted_identity",
+                "event_sink",
+                "deep_agent_step_id",
             }
             leaked = forbidden.intersection(state)
             if leaked:

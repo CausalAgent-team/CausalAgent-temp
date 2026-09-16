@@ -18,6 +18,7 @@ from Agent.deep_agent_tools import (
 )
 from Agent.deep_agent_tools.algorithm_specs import AlgorithmSpec, CausalPcInput
 from Agent.deep_agent_tools.models import StandardizedGraph
+from app.agent.worker.execution_guard import JobExecutionRevoked
 
 
 def _registry() -> AlgorithmRegistry:
@@ -455,3 +456,55 @@ def test_execution_enforces_job_concurrency_and_timeout() -> None:
     peak, statuses = asyncio.run(scenario())
     assert peak == 2
     assert statuses == {"0": "succeeded", "1": "succeeded", "2": "timed_out"}
+
+
+@pytest.mark.parametrize("control_flow", [JobExecutionRevoked("revoked"), asyncio.CancelledError()])
+def test_control_flow_cancels_and_awaits_parallel_siblings(control_flow) -> None:
+    async def scenario():
+        registry = AlgorithmRegistry()
+        registry.register(
+            spec=_spec(
+                capability_id="test.a",
+                tool_name="a",
+                requires=frozenset({"tabular_dataset"}),
+                produces=frozenset({"a_result"}),
+                default_concurrency=2,
+            ),
+            adapter=object(),
+        )
+        registry.register(
+            spec=_spec(
+                capability_id="test.b",
+                tool_name="b",
+                requires=frozenset({"tabular_dataset"}),
+                produces=frozenset({"b_result"}),
+                default_concurrency=2,
+            ),
+            adapter=object(),
+        )
+        plan = build_dependency_plan(
+            [
+                ToolCallRequest(call_id="a", tool_name="a"),
+                ToolCallRequest(call_id="b", tool_name="b"),
+            ],
+            registry=registry,
+            initial_artifacts={"tabular_dataset"},
+        )
+        sibling_started = asyncio.Event()
+        sibling_cancelled = asyncio.Event()
+
+        async def execute(request):
+            if request.call_id == "a":
+                await sibling_started.wait()
+                raise control_flow
+            sibling_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                sibling_cancelled.set()
+
+        with pytest.raises(type(control_flow)):
+            await execute_dependency_plan(plan, execute)
+        assert sibling_cancelled.is_set()
+
+    asyncio.run(scenario())

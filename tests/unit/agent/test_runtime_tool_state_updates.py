@@ -170,6 +170,7 @@ def test_rag_and_web_tools_write_evidence_and_terminal_ledgers() -> None:
         def get_evidence(self, query, *, max_contexts=None):
             return {
                 "status": "available",
+                "release_id": "mm_" + "a" * 20,
                 "evidence": [
                     {"evidence_ref": "rag:1", "snippet": "RAG evidence"}
                 ],
@@ -208,6 +209,73 @@ def test_rag_and_web_tools_write_evidence_and_terminal_ledgers() -> None:
     assert len(web_command.update["web_evidence"]) == 1
     web_ledger = next(iter(web_command.update["action_ledger"].values()))
     assert web_ledger.final_status == "succeeded"
+
+
+def test_tool_lifecycle_sink_is_awaited_around_real_retrieval() -> None:
+    events = []
+    calls = []
+
+    async def sink(payload):
+        events.append((payload["type"], len(calls)))
+
+    context = AgentRunContext(
+        execution_guard=None,
+        trusted_identity=IDENTITY,
+        event_sink=sink,
+    )
+
+    class Retriever:
+        def get_evidence(self, query, *, max_contexts=None):
+            calls.append(query)
+            return {"status": "no_relevant_evidence", "evidence": []}
+
+    tool = RagEvidenceTool(Retriever()).to_langchain_tool()
+    asyncio.run(
+        tool.coroutine(
+            runtime=_runtime(context, call_id="rag-lifecycle-1"),
+            query="causal inference",
+        )
+    )
+
+    assert events == [("tool_call_start", 0), ("tool_call_result", 1)]
+
+
+def test_canceled_tool_lifecycle_uses_same_summary_for_sink_and_stream() -> None:
+    events = []
+
+    async def sink(payload):
+        events.append(dict(payload))
+
+    context = AgentRunContext(
+        execution_guard=None,
+        trusted_identity=IDENTITY,
+        event_sink=sink,
+    )
+
+    class Retriever:
+        def get_evidence(self, query, *, max_contexts=None):
+            raise asyncio.CancelledError()
+
+    tool = RagEvidenceTool(Retriever()).to_langchain_tool()
+
+    try:
+        asyncio.run(
+            tool.coroutine(
+                runtime=_runtime(context, call_id="rag-lifecycle-canceled"),
+                query="causal inference",
+            )
+        )
+    except asyncio.CancelledError:
+        pass
+    else:  # pragma: no cover
+        raise AssertionError("canceled tool must propagate CancelledError")
+
+    assert [event["type"] for event in events] == [
+        "tool_call_start",
+        "tool_call_result",
+    ]
+    assert events[1]["status"] == "canceled"
+    assert events[1]["summary"] == "调用已取消"
 
 
 def test_web_tool_honors_trusted_runtime_switch() -> None:

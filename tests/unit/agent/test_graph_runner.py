@@ -11,6 +11,7 @@ from app.agent.worker.graph_runner import (
     _raise_wrapped_cancellation,
     ai_call_stream,
 )
+from app.agent.worker.execution_guard import JobExecutionRevoked
 
 
 class FakeGraph:
@@ -97,6 +98,26 @@ class GraphRunnerTests(unittest.IsolatedAsyncioTestCase):
         except NodeCancelledError as error:
             with self.assertRaises(asyncio.CancelledError):
                 _raise_wrapped_cancellation(error)
+
+    def test_langgraph_wrapped_revocation_returns_to_worker_control_flow(self):
+        cause = JobExecutionRevoked("revoked")
+        try:
+            raise NodeCancelledError("agent") from cause
+        except NodeCancelledError as error:
+            with self.assertRaises(JobExecutionRevoked):
+                _raise_wrapped_cancellation(error)
+
+    async def test_revocation_does_not_emit_error_or_final_result(self):
+        class RevokedGraph(FakeGraph):
+            async def astream(self, input_data, config, **_kwargs):
+                raise JobExecutionRevoked("revoked")
+                yield  # pragma: no cover
+
+        graph = RevokedGraph([_snapshot()])
+        with patch("app.agent.worker.graph_runner.process_final_result") as presenter:
+            with self.assertRaises(JobExecutionRevoked):
+                await _collect(graph)
+        presenter.assert_not_called()
 
     def test_checkpoint_identity_requires_job_id_and_keeps_root_namespace_empty(self):
         """运行时和恢复查询共用 Job ID 根 identity，不能生成 unknown namespace。"""

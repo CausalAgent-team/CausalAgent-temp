@@ -8,6 +8,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
+from Agent.execution_control import JobExecutionRevoked
+
 from .error_codes import SafeErrorCode
 from .models import AlgorithmResult
 from .registry import AlgorithmRegistry, UnknownCapabilityError
@@ -260,6 +262,8 @@ async def execute_dependency_plan(
                     )
             except asyncio.CancelledError:
                 raise
+            except JobExecutionRevoked:
+                raise
             except TimeoutError:
                 return ToolExecutionOutcome(
                     request=call.request,
@@ -285,7 +289,24 @@ async def execute_dependency_plan(
             )
 
         if runnable:
-            completed = await asyncio.gather(*(invoke(call) for call in runnable))
+            tasks = [
+                asyncio.create_task(
+                    invoke(call),
+                    name=f"algorithm-tool:{call.request.call_id}",
+                )
+                for call in runnable
+            ]
+            try:
+                # gather 在一个子任务抛出普通异常时不会取消其他子任务；撤销和
+                # 协程取消必须显式取消并等待整批，避免 sibling 在失去 lease 后
+                # 继续触发外部调用。
+                completed = await asyncio.gather(*tasks)
+            except BaseException:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                raise
             outcomes.update({outcome.request.call_id: outcome for outcome in completed})
 
     return tuple(outcomes[call.request.call_id] for call in plan.calls)

@@ -60,6 +60,15 @@ def test_valid_result_keeps_provenance_and_graph_semantics() -> None:
     assert result.provenance.invocation_id == result.invocation_id
 
 
+def test_result_ref_must_be_canonical_and_derived_from_invocation() -> None:
+    for result_ref in ("other:0", "invocation-1:00", "invocation-1:-1"):
+        with pytest.raises(ValidationError, match="result_ref"):
+            AlgorithmResult.model_validate(
+                _valid_result().model_dump(mode="json")
+                | {"result_ref": result_ref}
+            )
+
+
 def test_non_valid_result_requires_safe_error_code() -> None:
     with pytest.raises(ValidationError, match="safe_error_code"):
         AlgorithmResult(

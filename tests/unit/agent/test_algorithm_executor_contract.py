@@ -41,7 +41,7 @@ def _command(context: McpInvocationContext) -> AlgorithmExecutionCommand:
         capability_version=PC_SPEC.version,
         spec_digest=PC_SPEC.spec_digest,
         provider_call_id="call-1",
-        input_identity="input-1",
+        input_identity=context.input_snapshot_digest,
     )
 
 

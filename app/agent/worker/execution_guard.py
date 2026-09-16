@@ -6,12 +6,8 @@ import contextvars
 import asyncio
 from dataclasses import dataclass
 
+from Agent.execution_control import JobExecutionRevoked
 from app.agent import job_service
-
-
-class JobExecutionRevoked(RuntimeError):
-    """表示当前 worker 已失去继续推进 Job 的资格。"""
-
 
 class ExecutionAuthorityUnknown(JobExecutionRevoked):
     """表示无法从 MySQL 主库确认执行资格，必须停止本次推进。"""

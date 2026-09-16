@@ -184,16 +184,21 @@
     },
     "InvocationRecord": {
       "properties": [
+        "attempt_count",
         "attempts",
         "final_status",
+        "input_identity",
         "invocation_id",
+        "job_id",
+        "lease_epoch",
         "provider_call_id",
         "provider_item_id",
         "provider_response_id",
         "response_identity",
         "response_identity_source",
         "result_ref",
-        "tool_name"
+        "tool_name",
+        "worker_id"
       ],
       "required": [
         "invocation_id",
@@ -203,7 +208,7 @@
         "tool_name",
         "final_status"
       ],
-      "sha256": "bb6127bf9ab660f7fa2444ef53775232595ebcdf039fdcc3362f7d2c5ab17a31",
+      "sha256": "70978d15fdf05deaa9285316cc323d737c5e72be142137ace5e9665280f263f8",
       "title": "InvocationRecord"
     },
     "McpInvocationContext": {

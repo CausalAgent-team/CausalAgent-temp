@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
+from Agent.execution_control import JobExecutionRevoked
 from ..algorithm_executor import AlgorithmExecutorError, validate_executor_result
 from ..algorithm_specs import AlgorithmSpec
 from ..error_codes import SafeErrorCode
@@ -295,6 +296,14 @@ class BaseAlgorithmAdapter(ABC):
             raise ValueError("provider_call_id must be a non-blank string")
         if retry_ordinal < 0:
             raise ValueError("retry_ordinal must be non-negative")
+        expected_input_identity = getattr(trusted_context, "input_snapshot_digest", None)
+        if expected_input_identity is None:
+            expected_input_identity = getattr(trusted_context, "input_identity", None)
+        if adapter_input.input_identity != expected_input_identity:
+            raise AlgorithmExecutorError(
+                "adapter input identity does not match trusted context",
+                safe_error_code=SafeErrorCode.MCP_CONTEXT_INVALID,
+            )
 
         # 先校验模型参数；Pydantic 错误只在内部用于分类，不原样进入输出。
         try:
@@ -445,7 +454,11 @@ class BaseAlgorithmAdapter(ABC):
                 safe_error_code=SafeErrorCode.ALGORITHM_TIMED_OUT,
                 preprocessing_recipe_digest=recipe.digest,
             )
-        except Exception:
+        except Exception as exc:
+            # Job revoke 是 worker 控制流；它继承 RuntimeError，必须先于
+            # 通用失败归类拦截，避免生成 execution_failed AlgorithmResult。
+            if isinstance(exc, JobExecutionRevoked):
+                raise
             return self._base_result(
                 command=command,
                 context=context,

@@ -279,6 +279,20 @@ class StreamEventAdapterTests(unittest.TestCase):
         self.assertEqual(public["safe_error_code"], "ALGORITHM_EXECUTION_FAILED")
         self.assertNotIn("raw_result", public)
 
+    def test_canceled_tool_lifecycle_is_not_reported_as_succeeded(self):
+        self.adapter.convert(task_start("task-deep", "deep_agent"))
+        events = self.adapter.convert({
+            "type": "custom",
+            "ns": (),
+            "data": {
+                "type": "tool_call_result",
+                "tool_name": "causal_pc",
+                "status": "canceled",
+            },
+        })
+
+        self.assertEqual(events[0]["status"], "canceled")
+
 
 class RealLangGraphStreamTests(unittest.IsolatedAsyncioTestCase):
     """用锁定版 LangGraph 的真实图验证 tasks 与 custom attempt 流。"""

@@ -91,6 +91,8 @@ class CausalAgentState(TypedDict):
     deep_agent_web_evidence: NotRequired[dict[str, WebEvidenceResult]]
     deep_agent_decision: NotRequired[Optional[FinalAnalysisDecision]]
     deep_agent_structured_response: NotRequired[Optional[FinalAnalysisDecision]]
+    deep_agent_run_id: NotRequired[str]
+    deep_agent_status: NotRequired[Literal["running", "completed", "revoked", "failed"]]
     deep_agent_retry_instruction: NotRequired[str]
     finalization_retry_count: NotRequired[int]
     finalization_status: NotRequired[Literal["valid", "degraded"]]

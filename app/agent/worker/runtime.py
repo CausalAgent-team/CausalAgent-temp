@@ -104,6 +104,7 @@ class SlotRuntime:
         job: dict[str, Any],
         execution_guard: Any,
         worker_id: str,
+        event_sink: Any | None = None,
     ) -> AgentRunContext:
         """从已 claim 的 Job 构造一次 invocation 的可信 runtime context。"""
 
@@ -128,6 +129,10 @@ class SlotRuntime:
             algorithm_executor=process_runtime.algorithm_executor,
             filesystem_backend=process_runtime.filesystem_backend,
             web_search_enabled=bool(job.get("web_search_enabled")),
+            rag_available=process_runtime.rag_available,
+            rag_release_id=process_runtime.rag_release_id,
+            rag_error_code=process_runtime.rag_error_code,
+            event_sink=event_sink,
         )
 
 
@@ -290,18 +295,19 @@ async def initialize_production_runtime(
         ),
     )
     registry = build_default_registry(adapters)
+    readiness = inspect_rag_readiness()
     domain_tools = (
         *build_algorithm_tools(registry),
-        build_default_rag_evidence_tool(),
+        build_default_rag_evidence_tool(readiness=readiness),
         build_default_web_evidence_tool(web_search_enabled=True),
     )
 
-    readiness = inspect_rag_readiness()
     deep_model = create_deep_agent_model()
     context_window_tokens = _required_positive_environment_integer(
         "DEEP_AGENT_CONTEXT_WINDOW_TOKENS"
     )
     filesystem_backend = adapters[next(iter(adapters))].raw_backend
+    checkpointer = build_checkpointer(checkpoint_pool)
     deep_graph = build_deep_agent(
         model=deep_model,
         domain_tools=domain_tools,
@@ -311,13 +317,13 @@ async def initialize_production_runtime(
             model_name=os.getenv("DEEP_AGENT_MODEL", "deepseek-v4-flash"),
             context_window_tokens=context_window_tokens,
         ),
-        # 父图持有唯一 checkpoint；内层 graph 不单独形成恢复真相源。
-        checkpointer=None,
+        # Deep Agent 使用与父图相同的 PostgreSQL saver，但以稳定 child
+        # thread_id 隔离 checkpoint namespace；父图只保存 child 引用和最终投影。
+        checkpointer=checkpointer,
         registry=registry,
     )
     from Agent.causal_agent.graph import build_deep_agent_parent_graph
 
-    checkpointer = build_checkpointer(checkpoint_pool)
     parent_graph = build_deep_agent_parent_graph(
         llm=outer_llm,
         deep_agent=deep_graph,

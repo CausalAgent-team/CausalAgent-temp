@@ -228,7 +228,9 @@ class AlgorithmDependencyDispatchMiddleware(AgentMiddleware):
             )
 
         try:
-            outputs = await dispatch.future
+            # 一个 ToolNode wrapper 被取消时不能连带取消同一 response 的共享
+            # dispatch future；batch task 仍需完成 sibling 的取消/等待收口。
+            outputs = await asyncio.shield(dispatch.future)
             return outputs[current_call_id]
         finally:
             async with self._lock:
@@ -328,12 +330,14 @@ class AlgorithmDependencyDispatchMiddleware(AgentMiddleware):
         except BaseException as exc:
             if not dispatch.future.done():
                 dispatch.future.set_exception(exc)
-            raise
         finally:
-            # 若响应只有一个 call，finally 中不立即移除；调用方消费完成后才会
-            # 清理。这样同一轮并发 wrapper 不会因 fast fake executor 重复执行。
-            if dispatch.future.done() and not dispatch.call_ids:
-                async with self._lock:
+            # 调用方可能已经在 future 完成前被取消，因此不能只依赖调用方
+            # finally 清理；全部 wrapper 都消费/取消后即可释放本轮状态。
+            async with self._lock:
+                if (
+                    dispatch.future.done()
+                    and dispatch.call_ids.issubset(dispatch.served_call_ids)
+                ):
                     self._runs.pop(key, None)
 
 

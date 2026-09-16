@@ -144,6 +144,61 @@ def test_finalization_gate_accepts_only_ledger_backed_primary_result() -> None:
     assert accepted.primary_result_ref == result.result_ref
 
 
+def test_finalization_gate_rejects_incomplete_current_ledger_ownership() -> None:
+    identity, registry, result, ledger = _algorithm_execution()
+    decision = validate_structured_response(
+        {
+            **_decision(),
+            "primary_result_ref": result.result_ref,
+            "result_assessments": [
+                {
+                    "result_ref": result.result_ref,
+                    "disposition": "primary",
+                    "rationale": "the validated result is selected",
+                }
+            ],
+        }
+    )
+    incomplete = ledger.model_copy(deep=True, update={"worker_id": None})
+
+    with pytest.raises(StructuredResponseError, match="ownership is incomplete"):
+        FinalizationGate(registry=registry).validate(
+            decision=decision,
+            algorithm_results={result.result_ref: result},
+            action_ledger={ledger.invocation_id: incomplete},
+            trusted_identity=identity,
+        )
+
+
+def test_finalization_gate_excludes_stale_attempt_ledger_from_current_results() -> None:
+    identity, registry, result, ledger = _algorithm_execution()
+    decision = validate_structured_response(
+        {
+            **_decision(),
+            "primary_result_ref": result.result_ref,
+            "result_assessments": [
+                {
+                    "result_ref": result.result_ref,
+                    "disposition": "primary",
+                    "rationale": "the validated result is selected",
+                }
+            ],
+        }
+    )
+    stale = ledger.model_copy(
+        deep=True,
+        update={"attempt_count": identity.attempt_count + 1},
+    )
+
+    with pytest.raises(StructuredResponseError, match="matching ledger"):
+        FinalizationGate(registry=registry).validate(
+            decision=decision,
+            algorithm_results={result.result_ref: result},
+            action_ledger={ledger.invocation_id: stale},
+            trusted_identity=identity,
+        )
+
+
 def test_finalization_gate_requires_every_valid_result_assessment() -> None:
     identity, registry, result, ledger = _algorithm_execution()
     decision = validate_structured_response(

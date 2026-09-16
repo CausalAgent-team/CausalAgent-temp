@@ -33,7 +33,9 @@ from app.agent.worker.mcp_client_pool import (
     McpClientPool,
     McpClientPoolConfig,
     McpPoolError,
+    McpTransportError,
 )
+from app.agent.worker.execution_guard import JobExecutionGuard, JobExecutionRevoked
 
 
 def _context() -> McpInvocationContext:
@@ -491,3 +493,117 @@ def test_executor_reuses_invocation_id_for_structured_mcp_result() -> None:
     )
     assert output.invocation_id == context.invocation_id
     assert output.result_ref == result.result_ref
+
+
+def test_executor_checks_guard_after_remote_response_and_propagates_revocation() -> None:
+    context = _context()
+    command = _command(context)
+    guard = JobExecutionGuard("job", "worker", 1, 1)
+    calls = []
+
+    async def ensure_active():
+        calls.append("ensure")
+
+    async def check_after_call():
+        calls.append("after")
+        raise JobExecutionRevoked("revoked after MCP response")
+
+    guard.ensure_active = ensure_active
+    guard.check_after_call = check_after_call
+
+    class FakePool:
+        async def call_tool(self, *_args, **_kwargs):
+            return SimpleNamespace(structured_content={"ok": True, "result": {}})
+
+    token = guard.install()
+    try:
+        with pytest.raises(JobExecutionRevoked):
+            asyncio.run(
+                McpAlgorithmExecutor(FakePool(), signing_key="secret").execute(
+                    command, context
+                )
+            )
+    finally:
+        JobExecutionGuard.reset(token)
+    assert calls == ["ensure", "after"]
+
+
+def test_executor_maps_remote_stale_lease_to_job_execution_revoked() -> None:
+    context = _context()
+    command = _command(context)
+
+    class FakePool:
+        async def call_tool(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                structured_content={
+                    "ok": False,
+                    "error": {"code": SafeErrorCode.MCP_LEASE_STALE.value},
+                }
+            )
+
+    with pytest.raises(JobExecutionRevoked) as error:
+        asyncio.run(
+            McpAlgorithmExecutor(FakePool(), signing_key="secret").execute(
+                command, context
+            )
+        )
+    assert error.value.invocation_id == command.invocation_id
+    assert error.value.remote_execution_status == "revoked"
+
+
+def test_executor_stops_before_retry_backoff_when_guard_is_revoked() -> None:
+    context = _context()
+    command = _command(context)
+    guard = JobExecutionGuard("job", "worker", 1, 1)
+    calls = []
+
+    async def ensure_active():
+        calls.append("ensure")
+
+    async def check_after_call():
+        calls.append("after")
+        raise JobExecutionRevoked("revoked before retry")
+
+    guard.ensure_active = ensure_active
+    guard.check_after_call = check_after_call
+
+    class FakePool:
+        call_count = 0
+
+        async def call_tool(self, *_args, **_kwargs):
+            self.call_count += 1
+            raise McpTransportError("mcp-1", 0)
+
+    pool = FakePool()
+    token = guard.install()
+    try:
+        with pytest.raises(JobExecutionRevoked):
+            asyncio.run(
+                McpAlgorithmExecutor(
+                    pool,
+                    signing_key="secret",
+                    retry_backoff_seconds=0,
+                ).execute(command, context)
+            )
+    finally:
+        JobExecutionGuard.reset(token)
+    assert pool.call_count == 1
+    assert calls == ["ensure", "after"]
+
+
+def test_executor_marks_canceled_remote_call_with_same_invocation_identity() -> None:
+    context = _context()
+    command = _command(context)
+
+    class FakePool:
+        async def call_tool(self, *_args, **_kwargs):
+            raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError) as error:
+        asyncio.run(
+            McpAlgorithmExecutor(FakePool(), signing_key="secret").execute(
+                command, context
+            )
+        )
+    assert error.value.invocation_id == command.invocation_id
+    assert error.value.remote_execution_status == "unknown"

@@ -311,6 +311,8 @@ class CausalMcpService:
         }
         if command.invocation_id != context.invocation_id:
             return error_payload(SafeErrorCode.MCP_CONTEXT_INVALID.value, trace=trace)
+        if command.input_identity != context.input_snapshot_digest:
+            return error_payload(SafeErrorCode.MCP_CONTEXT_INVALID.value, trace=trace)
         try:
             verify_invocation(
                 context,

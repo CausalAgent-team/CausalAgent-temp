@@ -28,6 +28,7 @@ import logging
 from collections.abc import Mapping
 import asyncio
 import inspect
+from dataclasses import replace
 from typing import Any
 
 from Agent.deep_agent.finalization import (
@@ -38,7 +39,13 @@ from Agent.deep_agent.memory import MEMORY_PATHS, MEMORY_TEMPLATES, trusted_memo
 from Agent.deep_agent.state import (
     assert_checkpoint_state_safe,
     from_deep_agent_output,
+    retry_deep_agent_from_checkpoint,
     to_deep_agent_input,
+)
+from Agent.deep_agent_tools.identity import (
+    build_deep_agent_execution_scope,
+    build_deep_agent_run_id,
+    build_deep_agent_step_id,
 )
 from Agent.deep_agent_tools.models import (
     AlgorithmResult,
@@ -46,6 +53,8 @@ from Agent.deep_agent_tools.models import (
     WebEvidenceResult,
 )
 
+
+DEEP_AGENT_CHECKPOINT_NAMESPACE = "deep_agent_v1"
 
 
 
@@ -452,20 +461,108 @@ async def _deep_agent_parent_node(
         context=context,
         lock=memory_init_lock,
     )
-    child_input = to_deep_agent_input(state)
-    if context is not None and hasattr(context, "assert_state_safe"):
+    trusted_identity = getattr(context, "trusted_identity", None)
+    if trusted_identity is None:
+        raise RuntimeError("Deep Agent child requires a trusted Job identity")
+    job_id = str(trusted_identity.job_id)
+    expected_child_run_id = build_deep_agent_run_id(job_id=trusted_identity.job_id)
+    supplied_child_run_id = state.get("deep_agent_run_id")
+    if supplied_child_run_id and str(supplied_child_run_id) != expected_child_run_id:
+        raise RuntimeError("Deep Agent child run identity is invalid")
+    child_run_id = expected_child_run_id
+    child_config = dict(config or {})
+    child_config["configurable"] = dict(child_config.get("configurable") or {})
+    child_config["configurable"]["thread_id"] = child_run_id
+    child_config["configurable"]["checkpoint_ns"] = DEEP_AGENT_CHECKPOINT_NAMESPACE
+    child_config["metadata"] = dict(child_config.get("metadata") or {})
+    child_config["metadata"]["deep_agent_run_id"] = child_run_id
+
+    child_context = context
+    execution_info = getattr(runtime, "execution_info", None)
+    parent_task_id = getattr(execution_info, "task_id", None)
+    if isinstance(context, AgentRunContext) and parent_task_id:
+        child_context = replace(
+            context,
+            deep_agent_step_id=build_deep_agent_step_id(
+                job_id=trusted_identity.job_id,
+                attempt_count=int(trusted_identity.attempt_count),
+                task_id=str(parent_task_id),
+            ),
+        )
+
+    current_scope = None
+    if trusted_identity is not None:
+        current_scope = build_deep_agent_execution_scope(
+            job_id=trusted_identity.job_id,
+            attempt_count=int(trusted_identity.attempt_count),
+            lease_epoch=int(trusted_identity.lease_epoch),
+            input_identity=trusted_identity.input_identity,
+        )
+
+    # 子图 checkpoint 是内部 messages/官方 State 的真相源。父图重跑这个
+    # 节点时，先读取稳定 child thread：未完成或已完成的 child 都可直接
+    # 从 checkpoint 继续/取回；只有首次进入才从父图最小投影构造输入。
+    child_snapshot = None
+    get_child_state = getattr(deep_agent, "aget_state", None)
+    if callable(get_child_state):
+        child_snapshot = await get_child_state(child_config)
+        if context is not None and hasattr(context, "check_after_call"):
+            await context.check_after_call()
+        elif context is not None and hasattr(context, "ensure_active"):
+            await context.ensure_active()
+    checkpoint_values = getattr(child_snapshot, "values", None)
+    retry_instruction = state.get("deep_agent_retry_instruction")
+    checkpoint_matches = bool(
+        isinstance(checkpoint_values, Mapping)
+        and checkpoint_values
+        and current_scope
+        and checkpoint_values.get("execution_scope") == current_scope
+    )
+    if checkpoint_matches:
+        assert_checkpoint_state_safe(checkpoint_values)
+        if isinstance(retry_instruction, str) and retry_instruction.strip():
+            child_input = retry_deep_agent_from_checkpoint(
+                checkpoint_values,
+                retry_instruction=retry_instruction,
+            )
+        else:
+            child_input = None
+    else:
+        child_input = to_deep_agent_input(
+            {**state, "deep_agent_run_id": child_run_id},
+            reset_execution_artifacts=True,
+        )
+    if isinstance(child_input, Mapping) and current_scope:
+        child_input["execution_scope"] = current_scope
+    if child_input is not None and context is not None and hasattr(context, "assert_state_safe"):
         context.assert_state_safe(child_input)
     child_state = await deep_agent.ainvoke(
         child_input,
-        config=config,
-        context=context,
+        config=child_config,
+        context=child_context,
     )
+    if context is not None and hasattr(context, "check_after_call"):
+        await context.check_after_call()
+    elif context is not None and hasattr(context, "ensure_active"):
+        await context.ensure_active()
     if not isinstance(child_state, Mapping):
         raise RuntimeError("Deep Agent returned an invalid State")
     assert_checkpoint_state_safe(child_state)
+    if child_state.get("deep_agent_run_id") != child_run_id:
+        raise RuntimeError("Deep Agent returned an invalid child run identity")
+    if child_state.get("execution_scope") != current_scope:
+        raise RuntimeError("Deep Agent returned an invalid execution scope")
     update = dict(from_deep_agent_output(child_state))
+    update["deep_agent_run_id"] = child_run_id
+    update["deep_agent_status"] = "completed"
     # data_profile 是外层 admission 的只读摘要副本，不是 runtime dependency。
-    update["data_profile"] = child_input["data_profile"]
+    data_profile = (
+        child_input.get("data_profile")
+        if isinstance(child_input, Mapping)
+        else child_state.get("data_profile")
+    )
+    if data_profile is not None:
+        update["data_profile"] = data_profile
     # report_node 仍使用既有 formatter；这里仅投影结构化证据，不把
     # provider response、raw result 或运行时对象带回父 State。
     update["knowledge_base_result"] = _legacy_rag_evidence_result(

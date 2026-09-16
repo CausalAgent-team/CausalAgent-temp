@@ -34,12 +34,13 @@ def _snapshot_interrupts(snapshot: Any) -> list[Any]:
 
 
 def _raise_wrapped_cancellation(error: BaseException) -> None:
-    """Restore worker cancellation semantics after LangGraph wraps node cancellation."""
+    """Restore worker control-flow semantics after LangGraph wraps node errors."""
 
+    cause = getattr(error, "error", None) or error.__cause__
     if isinstance(error, NodeCancelledError) and isinstance(
-        error.__cause__, asyncio.CancelledError
+        cause, (asyncio.CancelledError, JobExecutionRevoked)
     ):
-        raise error.__cause__
+        raise cause
 
 
 def _interrupt_id(interrupt_obj: Any) -> str:

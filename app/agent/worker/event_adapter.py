@@ -7,6 +7,8 @@ import re
 import time
 from typing import Any
 
+from Agent.deep_agent_tools.identity import build_deep_agent_step_id
+
 
 NODE_DESCRIPTIONS = {
     "agent": "分析用户意图",
@@ -46,6 +48,7 @@ DECISION_FIELDS = {
 }
 _SAFE_TOOL_NAME = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 _SAFE_ERROR_CODE = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
+_SAFE_STEP_ID = re.compile(r"^[0-9a-f]{24}$")
 _ALGORITHM_TOOL_NAMES = {
     "causal.pc": "causal_pc",
     "causal.olc": "causal_olc",
@@ -85,6 +88,8 @@ class LangGraphEventAdapter:
         self.active_by_node: dict[str, str] = {}
         self.failed_attempts: dict[str, str] = {}
         self.streams: dict[str, dict[str, Any]] = {}
+        self._lifecycle_tools: set[str] = set()
+        self._lifecycle_started_tools: set[str] = set()
 
     def _base(self, event_type: str, step: dict[str, Any]) -> dict[str, Any]:
         """构造所有阶段事件共享的持久化字段。"""
@@ -106,6 +111,26 @@ class LangGraphEventAdapter:
         parent_name = TOOL_STAGE_NODES.get(node_name)
         return self._active_step(parent_name) if parent_name else None
 
+    def _lifecycle_step(self, data: dict[str, Any]) -> dict[str, Any] | None:
+        """用父阶段或可信 supplied step_id 关联工具生命周期事件。"""
+
+        active = self._active_step("deep_agent")
+        if active is not None:
+            return active
+        supplied_step_id = str(data.get("step_id") or "")
+        if not _SAFE_STEP_ID.fullmatch(supplied_step_id):
+            return None
+        synthetic_key = f"lifecycle:{supplied_step_id}"
+        step = self.steps.get(synthetic_key)
+        if step is None:
+            step = {
+                "step_id": supplied_step_id,
+                "node_name": "deep_agent",
+                "started_at": time.monotonic(),
+            }
+            self.steps[synthetic_key] = step
+        return step
+
     def _task_event(self, namespace: Any, data: Any) -> list[dict[str, Any]]:
         """将根图 tasks 开始/结束转换为阶段生命周期事件。"""
         if namespace or not isinstance(data, dict):
@@ -115,8 +140,17 @@ class LangGraphEventAdapter:
         if not task_id or node_name not in NODE_DESCRIPTIONS:
             return []
         if "input" in data:
+            step_id = (
+                build_deep_agent_step_id(
+                    job_id=self.job_id,
+                    attempt_count=self.job_attempt,
+                    task_id=task_id,
+                )
+                if node_name == "deep_agent"
+                else _opaque_id(self.job_id, self.job_attempt, task_id)
+            )
             step = {
-                "step_id": _opaque_id(self.job_id, self.job_attempt, task_id),
+                "step_id": step_id,
                 "node_name": node_name,
                 "started_at": time.monotonic(),
             }
@@ -143,6 +177,42 @@ class LangGraphEventAdapter:
         if not isinstance(data, dict):
             return []
         event_type = data.get("type")
+        if event_type in {"tool_call_start", "tool_call_result"}:
+            step = self._lifecycle_step(data)
+            tool_name = self._safe_public_tool_name(data.get("tool_name"))
+            if event_type == "tool_call_result":
+                # 结果事件可能在 graph stream 的 task 事件之后才到达；先记住
+                # 已完成的逻辑工具，避免后续聚合 update 再造一条结果事件。
+                if step is not None:
+                    self._lifecycle_tools.add(tool_name)
+            elif step is not None:
+                self._lifecycle_started_tools.add(tool_name)
+            if not step:
+                return []
+            event = self._base(event_type, step)
+            supplied_step_id = str(data.get("step_id") or "")
+            if _SAFE_STEP_ID.fullmatch(supplied_step_id):
+                event["step_id"] = supplied_step_id
+            event["tool_name"] = tool_name
+            supplied_event_key = str(data.get("_event_key") or "")
+            if supplied_event_key and len(supplied_event_key) <= 255:
+                event["_event_key"] = supplied_event_key
+            if event_type == "tool_call_start":
+                event["argument_keys"] = []
+            else:
+                event["summary"] = (
+                    "调用完成"
+                    if data.get("status") == "succeeded"
+                    else "调用已取消"
+                    if str(data.get("status") or "").lower()
+                    in {"canceled", "cancelled"}
+                    else "调用失败"
+                )
+                event["status"] = self._safe_result_status(data)
+                safe_error_code = self._safe_error_code(data)
+                if safe_error_code:
+                    event["safe_error_code"] = safe_error_code
+            return [event]
         task_id = str(data.get("task_id") or "")
         node_name = data.get("node_name")
         if event_type == "node_attempt_failed" and task_id:
@@ -201,6 +271,8 @@ class LangGraphEventAdapter:
             return "not_ready"
         if normalized in {"timed_out", "timeout"}:
             return "timed_out"
+        if normalized in {"canceled", "cancelled"}:
+            return "canceled"
         if normalized in {
             "invalid_input",
             "not_applicable",
@@ -255,10 +327,13 @@ class LangGraphEventAdapter:
             return []
         events: list[dict[str, Any]] = []
         for result in results.values():
+            tool_name = self._safe_algorithm_tool_name(result)
+            if tool_name in self._lifecycle_tools:
+                continue
             event = self._base("tool_call_result", step)
             event.update(
                 {
-                    "tool_name": self._safe_algorithm_tool_name(result),
+                    "tool_name": tool_name,
                     "summary": (
                         "调用完成"
                         if self._safe_result_status(result) == "succeeded"
@@ -305,7 +380,7 @@ class LangGraphEventAdapter:
             messages = output.get("messages") or []
             latest = messages[-1] if messages else None
             tool_name, argument_keys = self._tool_call(latest)
-            if tool_name:
+            if tool_name and tool_name not in self._lifecycle_started_tools:
                 event = self._base("tool_call_start", tool_step)
                 event.update(
                     {
