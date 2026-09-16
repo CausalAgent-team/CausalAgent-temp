@@ -1,7 +1,7 @@
 import asyncio
 import os
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 
 TEST_ENV = {
@@ -17,6 +17,7 @@ TEST_ENV = {
 for key, value in TEST_ENV.items():
     os.environ.setdefault(key, value)
 
+from app.agent.worker.event_adapter import classify_graph_failure  # noqa: E402
 from app.agent.worker.event_writer import (  # noqa: E402
     OrderedEventWriter,
     TEXT_FLUSH_CHARACTER_LIMIT,
@@ -177,10 +178,17 @@ class OrderedEventWriterTests(unittest.IsolatedAsyncioTestCase):
             return_value=FailJobResult.CANCELED_FENCED,
         ):
             with self.assertRaises(JobExecutionRevoked):
-                await writer.submit({"type": "error", "message": "迟到错误"})
+                await writer.submit(
+                    {
+                        "type": "error",
+                        "message": "迟到错误",
+                        "_diagnostic": classify_graph_failure(RuntimeError("boom")),
+                    }
+                )
 
         self.assertFalse(writer.terminal_seen)
         self.assertIsNone(writer.terminal_type)
+        self.assertIsNone(writer.terminal_diagnostic)
         await writer.abort(JobExecutionRevoked("cancelled"))
 
     async def test_terminal_type_distinguishes_final_interrupt_and_error(self):
@@ -205,6 +213,31 @@ class OrderedEventWriterTests(unittest.IsolatedAsyncioTestCase):
             await writer.close()
         self.assertTrue(writer.terminal_seen)
         self.assertEqual(writer.terminal_type, "error")
+
+    async def test_error_terminal_keeps_diagnostic_in_memory_without_persisting_it(self):
+        """内部诊断只挂在 writer 上供日志使用，落库仍只有脱敏文案。"""
+        error = ConnectionRefusedError("db.internal:5432 refused")
+        writer = OrderedEventWriter(build_job(), "worker-a")
+        fail_job = Mock(return_value=FailJobResult.APPLIED)
+        with patch("app.agent.job_service.fail_job", fail_job):
+            await writer.submit(
+                {
+                    "type": "error",
+                    "message": "节点执行失败",
+                    "attempt": 2,
+                    "_diagnostic": classify_graph_failure(error),
+                }
+            )
+            await writer.close()
+
+        fail_job.assert_called_once()
+        self.assertEqual(fail_job.call_args.args[3], "节点执行失败")
+        self.assertNotIn("db.internal", repr(fail_job.call_args))
+
+        diagnostic = writer.terminal_diagnostic
+        self.assertEqual(diagnostic.error_category, "provider_error")
+        self.assertEqual(diagnostic.reason_code, "connection_unavailable")
+        self.assertIs(diagnostic.exc_info[1], error)
 
 
 if __name__ == "__main__":
