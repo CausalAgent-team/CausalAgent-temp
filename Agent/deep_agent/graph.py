@@ -15,6 +15,10 @@ from typing import Any
 
 from Agent.deep_agent_tools.identity import new_message_execution_id
 from Agent.deep_agent_tools.models import FinalAnalysisDecision
+from Agent.deep_agent_tools.registry import AlgorithmRegistry
+from Agent.deep_agent_tools.dependency_dispatch import (
+    build_algorithm_dependency_middleware,
+)
 
 from .context import AgentRunContext
 from .memory import MEMORY_PATHS
@@ -262,6 +266,7 @@ def build_deep_agent(
     store: Any,
     config: DeepAgentGraphConfig | None = None,
     checkpointer: Any | None = None,
+    registry: AlgorithmRegistry | None = None,
 ) -> Any:
     """按技术设计组装真实 Deep Agent graph。
 
@@ -290,6 +295,20 @@ def build_deep_agent(
         tools=["read_file", "edit_file"],
         _permissions=permissions,
     )
+    middleware = [
+        filesystem_middleware,
+        _build_summarization_middleware(configured_model, profile),
+        *build_budget_middlewares(profile),
+        _build_message_identity_middleware(),
+    ]
+    if registry is not None:
+        middleware.append(
+            build_algorithm_dependency_middleware(
+                registry=registry,
+                max_parallel_tools_per_job=profile.budget.max_parallel_tools_per_job,
+                timeout_seconds=profile.budget.tool_node_timeout_seconds,
+            )
+        )
     kwargs: dict[str, Any] = {
         "model": configured_model,
         "tools": _materialize_domain_tools(domain_tools),
@@ -301,12 +320,7 @@ def build_deep_agent(
         ),
         "backend": backend,
         "store": store,
-        "middleware": [
-            filesystem_middleware,
-            _build_summarization_middleware(configured_model, profile),
-            *build_budget_middlewares(profile),
-            _build_message_identity_middleware(),
-        ],
+        "middleware": middleware,
         "permissions": permissions,
         "checkpointer": checkpointer,
         "state_schema": ProjectDeepAgentState,

@@ -11,18 +11,20 @@ from Agent.deep_agent_tools.algorithm_specs import (
     AlgorithmSpec,
     CausalPcInput,
     DEFAULT_ALGORITHM_SPECS,
+    OLC_SPEC,
     PC_SPEC,
     build_tool_schema_snapshot,
 )
 from Agent.deep_agent_tools.models import StandardizedGraph
 
 
-def test_three_initial_specs_have_frozen_capability_contract() -> None:
+def test_default_specs_only_enable_reviewed_runtime_capabilities() -> None:
     assert [spec.capability_id for spec in DEFAULT_ALGORITHM_SPECS] == [
         "causal.pc",
-        "causal.olc",
         "causal.direct_lingam",
     ]
+    assert OLC_SPEC.capability_id == "causal.olc"
+    assert OLC_SPEC not in DEFAULT_ALGORITHM_SPECS
     assert PC_SPEC.tool_name == "causal_pc"
     assert PC_SPEC.requires == frozenset({"tabular_dataset"})
     assert PC_SPEC.produces == frozenset({"standardized_graph", "diagnostics"})
@@ -37,8 +39,11 @@ def test_spec_digest_and_tool_schema_are_stable() -> None:
     assert first_digest == second_digest
 
     schema = PC_SPEC.build_tool_schema()
+    assert PC_SPEC.spec_digest == first_digest
     assert set(schema) == {"name", "description", "parameters"}
     assert schema["name"] == "causal_pc"
+    assert "public_decision" in schema["parameters"]["properties"]
+    assert "public_decision" not in CausalPcInput.model_fields
     assert "user_id" not in json.dumps(schema, ensure_ascii=False)
     assert "job_id" not in json.dumps(schema, ensure_ascii=False)
     assert schema["parameters"]["additionalProperties"] is False
@@ -48,7 +53,6 @@ def test_tool_snapshot_contains_capability_and_spec_identity() -> None:
     snapshot = build_tool_schema_snapshot()
     assert [item["capability_id"] for item in snapshot] == [
         "causal.direct_lingam",
-        "causal.olc",
         "causal.pc",
     ]
     assert all(len(item["spec_digest"]) == 64 for item in snapshot)

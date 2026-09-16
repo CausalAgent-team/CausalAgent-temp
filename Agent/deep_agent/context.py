@@ -60,12 +60,18 @@ class TrustedJobIdentity:
             or self.input_snapshot_digest != self.input_snapshot_digest.strip()
         ):
             raise ValueError("input_snapshot_digest must be blank or a trimmed string")
+        if self.input_snapshot_digest is not None and (
+            self.input_snapshot_digest != self.input_identity
+        ):
+            raise ValueError(
+                "input_snapshot_digest must equal input_identity for the frozen input hash"
+            )
 
     def to_mcp_context(
         self,
         *,
         invocation_id: str,
-        key_id: str = "deep-agent-runtime",
+        key_id: str = "current",
         ttl_seconds: int = 900,
         now: datetime | None = None,
     ) -> McpInvocationContext:
@@ -101,12 +107,24 @@ class AgentRunContext:
     """
 
     execution_guard: Any | None
-    trusted_identity: TrustedJobIdentity
-    algorithm_executor: Any
+    trusted_identity: TrustedJobIdentity | None = None
+    algorithm_executor: Any | None = None
     rag_executor: Any | None = None
     web_executor: Any | None = None
     filesystem_backend: Any | None = None
-    web_search_enabled: bool = False
+    # ``None`` means the caller did not provide a per-Job decision.  Production
+    # worker invocations always bind a concrete bool; keeping the compatibility
+    # default tri-state prevents isolated Tool tests from silently changing
+    # their explicitly constructed WebEvidenceTool behavior.
+    web_search_enabled: bool | None = None
+    rag_available: bool | None = None
+    rag_release_id: str | None = None
+    rag_error_code: str | None = None
+    # 仅由 worker 注入的持久化事件边界；绝不进入 State/checkpoint。
+    event_sink: Any | None = None
+    # 父图 Deep Agent task 的 opaque step ID；只用于把 child tool 事件关联到
+    # 已持久化的父阶段，不进入 State/checkpoint。
+    deep_agent_step_id: str | None = None
 
     async def ensure_active(self) -> None:
         """在跨边界调用前复用已有 JobExecutionGuard 的资格检查。"""
@@ -121,10 +139,25 @@ class AgentRunContext:
         if inspect.isawaitable(result):
             await result
 
+    async def check_after_call(self) -> None:
+        """在跨边界调用返回后复用已有 JobExecutionGuard 的资格检查。"""
+
+        guard = self.execution_guard
+        if guard is None:
+            return
+        check_after_call = getattr(guard, "check_after_call", None)
+        if check_after_call is None:
+            return
+        result = check_after_call()
+        if inspect.isawaitable(result):
+            await result
+
     def assert_state_safe(self, state: object) -> None:
         """拒绝把本 runtime context 直接放入 State。"""
 
-        if state is self or state is self.algorithm_executor:
+        if state is self or (
+            self.algorithm_executor is not None and state is self.algorithm_executor
+        ):
             raise TypeError("runtime context objects must not enter graph state")
         if isinstance(state, dict):
             forbidden = {
@@ -134,6 +167,8 @@ class AgentRunContext:
                 "web_executor",
                 "filesystem_backend",
                 "trusted_identity",
+                "event_sink",
+                "deep_agent_step_id",
             }
             leaked = forbidden.intersection(state)
             if leaked:
@@ -141,4 +176,3 @@ class AgentRunContext:
                     "runtime-only fields must not enter graph state: "
                     + ", ".join(sorted(leaked))
                 )
-

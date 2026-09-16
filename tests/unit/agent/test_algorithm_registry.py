@@ -6,6 +6,7 @@ import pytest
 
 from Agent.deep_agent_tools import (
     AlgorithmRegistry,
+    DIRECT_LINGAM_SPEC,
     PC_SPEC,
     RegistryConflictError,
     UnknownCapabilityError,
@@ -64,5 +65,21 @@ def test_registry_unknown_capability_is_not_dynamic_registration() -> None:
 
 
 def test_default_registry_requires_all_static_bindings() -> None:
-    with pytest.raises(UnknownCapabilityError, match="causal.olc"):
+    with pytest.raises(UnknownCapabilityError, match="causal.direct_lingam"):
         build_default_registry({"causal.pc": object()})
+
+
+def test_default_registry_does_not_expose_disabled_olc() -> None:
+    registry = build_default_registry(
+        {
+            "causal.pc": object(),
+            "causal.direct_lingam": object(),
+        }
+    )
+
+    assert [entry.spec for entry in registry.entries] == [
+        DIRECT_LINGAM_SPEC,
+        PC_SPEC,
+    ]
+    with pytest.raises(UnknownCapabilityError, match="causal.olc"):
+        registry.get("causal.olc")

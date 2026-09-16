@@ -229,6 +229,7 @@ study/
 admin-frontend/node_modules/
 admin-frontend/test-results/
 admin-frontend/playwright-report/
+.playwright-cli/
 app/rag_eval/frontend/node_modules/
 app/static/rag_eval_app/
 !app/static/rag_eval_app/

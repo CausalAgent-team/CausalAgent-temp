@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
+from Agent.execution_control import JobExecutionRevoked
 from ..algorithm_executor import AlgorithmExecutorError, validate_executor_result
 from ..algorithm_specs import AlgorithmSpec
 from ..error_codes import SafeErrorCode
@@ -25,6 +26,7 @@ from ..models import (
     RAW_RESULT_SERIALIZATION_VERSION,
     RawResultMetadata,
     SafeWarning,
+    build_raw_result_metadata,
     canonical_json_bytes,
 )
 from Agent.deep_agent.memory import CompositeBackend, build_in_memory_backend
@@ -46,6 +48,9 @@ class AdapterInput:
     input_identity: str
     dataset_csv: str | None = None
     missing_values_present: bool = False
+    # 新 MCP 路径由服务端按可信 Job/文件快照强读 CSV；因此不把文件正文
+    # 放进 Deep Agent State。协议测试仍可要求显式 dataset_csv。
+    dataset_authority_available: bool = False
 
     def __post_init__(self) -> None:
         if not self.input_identity or self.input_identity != self.input_identity.strip():
@@ -160,11 +165,54 @@ class BaseAlgorithmAdapter(ABC):
     def _expected_raw_result_ref(command: AlgorithmExecutionCommand) -> str:
         return f"/raw_algorithm_results/{command.invocation_id}/{command.result_index}.json"
 
+    @staticmethod
+    def _read_backend_bytes(raw_backend: Any, raw_result_ref: str) -> bytes | None:
+        """兼容协议 backend 的 bytes 读取和 Deep Agents ReadResult。"""
+
+        stored = raw_backend.read(raw_result_ref)
+        if isinstance(stored, (bytes, bytearray, memoryview)):
+            return bytes(stored)
+        file_data = getattr(stored, "file_data", None)
+        if file_data is None and isinstance(stored, Mapping):
+            file_data = stored.get("file_data")
+        if not isinstance(file_data, Mapping):
+            return None
+        content = file_data.get("content")
+        if not isinstance(content, str):
+            return None
+        return content.encode("utf-8")
+
+    @staticmethod
+    def _write_raw_result(
+        raw_backend: Any,
+        *,
+        raw_result_ref: str,
+        raw_result: Any,
+    ) -> RawResultMetadata:
+        """写入协议 backend 或官方 StateBackend 并返回 canonical 元数据。"""
+
+        writer = getattr(raw_backend, "write_raw_result", None)
+        if callable(writer):
+            return writer(raw_result_ref=raw_result_ref, raw_result=raw_result)
+        metadata = build_raw_result_metadata(
+            raw_result_ref=raw_result_ref,
+            raw_result=raw_result,
+        )
+        payload = canonical_json_bytes(raw_result)
+        result = raw_backend.write(raw_result_ref, payload.decode("utf-8"))
+        error = getattr(result, "error", None)
+        if error is None and isinstance(result, Mapping):
+            error = result.get("error")
+        if error:
+            raise RawResultIntegrityError("raw result backend rejected write")
+        return metadata
+
     def _verify_raw_result_metadata(
         self,
         *,
         metadata: RawResultMetadata,
         expected_ref: str,
+        raw_backend: Any | None = None,
     ) -> None:
         """从 backend 回读 raw 文件并验证完整性后才允许发布引用。"""
 
@@ -186,12 +234,10 @@ class BaseAlgorithmAdapter(ABC):
 
         # raw_backend.read() 是唯一的回读入口；这里不重新调用 executor，也不依据
         # executor 返回的 payload 代替 backend 中实际保存的字节。
-        stored = self.raw_backend.read(raw_result_ref)
+        stored = self._read_backend_bytes(raw_backend or self.raw_backend, raw_result_ref)
         if stored is None:
             raise RawResultIntegrityError("raw result reference is missing")
-        if not isinstance(stored, (bytes, bytearray, memoryview)):
-            raise RawResultIntegrityError("raw result backend returned non-bytes content")
-        payload = bytes(stored)
+        payload = stored
 
         try:
             decoded = payload.decode("utf-8")
@@ -210,7 +256,13 @@ class BaseAlgorithmAdapter(ABC):
         if actual_sha256 != metadata.raw_result_sha256:
             raise RawResultIntegrityError("raw result hash does not match metadata")
 
-    def _verify_raw_result(self, *, result: AlgorithmResult, command: AlgorithmExecutionCommand) -> None:
+    def _verify_raw_result(
+        self,
+        *,
+        result: AlgorithmResult,
+        command: AlgorithmExecutionCommand,
+        raw_backend: Any | None = None,
+    ) -> None:
         """统一验证 Adapter 写入和 executor 提供的 raw result 引用。"""
 
         if result.raw_result_ref is None:
@@ -224,6 +276,7 @@ class BaseAlgorithmAdapter(ABC):
         self._verify_raw_result_metadata(
             metadata=metadata,
             expected_ref=self._expected_raw_result_ref(command),
+            raw_backend=raw_backend,
         )
 
     async def run(
@@ -236,11 +289,21 @@ class BaseAlgorithmAdapter(ABC):
         response_identity: str,
         retry_ordinal: int = 0,
         result_index: int = 0,
+        executor: Any | None = None,
+        raw_backend: Any | None = None,
     ) -> AlgorithmResult:
         if not provider_call_id or provider_call_id != provider_call_id.strip():
             raise ValueError("provider_call_id must be a non-blank string")
         if retry_ordinal < 0:
             raise ValueError("retry_ordinal must be non-negative")
+        expected_input_identity = getattr(trusted_context, "input_snapshot_digest", None)
+        if expected_input_identity is None:
+            expected_input_identity = getattr(trusted_context, "input_identity", None)
+        if adapter_input.input_identity != expected_input_identity:
+            raise AlgorithmExecutorError(
+                "adapter input identity does not match trusted context",
+                safe_error_code=SafeErrorCode.MCP_CONTEXT_INVALID,
+            )
 
         # 先校验模型参数；Pydantic 错误只在内部用于分类，不原样进入输出。
         try:
@@ -308,7 +371,9 @@ class BaseAlgorithmAdapter(ABC):
             )
 
         try:
-            result = await self.executor.execute(command, context)
+            active_executor = executor or self.executor
+            active_raw_backend = raw_backend or self.raw_backend
+            result = await active_executor.execute(command, context)
             raw_executor_payload = dict(result) if isinstance(result, Mapping) else None
             if isinstance(result, Mapping):
                 result = result_from_runner_payload(
@@ -343,7 +408,8 @@ class BaseAlgorithmAdapter(ABC):
                     f"/raw_algorithm_results/{command.invocation_id}/{result_index}.json"
                 )
                 raw_payload = raw_executor_payload or result.model_dump(mode="json")
-                metadata = self.raw_backend.write_raw_result(
+                metadata = self._write_raw_result(
+                    active_raw_backend,
                     raw_result_ref=raw_result_ref,
                     raw_result=raw_payload,
                 )
@@ -355,7 +421,11 @@ class BaseAlgorithmAdapter(ABC):
                         "raw_result_serialization_version": metadata.raw_result_serialization_version,
                     }
                 )
-            self._verify_raw_result(result=result, command=command)
+            self._verify_raw_result(
+                result=result,
+                command=command,
+                raw_backend=active_raw_backend,
+            )
             return result
         except AlgorithmExecutorError as exc:
             if exc.status == "canceled":
@@ -384,7 +454,11 @@ class BaseAlgorithmAdapter(ABC):
                 safe_error_code=SafeErrorCode.ALGORITHM_TIMED_OUT,
                 preprocessing_recipe_digest=recipe.digest,
             )
-        except Exception:
+        except Exception as exc:
+            # Job revoke 是 worker 控制流；它继承 RuntimeError，必须先于
+            # 通用失败归类拦截，避免生成 execution_failed AlgorithmResult。
+            if isinstance(exc, JobExecutionRevoked):
+                raise
             return self._base_result(
                 command=command,
                 context=context,

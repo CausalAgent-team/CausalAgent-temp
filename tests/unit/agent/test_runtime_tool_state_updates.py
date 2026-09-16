@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from types import SimpleNamespace
 
 from langchain_core.messages import AIMessage
@@ -97,6 +98,90 @@ def test_algorithm_langchain_tool_writes_result_and_terminal_ledger() -> None:
     assert command.update["messages"][0].tool_call_id == "provider-call-1"
 
 
+def test_algorithm_public_decision_is_emitted_and_removed_before_execution() -> None:
+    executor = FakeAlgorithmExecutor()
+    events = []
+    context, tool = _algorithm_tool(executor=executor)
+    context = replace(
+        context,
+        event_sink=lambda payload: events.append(dict(payload)),
+    )
+    tool = next(
+        item
+        for item in build_algorithm_tools(
+            build_default_registry(
+                build_default_adapters(
+                    executor=executor,
+                    raw_backend=build_in_memory_backend(user_id=7),
+                )
+            ),
+            runtime_context=context,
+            data_profile=DataProfile(
+                row_count=100,
+                column_count=2,
+                column_names=("x", "y"),
+                numeric_columns=("x", "y"),
+            ),
+        )
+        if item.name == "causal_pc"
+    ).to_langchain_tool()
+
+    asyncio.run(
+        tool.coroutine(
+            runtime=_runtime(context, call_id="provider-call-public-decision"),
+            alpha=0.05,
+            public_decision={"summary": "数据为连续数值，因此调用 PC 比较结构稳定性。"},
+        )
+    )
+
+    assert [event["type"] for event in events] == [
+        "decision",
+        "tool_call_start",
+        "tool_call_result",
+    ]
+    assert events[0]["decision_kind"] == "algorithm"
+    assert events[0]["tool_name"] == "causal_pc"
+    assert executor.calls[0].command.parameters == {"alpha": 0.05}
+
+
+def test_invalid_public_decision_does_not_block_algorithm_execution() -> None:
+    executor = FakeAlgorithmExecutor()
+    events = []
+    context, tool = _algorithm_tool(executor=executor)
+    context = replace(
+        context,
+        event_sink=lambda payload: events.append(dict(payload)),
+    )
+    tool = next(
+        item
+        for item in build_algorithm_tools(
+            build_default_registry(
+                build_default_adapters(
+                    executor=executor,
+                    raw_backend=build_in_memory_backend(user_id=7),
+                )
+            ),
+            runtime_context=context,
+            data_profile=DataProfile(row_count=100, column_count=2),
+        )
+        if item.name == "causal_pc"
+    ).to_langchain_tool()
+
+    asyncio.run(
+        tool.coroutine(
+            runtime=_runtime(context, call_id="provider-call-invalid-decision"),
+            alpha=0.05,
+            public_decision={"summary": "bad\nsummary"},
+        )
+    )
+
+    assert [event["type"] for event in events] == [
+        "tool_call_start",
+        "tool_call_result",
+    ]
+    assert len(executor.calls) == 1
+
+
 def test_tool_node_injects_runtime_and_reducers_commit_command_update() -> None:
     context, tool = _algorithm_tool(executor=FakeAlgorithmExecutor())
     builder = StateGraph(ProjectDeepAgentState, context_schema=AgentRunContext)
@@ -170,6 +255,7 @@ def test_rag_and_web_tools_write_evidence_and_terminal_ledgers() -> None:
         def get_evidence(self, query, *, max_contexts=None):
             return {
                 "status": "available",
+                "release_id": "mm_" + "a" * 20,
                 "evidence": [
                     {"evidence_ref": "rag:1", "snippet": "RAG evidence"}
                 ],
@@ -210,8 +296,120 @@ def test_rag_and_web_tools_write_evidence_and_terminal_ledgers() -> None:
     assert web_ledger.final_status == "succeeded"
 
 
+def test_tool_lifecycle_sink_is_awaited_around_real_retrieval() -> None:
+    events = []
+    calls = []
+
+    async def sink(payload):
+        events.append((payload["type"], len(calls)))
+
+    context = AgentRunContext(
+        execution_guard=None,
+        trusted_identity=IDENTITY,
+        event_sink=sink,
+    )
+
+    class Retriever:
+        def get_evidence(self, query, *, max_contexts=None):
+            calls.append(query)
+            return {"status": "no_relevant_evidence", "evidence": []}
+
+    tool = RagEvidenceTool(Retriever()).to_langchain_tool()
+    asyncio.run(
+        tool.coroutine(
+            runtime=_runtime(context, call_id="rag-lifecycle-1"),
+            query="causal inference",
+        )
+    )
+
+    assert events == [("tool_call_start", 0), ("tool_call_result", 1)]
+
+
+def test_canceled_tool_lifecycle_uses_same_summary_for_sink_and_stream() -> None:
+    events = []
+
+    async def sink(payload):
+        events.append(dict(payload))
+
+    context = AgentRunContext(
+        execution_guard=None,
+        trusted_identity=IDENTITY,
+        event_sink=sink,
+    )
+
+    class Retriever:
+        def get_evidence(self, query, *, max_contexts=None):
+            raise asyncio.CancelledError()
+
+    tool = RagEvidenceTool(Retriever()).to_langchain_tool()
+
+    try:
+        asyncio.run(
+            tool.coroutine(
+                runtime=_runtime(context, call_id="rag-lifecycle-canceled"),
+                query="causal inference",
+            )
+        )
+    except asyncio.CancelledError:
+        pass
+    else:  # pragma: no cover
+        raise AssertionError("canceled tool must propagate CancelledError")
+
+    assert [event["type"] for event in events] == [
+        "tool_call_start",
+        "tool_call_result",
+    ]
+    assert events[1]["status"] == "canceled"
+    assert events[1]["summary"] == "调用已取消"
+
+
+def test_web_tool_honors_trusted_runtime_switch() -> None:
+    calls = []
+    events = []
+
+    async def sink(payload):
+        events.append(dict(payload))
+
+    def search(query, *, max_results):
+        calls.append(query)
+        return {"results": []}
+
+    context = AgentRunContext(
+        execution_guard=None,
+        trusted_identity=IDENTITY,
+        web_search_enabled=False,
+        event_sink=sink,
+    )
+    tool = WebEvidenceTool(search).to_langchain_tool()
+    command = asyncio.run(
+        tool.coroutine(
+            runtime=_runtime(context, call_id="web-call-disabled"),
+            query="causal inference",
+        )
+    )
+
+    payload = json.loads(command.update["messages"][0].content)
+    assert payload["status"] == "disabled"
+    assert calls == []
+    ledger = next(iter(command.update["action_ledger"].values()))
+    assert ledger.final_status == "not_ready"
+    assert ledger.attempts[0].safe_error_code == "WEB_SEARCH_DISABLED"
+    assert events[1]["status"] == "not_ready"
+    assert events[1]["summary"] == "未启用"
+
+
 def test_evidence_unavailable_is_recorded_without_leaking_exception() -> None:
-    context = _context()
+    events = []
+
+    async def sink(payload):
+        events.append(dict(payload))
+
+    context = AgentRunContext(
+        execution_guard=None,
+        trusted_identity=IDENTITY,
+        algorithm_executor=FakeAlgorithmExecutor(),
+        event_sink=sink,
+    )
 
     class BrokenRetriever:
         def get_evidence(self, query, *, max_contexts=None):
@@ -230,6 +428,8 @@ def test_evidence_unavailable_is_recorded_without_leaking_exception() -> None:
     assert "private failure" not in str(payload)
     assert ledger.final_status == "failed"
     assert ledger.attempts[0].safe_error_code == "RAG_RETRIEVAL_UNAVAILABLE"
+    assert events[1]["status"] == "failed"
+    assert events[1]["summary"] == "暂不可用"
 
 
 def test_runtime_identity_has_no_static_fallback() -> None:

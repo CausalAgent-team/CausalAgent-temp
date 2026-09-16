@@ -32,6 +32,7 @@ from Agent.causal_agent.graph_utils import (  # noqa: E402
     guarded_error_handler,
     guarded_router,
 )
+from Agent.deep_agent.context import AgentRunContext  # noqa: E402
 from Agent.causal_agent.fault_tolerance import retry_transient_errors  # noqa: E402
 from app.agent.worker.execution_guard import (  # noqa: E402
     JobExecutionGuard,
@@ -59,6 +60,29 @@ class FakeGuard:
         self.calls.append("after")
         if self.revoked:
             raise JobExecutionRevoked("revoked")
+
+
+def test_bound_node_delegates_checks_through_agent_run_context():
+    """生产 AgentRunContext 必须把节点前后检查委托给 execution guard。"""
+    async def scenario():
+        guard = FakeGuard()
+
+        async def increment(state: GuardState) -> dict[str, int]:
+            return {"value": state["value"] + 1}
+
+        graph = StateGraph(GuardState)
+        graph.add_node("increment", bind_node(increment))
+        graph.set_entry_point("increment")
+
+        result = await graph.compile().ainvoke(
+            {"value": 0},
+            context=AgentRunContext(execution_guard=guard),
+        )
+
+        assert result["value"] == 1
+        assert guard.calls == ["ensure", "after"]
+
+    asyncio.run(scenario())
 
 
 def test_conditional_router_receives_runtime_context_and_checks_before_target():
@@ -263,3 +287,17 @@ async def _revoke_after(guard: JobExecutionGuard, delay: float) -> None:
     """在 retry sleep 中撤销 Guard。"""
     await asyncio.sleep(delay)
     guard.mark_revoked()
+
+
+def test_guard_revocation_wakes_long_running_dependency_waiter() -> None:
+    async def scenario():
+        guard = JobExecutionGuard("job-1", "worker-a", 1, 1)
+        waiter = asyncio.create_task(guard.wait_revoked())
+        await asyncio.sleep(0)
+        assert waiter.done() is False
+        guard.mark_revoked(status="canceled", execution_state="draining")
+        await asyncio.wait_for(waiter, timeout=0.1)
+        assert guard.revoked is True
+        assert guard.last_status == "canceled"
+
+    asyncio.run(scenario())

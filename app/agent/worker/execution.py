@@ -210,6 +210,17 @@ async def _run_job(
     try:
         await guard.ensure_active()
         writer = OrderedEventWriter(job, worker_id, execution_guard=guard)
+        build_run_context = getattr(slot_runtime, "build_run_context", None)
+        agent_runtime_context = (
+            build_run_context(
+                job=job,
+                execution_guard=guard,
+                worker_id=worker_id,
+                event_sink=writer.submit,
+            )
+            if callable(build_run_context)
+            else None
+        )
         latest_input = await asyncio.to_thread(job_service.get_latest_input_value, job_id)
         await guard.check_after_call()
         if latest_input is None:
@@ -243,6 +254,7 @@ async def _run_job(
             initial_input_record=initial_input,
             execution_guard=guard,
             web_search_enabled=bool(job.get("web_search_enabled")),
+            agent_runtime_context=agent_runtime_context,
         )
         try:
             async for payload in graph_stream:

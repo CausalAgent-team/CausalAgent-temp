@@ -13,6 +13,7 @@
             "ALGORITHM_NOT_READY",
             "ALGORITHM_EXECUTION_FAILED",
             "ALGORITHM_TIMED_OUT",
+            "ALGORITHM_CANCELED",
             "ALGORITHM_RESULT_CONTRACT_INVALID",
             "UNKNOWN_CAPABILITY",
             "DUPLICATE_INVOCATION",
@@ -407,6 +408,7 @@
             "ALGORITHM_NOT_READY",
             "ALGORITHM_EXECUTION_FAILED",
             "ALGORITHM_TIMED_OUT",
+            "ALGORITHM_CANCELED",
             "ALGORITHM_RESULT_CONTRACT_INVALID",
             "UNKNOWN_CAPABILITY",
             "DUPLICATE_INVOCATION",
@@ -791,6 +793,7 @@
             "ALGORITHM_NOT_READY",
             "ALGORITHM_EXECUTION_FAILED",
             "ALGORITHM_TIMED_OUT",
+            "ALGORITHM_CANCELED",
             "ALGORITHM_RESULT_CONTRACT_INVALID",
             "UNKNOWN_CAPABILITY",
             "DUPLICATE_INVOCATION",
@@ -1378,6 +1381,7 @@
             "ALGORITHM_NOT_READY",
             "ALGORITHM_EXECUTION_FAILED",
             "ALGORITHM_TIMED_OUT",
+            "ALGORITHM_CANCELED",
             "ALGORITHM_RESULT_CONTRACT_INVALID",
             "UNKNOWN_CAPABILITY",
             "DUPLICATE_INVOCATION",
@@ -1469,6 +1473,68 @@
           "default": null,
           "title": "Result Ref"
         },
+        "job_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Job Id"
+        },
+        "attempt_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attempt Count"
+        },
+        "lease_epoch": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lease Epoch"
+        },
+        "worker_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Worker Id"
+        },
+        "input_identity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Identity"
+        },
         "attempts": {
           "additionalProperties": {
             "$ref": "#/$defs/ActionAttempt"
@@ -1556,6 +1622,23 @@
         "key_id"
       ],
       "title": "McpInvocationContext",
+      "type": "object"
+    },
+    "PublicDecision": {
+      "additionalProperties": false,
+      "description": "模型在 Tool Call 中显式生成、可直接展示的简短决策说明。",
+      "properties": {
+        "summary": {
+          "maxLength": 400,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary"
+      ],
+      "title": "PublicDecision",
       "type": "object"
     },
     "RawResultMetadata": {
@@ -1670,6 +1753,7 @@
             "ALGORITHM_NOT_READY",
             "ALGORITHM_EXECUTION_FAILED",
             "ALGORITHM_TIMED_OUT",
+            "ALGORITHM_CANCELED",
             "ALGORITHM_RESULT_CONTRACT_INVALID",
             "UNKNOWN_CAPABILITY",
             "DUPLICATE_INVOCATION",
@@ -2000,39 +2084,36 @@
         "description": "在连续数值数据上使用 DirectLiNGAM 估计有向无环因果结构。适用于线性、非高斯、误差独立且没有潜在混杂的场景。",
         "parameters": {
           "additionalProperties": false,
-          "description": "DirectLiNGAM 当前没有可由模型改变的公开参数。",
-          "properties": {},
-          "title": "CausalDirectLiNGAMInput",
-          "type": "object"
-        }
-      }
-    },
-    {
-      "capability_id": "causal.olc",
-      "spec_digest": "d3e6d8dff2d8ebfea6e4e3c293a2f69f914a7926fb508c12d1f0176208fbf257",
-      "tool": {
-        "name": "causal_olc",
-        "description": "在连续表格数据上使用 OLC 处理可能存在潜在混杂的因果发现。它不适用于离散变量、非常小的样本或可以明确排除潜在混杂的场景。",
-        "parameters": {
-          "additionalProperties": false,
-          "description": "OLC 的模型可见显著性参数。",
           "properties": {
-            "alpha": {
-              "default": 0.05,
-              "exclusiveMaximum": 1.0,
-              "exclusiveMinimum": 0.0,
-              "title": "Alpha",
-              "type": "number"
-            },
-            "beta": {
-              "default": 0.01,
-              "exclusiveMaximum": 1.0,
-              "exclusiveMinimum": 0.0,
-              "title": "Beta",
-              "type": "number"
+            "public_decision": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "description": "模型在 Tool Call 中显式生成、可直接展示的简短决策说明。",
+                  "properties": {
+                    "summary": {
+                      "maxLength": 400,
+                      "minLength": 1,
+                      "title": "Summary",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "summary"
+                  ],
+                  "title": "PublicDecision",
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "面向当前用户公开的算法选择依据；应在同一次 Tool Call 中提供。该字段不属于算法科学参数。",
+              "title": "Public Decision"
             }
           },
-          "title": "CausalOlcInput",
+          "title": "CausalDirectLiNGAMInputToolInput",
           "type": "object"
         }
       }
@@ -2045,7 +2126,6 @@
         "description": "在表格数据上使用 PC 方法发现条件独立结构并生成部分有向图。适用于一般观测因果发现；需要数值或可确定性编码的表格数据，不应在明显存在潜在混杂且需要专门处理时作为唯一方法。",
         "parameters": {
           "additionalProperties": false,
-          "description": "PC 的模型可见科学参数；Job/文件/lease 不在此 schema 中。",
           "properties": {
             "alpha": {
               "default": 0.05,
@@ -2053,9 +2133,36 @@
               "exclusiveMinimum": 0.0,
               "title": "Alpha",
               "type": "number"
+            },
+            "public_decision": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "description": "模型在 Tool Call 中显式生成、可直接展示的简短决策说明。",
+                  "properties": {
+                    "summary": {
+                      "maxLength": 400,
+                      "minLength": 1,
+                      "title": "Summary",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "summary"
+                  ],
+                  "title": "PublicDecision",
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "面向当前用户公开的算法选择依据；应在同一次 Tool Call 中提供。该字段不属于算法科学参数。",
+              "title": "Public Decision"
             }
           },
-          "title": "CausalPcInput",
+          "title": "CausalPcInputToolInput",
           "type": "object"
         }
       }

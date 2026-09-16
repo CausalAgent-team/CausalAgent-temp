@@ -22,6 +22,27 @@ def test_store_survives_new_backend_instance_and_cleanup_excludes_store_tables()
     )
 
 
+def test_store_connection_string_contains_only_libpq_conninfo_options() -> None:
+    config = PostgresStoreConfig(
+        host="postgres",
+        port=5432,
+        database="db",
+        user="user",
+        password="secret",
+        connect_timeout_seconds=5,
+        pool_min_size=1,
+        pool_max_size=2,
+    )
+
+    conninfo = config.connection_string()
+
+    assert "host=postgres" in conninfo
+    assert "dbname=db" in conninfo
+    assert "user=user" in conninfo
+    assert "connect_timeout=5" in conninfo
+    assert "autocommit" not in conninfo
+
+
 def test_official_store_factory_owns_context_and_runs_setup(monkeypatch) -> None:
     import langgraph.store.postgres as postgres_module
 

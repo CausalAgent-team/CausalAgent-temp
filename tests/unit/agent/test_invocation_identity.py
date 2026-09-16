@@ -8,6 +8,7 @@ import pytest
 
 from Agent.deep_agent_tools import (
     McpInvocationContext,
+    build_deep_agent_execution_scope,
     build_invocation_id,
     build_logical_call_key,
     build_result_ref,
@@ -87,4 +88,31 @@ def test_context_payload_is_canonical_json() -> None:
     payload = canonical_mcp_context_payload(_context())
     assert b'"job_id":"00000000-0000-0000-0000-000000000001"' in payload
     assert payload == canonical_mcp_context_payload(_context())
+
+
+def test_deep_agent_execution_scope_changes_with_lease_or_input_snapshot() -> None:
+    base = build_deep_agent_execution_scope(
+        job_id=JOB_ID,
+        attempt_count=1,
+        lease_epoch=4,
+        input_identity="snapshot",
+    )
+    assert base == build_deep_agent_execution_scope(
+        job_id=JOB_ID,
+        attempt_count=1,
+        lease_epoch=4,
+        input_identity="snapshot",
+    )
+    assert base != build_deep_agent_execution_scope(
+        job_id=JOB_ID,
+        attempt_count=2,
+        lease_epoch=5,
+        input_identity="snapshot",
+    )
+    assert base != build_deep_agent_execution_scope(
+        job_id=JOB_ID,
+        attempt_count=1,
+        lease_epoch=4,
+        input_identity="other-snapshot",
+    )
 

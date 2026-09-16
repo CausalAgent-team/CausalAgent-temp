@@ -3,6 +3,7 @@
 from .algorithm_executor import (
     AlgorithmExecutor,
     AlgorithmExecutorError,
+    validate_executor_command,
     validate_executor_result,
 )
 from .algorithm_specs import (
@@ -29,6 +30,9 @@ from .identity import (
     build_invocation_id,
     build_logical_call_key,
     build_result_ref,
+    build_deep_agent_run_id,
+    build_deep_agent_execution_scope,
+    build_deep_agent_step_id,
     canonical_mcp_context_payload,
     new_message_execution_id,
     resolve_response_identity,
@@ -46,6 +50,7 @@ from .models import (
     GraphEdge,
     InvocationRecord,
     McpInvocationContext,
+    PublicDecision,
     RawResultMetadata,
     ReducerConflictError,
     ResultAssessment,
@@ -59,6 +64,7 @@ from .models import (
     merge_action_ledger,
     merge_algorithm_results,
     merge_evidence_results,
+    validate_result_ref_for_invocation,
 )
 from .registry import (
     AlgorithmRegistry,
@@ -117,6 +123,7 @@ __all__ = [
     "McpInvocationContext",
     "OLC_SPEC",
     "PC_SPEC",
+    "PublicDecision",
     "RawResultMetadata",
     "ReducerConflictError",
     "RegistryConflictError",
@@ -148,6 +155,9 @@ __all__ = [
     "build_logical_call_key",
     "build_raw_result_metadata",
     "build_result_ref",
+    "build_deep_agent_run_id",
+    "build_deep_agent_execution_scope",
+    "build_deep_agent_step_id",
     "canonical_json_bytes",
     "execute_dependency_plan",
     "canonical_mcp_context_payload",
@@ -159,4 +169,6 @@ __all__ = [
     "new_message_execution_id",
     "resolve_response_identity",
     "validate_executor_result",
+    "validate_executor_command",
+    "validate_result_ref_for_invocation",
 ]

@@ -204,6 +204,81 @@ class StreamEventAdapterTests(unittest.TestCase):
         self.assertEqual(finished["summary"], "调用完成")
         self.assertNotIn("private file body", repr(finished))
 
+    def test_deep_agent_results_expose_controlled_status_only(self):
+        """新 Deep Agent 结果只投影工具名、状态和安全错误码。"""
+        self.adapter.convert(task_start("task-deep", "deep_agent"))
+        events = self.adapter.convert({
+            "type": "updates",
+            "ns": (),
+            "data": {
+                "deep_agent": {
+                    "deep_agent_algorithm_results": {
+                        "result-1": {
+                            "capability_id": "causal.pc",
+                            "status": "execution_failed",
+                            "diagnostics": {
+                                "safe_error_code": "ALGORITHM_EXECUTION_FAILED",
+                                "summary": "private diagnostics",
+                            },
+                            "raw_result_ref": "/private/path.json",
+                        }
+                    }
+                }
+            },
+        })
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(
+            events[0],
+            {
+                "type": "tool_call_result",
+                "step_id": events[0]["step_id"],
+                "node_name": "deep_agent",
+                "title": "执行 Deep Agent 分析",
+                "attempt": 3,
+                "tool_name": "causal_pc",
+                "summary": "调用失败",
+                "status": "failed",
+                "safe_error_code": "ALGORITHM_EXECUTION_FAILED",
+            },
+        )
+        self.assertNotIn("private", repr(events[0]))
+
+    def test_public_algorithm_and_final_decisions_bind_to_their_parent_steps(self):
+        deep_step = self.adapter.convert(task_start("task-deep", "deep_agent"))[0]
+        algorithm = self.adapter.convert({
+            "type": "custom",
+            "ns": (),
+            "data": {
+                "type": "decision",
+                "decision_kind": "algorithm",
+                "tool_name": "causal_pc",
+                "summary": "连续数据适合使用 PC。",
+            },
+        })[0]
+        gate_step = self.adapter.convert(task_start("task-gate", "finalization_gate"))[0]
+        final = self.adapter.convert({
+            "type": "custom",
+            "ns": (),
+            "data": {
+                "type": "decision",
+                "decision_kind": "final",
+                "summary": "PC：主结果。诊断更稳定。置信度：中等",
+                "confidence": "medium",
+            },
+        })[0]
+
+        self.assertEqual(algorithm["step_id"], deep_step["step_id"])
+        self.assertEqual(algorithm["decision_kind"], "algorithm")
+        self.assertEqual(algorithm["tool_name"], "causal_pc")
+        self.assertEqual(final["step_id"], gate_step["step_id"])
+        self.assertEqual(final["decision_kind"], "final")
+        self.assertEqual(final["confidence"], "medium")
+
+        public = _public_event_payload(final)
+        self.assertEqual(public["summary"], final["summary"])
+        self.assertEqual(public["confidence"], "medium")
+
     def test_sse_public_payload_removes_backend_attempt(self):
         """job attempt 可以持久化，但不能进入普通用户 SSE 协议。"""
         payload = {
@@ -219,6 +294,69 @@ class StreamEventAdapterTests(unittest.TestCase):
         self.assertNotIn("prompt", public)
         self.assertNotIn("tool_result", public)
         self.assertEqual(payload["attempt"], 4)
+
+    def test_sse_public_payload_keeps_controlled_tool_status(self):
+        payload = {
+            "type": "tool_call_result",
+            "step_id": "opaque",
+            "node_name": "deep_agent",
+            "title": "执行 Deep Agent 分析",
+            "tool_name": "causal_pc",
+            "summary": "调用失败",
+            "status": "failed",
+            "safe_error_code": "ALGORITHM_EXECUTION_FAILED",
+            "raw_result": "private",
+        }
+
+        public = _public_event_payload(payload)
+
+        self.assertEqual(public["status"], "failed")
+        self.assertEqual(public["safe_error_code"], "ALGORITHM_EXECUTION_FAILED")
+        self.assertNotIn("raw_result", public)
+
+    def test_canceled_tool_lifecycle_is_not_reported_as_succeeded(self):
+        self.adapter.convert(task_start("task-deep", "deep_agent"))
+        events = self.adapter.convert({
+            "type": "custom",
+            "ns": (),
+            "data": {
+                "type": "tool_call_result",
+                "tool_name": "causal_pc",
+                "status": "canceled",
+            },
+        })
+
+        self.assertEqual(events[0]["status"], "canceled")
+        self.assertEqual(events[0]["summary"], "调用已取消")
+
+    def test_disabled_and_unavailable_tools_use_distinct_public_summaries(self):
+        self.adapter.convert(task_start("task-deep", "deep_agent"))
+
+        disabled = self.adapter.convert({
+            "type": "custom",
+            "ns": (),
+            "data": {
+                "type": "tool_call_result",
+                "tool_name": "web_evidence_search",
+                "status": "not_ready",
+                "safe_error_code": "WEB_SEARCH_DISABLED",
+            },
+        })[0]
+        unavailable = self.adapter.convert({
+            "type": "custom",
+            "ns": (),
+            "data": {
+                "type": "tool_call_result",
+                "tool_name": "rag_evidence_search",
+                "status": "failed",
+                "safe_error_code": "RAG_RETRIEVAL_UNAVAILABLE",
+            },
+        })[0]
+
+        self.assertEqual(disabled["summary"], "未启用")
+        self.assertEqual(disabled["status"], "not_ready")
+        self.assertEqual(unavailable["summary"], "暂不可用")
+        self.assertEqual(unavailable["status"], "failed")
 
 
 class RealLangGraphStreamTests(unittest.IsolatedAsyncioTestCase):

@@ -167,6 +167,11 @@ def validate_executor_result_identity(
 
     for actual, expected, field_name in (
         (command.invocation_id, trusted_context.invocation_id, "invocation_id"),
+        (
+            command.input_identity,
+            trusted_context.input_snapshot_digest,
+            "input_identity",
+        ),
     ):
         if actual != expected:
             raise AlgorithmExecutorError(

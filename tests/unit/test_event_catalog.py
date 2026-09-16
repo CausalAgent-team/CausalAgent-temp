@@ -58,6 +58,19 @@ EXPECTED_CODES = {
     "rag.multimodal.parse_failed",
     "mcp.tool.finished",
     "mcp.tool.failed",
+    "mcp.tool.canceled",
+    "mcp.tool.slow",
+    "mcp.request.received",
+    "mcp.request.rejected",
+    "mcp.request.accepted",
+    "mcp.cancel.finished",
+    "mcp.client.call.started",
+    "mcp.client.cancel.requested",
+    "mcp.client.cancel.finished",
+    "mcp.client.cancel.failed",
+    "mcp.capacity.rejected",
+    "mcp.process.recycled",
+    "mcp.client.reconnected",
     "mcp.transport.failed",
     "monitor.snapshot.failed",
     "monitor.snapshot.recovered",
@@ -102,6 +115,10 @@ def _sample_value(field: str, rule):
         "final_attempt",
         "outbox_id",
         "consecutive_failures",
+        "generation",
+        "retry_ordinal",
+        "retry_after_seconds",
+        "timeout_seconds",
     }:
         return 1
     if field.endswith("_count") or field in {
@@ -110,6 +127,7 @@ def _sample_value(field: str, rule):
         "downtime_ms",
         "elapsed_ms",
         "input_bytes",
+        "queue_wait_ms",
         "lag_seconds",
         "lease_epoch",
         "max_workers",
@@ -237,3 +255,27 @@ def test_error_category_vocabulary_matches_the_worker_classifier():
             ERROR_CATEGORY_INTERNAL,
         }
     )
+def test_mcp_cancel_failure_reasons_and_reconnect_lane_are_catalogued():
+    for reason_code in (
+        "control_capacity_timeout",
+        "response_timeout",
+        "transport_error",
+        "invalid_response",
+    ):
+        _spec, safe, violation = validate_event_details(
+            "mcp.client.cancel.failed",
+            {"capability": "causal.pc", "reason_code": reason_code},
+        )
+        assert violation is None
+        assert safe == {
+            "capability": "causal.pc",
+            "reason_code": reason_code,
+        }
+
+    for lane in ("execute", "control"):
+        _spec, safe, violation = validate_event_details(
+            "mcp.client.reconnected",
+            {"generation": 1, "pool_lane": lane},
+        )
+        assert violation is None
+        assert safe == {"generation": 1, "pool_lane": lane}

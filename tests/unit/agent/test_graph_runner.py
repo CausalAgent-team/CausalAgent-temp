@@ -1,12 +1,19 @@
+import asyncio
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+from langgraph.errors import NodeCancelledError
 from langgraph.types import Command
 
 from app.agent.checkpoint_recovery import checkpoint_identity
 from app.agent.worker.event_adapter import sanitize_public_error
 from app.agent.worker.graph_runner import ai_call_stream
+from app.agent.worker.graph_runner import (
+    _raise_wrapped_cancellation,
+    ai_call_stream,
+)
+from app.agent.worker.execution_guard import JobExecutionRevoked
 
 
 class APIStatusError(Exception):
@@ -121,6 +128,35 @@ class GraphRunnerTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("checkpoint_ns", config["configurable"])
             self.assertEqual(config["metadata"]["job_id"], "job-1")
             self.assertEqual(config["metadata"]["session_id"], "session-1")
+
+    def test_langgraph_wrapped_cancellation_returns_to_worker_control_flow(self):
+        """LangGraph 1.2.11 的 NodeCancelledError 不能变成普通 error 事件。"""
+        cause = asyncio.CancelledError("worker stop")
+        try:
+            raise NodeCancelledError("agent") from cause
+        except NodeCancelledError as error:
+            with self.assertRaises(asyncio.CancelledError):
+                _raise_wrapped_cancellation(error)
+
+    def test_langgraph_wrapped_revocation_returns_to_worker_control_flow(self):
+        cause = JobExecutionRevoked("revoked")
+        try:
+            raise NodeCancelledError("agent") from cause
+        except NodeCancelledError as error:
+            with self.assertRaises(JobExecutionRevoked):
+                _raise_wrapped_cancellation(error)
+
+    async def test_revocation_does_not_emit_error_or_final_result(self):
+        class RevokedGraph(FakeGraph):
+            async def astream(self, input_data, config, **_kwargs):
+                raise JobExecutionRevoked("revoked")
+                yield  # pragma: no cover
+
+        graph = RevokedGraph([_snapshot()])
+        with patch("app.agent.worker.graph_runner.process_final_result") as presenter:
+            with self.assertRaises(JobExecutionRevoked):
+                await _collect(graph)
+        presenter.assert_not_called()
 
     def test_checkpoint_identity_requires_job_id_and_keeps_root_namespace_empty(self):
         """运行时和恢复查询共用 Job ID 根 identity，不能生成 unknown namespace。"""

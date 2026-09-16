@@ -14,7 +14,7 @@
         "revision",
         "status"
       ],
-      "sha256": "a819438b261b19e266e7247ebe0bd13fffd583e9899cc705fea505149873fe53",
+      "sha256": "ca1b54d755d4272899e3f971ab5aec93cc9a183ce0f8209ac0cd1af834593e75",
       "title": "ActionAttempt"
     },
     "AlgorithmExecutionCommand": {
@@ -69,7 +69,7 @@
         "status",
         "provenance"
       ],
-      "sha256": "f3da2d5ea12d252889bffbde7e0d1e3d52093ae326912884ece4e9c5be6c66d3",
+      "sha256": "ad83178522ddc5e54aaa50bf9433e75144898d99be5eba3c824fcaf26d7f63d1",
       "title": "AlgorithmResult"
     },
     "AlgorithmResultProvenance": {
@@ -120,7 +120,7 @@
         "variable_count"
       ],
       "required": [],
-      "sha256": "3019609254f33c8358b09640c552aa61f06329ee6f96c4b3a68ebb2cf0ecb7c5",
+      "sha256": "255efc66b0d713f12b59bd37f08be7f1c59553ab576b4b959a08d7839faf11bc",
       "title": "Diagnostics"
     },
     "EvidenceResult": {
@@ -184,16 +184,21 @@
     },
     "InvocationRecord": {
       "properties": [
+        "attempt_count",
         "attempts",
         "final_status",
+        "input_identity",
         "invocation_id",
+        "job_id",
+        "lease_epoch",
         "provider_call_id",
         "provider_item_id",
         "provider_response_id",
         "response_identity",
         "response_identity_source",
         "result_ref",
-        "tool_name"
+        "tool_name",
+        "worker_id"
       ],
       "required": [
         "invocation_id",
@@ -203,7 +208,7 @@
         "tool_name",
         "final_status"
       ],
-      "sha256": "bb6127bf9ab660f7fa2444ef53775232595ebcdf039fdcc3362f7d2c5ab17a31",
+      "sha256": "6e875d0ac71965656d7c6c3ad62567c7683038e66c9324fb9e35002c148226fc",
       "title": "InvocationRecord"
     },
     "McpInvocationContext": {
@@ -235,6 +240,16 @@
       ],
       "sha256": "d07f8d4b713ce44abb36454327ba09e8c91896551350922a55a541d96721246f",
       "title": "McpInvocationContext"
+    },
+    "PublicDecision": {
+      "properties": [
+        "summary"
+      ],
+      "required": [
+        "summary"
+      ],
+      "sha256": "479bffd16be16def248e67d0812322dbd37ce5ee4dc21200e588a342d64e09e8",
+      "title": "PublicDecision"
     },
     "RawResultMetadata": {
       "properties": [
@@ -290,7 +305,7 @@
         "code",
         "message"
       ],
-      "sha256": "b0a0feade026291864425b1bcef24f699f64320192895f18c6888a9d2c1fcb18",
+      "sha256": "f7eb121fdd4fa2bd6a26bf5c70ae39c0792e9259864a7c70cebc1e186279cf35",
       "title": "SafeWarning"
     },
     "ScientificConflict": {
@@ -352,19 +367,13 @@
   "tools": [
     {
       "capability_id": "causal.direct_lingam",
-      "schema_sha256": "8b0feb822302bf217f332b35bd58d4ecbaefacc5309a042793565a9a678a5ab2",
+      "schema_sha256": "80dbc7da012e4f57b1b1c203d7131feb9e3cb1598b66f4b5052914111ede3c8b",
       "spec_digest": "718ac64c3efe7790b5bda8a2b700e850cfa554500ad11a095d8fba9450898915",
       "tool_name": "causal_direct_lingam"
     },
     {
-      "capability_id": "causal.olc",
-      "schema_sha256": "1b6692f63f1ed9b722447780822960536d6c6448d84247bcac8241ce7d20de63",
-      "spec_digest": "d3e6d8dff2d8ebfea6e4e3c293a2f69f914a7926fb508c12d1f0176208fbf257",
-      "tool_name": "causal_olc"
-    },
-    {
       "capability_id": "causal.pc",
-      "schema_sha256": "96e8aae99ad6c0a2609db45d287d65ffe43c5a1fc176d5a9f8272c59048ecfac",
+      "schema_sha256": "37d03c700d9b6d96ca64a89a08ed7a6650ad2df1a9c6f4cec391c58d31c48073",
       "spec_digest": "2be84a02ec63d244fbc0533f130fdf5c3f7ea1f43364414d9a3bb8d4c56036db",
       "tool_name": "causal_pc"
     }

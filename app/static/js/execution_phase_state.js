@@ -26,5 +26,26 @@
         return merged;
     }
 
-    return { isHistoryEvent, isActivePhase, mergeActiveJob };
+    function deferStepEvent(pendingEvents, eventData) {
+        const stepId = eventData && eventData.step_id;
+        if (!stepId) return false;
+        const events = pendingEvents.get(stepId) || [];
+        events.push(eventData);
+        pendingEvents.set(stepId, events);
+        return true;
+    }
+
+    function takeDeferredStepEvents(pendingEvents, stepId) {
+        const events = pendingEvents.get(stepId) || [];
+        pendingEvents.delete(stepId);
+        return events;
+    }
+
+    return {
+        isHistoryEvent,
+        isActivePhase,
+        mergeActiveJob,
+        deferStepEvent,
+        takeDeferredStepEvents,
+    };
 });

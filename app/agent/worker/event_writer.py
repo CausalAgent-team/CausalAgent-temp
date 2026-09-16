@@ -131,6 +131,11 @@ class OrderedEventWriter:
         """按事件类型调用 fenced 普通写入或现有事务终态入口。"""
         if self.execution_guard is not None:
             await self.execution_guard.ensure_active()
+        event_key = payload.get("_event_key")
+        if "_event_key" in payload:
+            payload = {
+                key: value for key, value in payload.items() if key != "_event_key"
+            }
         event_type = payload.get("type", "message")
         attempt_count = int(self.job["attempt_count"])
         if event_type in {"final_result", "interrupt"}:
@@ -173,6 +178,7 @@ class OrderedEventWriter:
             event_type,
             payload,
             lease_epoch=int(self.job.get("lease_epoch") or 0),
+            event_key=event_key,
         )
         if event_id is None:
             raise JobExecutionRevoked("event write fenced")

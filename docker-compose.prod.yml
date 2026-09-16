@@ -106,6 +106,60 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  causal-mcp:
+    image: ${CAUSAL_MCP_IMAGE:?CAUSAL_MCP_IMAGE must be an immutable image digest}
+    container_name: causalagent_causal_mcp_prod
+    command: python -m Agent.CausalAgentMCP.app
+    environment:
+      - MYSQL_HOST=mysql
+      - MYSQL_WRITE_HOST=mysql
+      - MYSQL_READ_HOSTS=
+      - MYSQL_PORT=3306
+      - MYSQL_USER=${MYSQL_USER:?MYSQL_USER is required}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+      - MYSQL_WRITE_USER=${MYSQL_WRITE_USER:-${MYSQL_USER}}
+      - MYSQL_WRITE_PASSWORD=${MYSQL_WRITE_PASSWORD:-${MYSQL_PASSWORD}}
+      - MYSQL_READ_USER=${MYSQL_READ_USER:-${MYSQL_USER}}
+      - MYSQL_READ_PASSWORD=${MYSQL_READ_PASSWORD:-${MYSQL_PASSWORD}}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:?MYSQL_DATABASE is required}
+      - MYSQL_POOL_SIZE_WRITE=${MYSQL_POOL_SIZE_WRITE:-2}
+      - MYSQL_POOL_SIZE_READ=${MYSQL_POOL_SIZE_READ:-1}
+      - MYSQL_CONNECT_TIMEOUT_SECONDS=${MYSQL_CONNECT_TIMEOUT_SECONDS:-5}
+      - MYSQL_POOL_ACQUIRE_TIMEOUT_SECONDS=${MYSQL_POOL_ACQUIRE_TIMEOUT_SECONDS:-3}
+      - CAUSAL_MCP_SERVICE_TOKEN=${CAUSAL_MCP_SERVICE_TOKEN:?CAUSAL_MCP_SERVICE_TOKEN is required}
+      - CAUSAL_MCP_SIGNING_KEY_CURRENT=${CAUSAL_MCP_SIGNING_KEY_CURRENT:?CAUSAL_MCP_SIGNING_KEY_CURRENT is required}
+      - CAUSAL_MCP_SIGNING_KEY_PREVIOUS=${CAUSAL_MCP_SIGNING_KEY_PREVIOUS:-}
+      - CAUSAL_MCP_SIGNING_KEY_ID=${CAUSAL_MCP_SIGNING_KEY_ID:-current}
+      - CAUSAL_MCP_PROCESS_WORKERS=${CAUSAL_MCP_PROCESS_WORKERS:-2}
+      - CAUSAL_MCP_QUEUE_CAPACITY=${CAUSAL_MCP_QUEUE_CAPACITY:-4}
+      - CAUSAL_MCP_ENQUEUE_TIMEOUT_SECONDS=${CAUSAL_MCP_ENQUEUE_TIMEOUT_SECONDS:-5}
+      - CAUSAL_MCP_ALGORITHM_DEADLINE_SECONDS=${CAUSAL_MCP_ALGORITHM_DEADLINE_SECONDS:-600}
+      - CAUSAL_MCP_SLOW_LOG_SECONDS=${CAUSAL_MCP_SLOW_LOG_SECONDS:-60}
+      - OMP_NUM_THREADS=1
+      - OPENBLAS_NUM_THREADS=1
+      - MKL_NUM_THREADS=1
+      - FLASK_ENV=production
+    depends_on:
+      mysql:
+        condition: service_healthy
+      db-bootstrap:
+        condition: service_completed_successfully
+    networks:
+      - causalagent_network_prod
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/ready', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    stop_grace_period: 75s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # --- Flask 应用服务（生产配置）---
   app:
     # === 关键区别4：使用镜像而非构建 ===
@@ -293,6 +347,24 @@ services:
       - API_KEY=${API_KEY}
       - BASE_URL=${BASE_URL}
       - MODEL=${MODEL}
+      - DEEP_AGENT_MODEL=${DEEP_AGENT_MODEL:?DEEP_AGENT_MODEL is required}
+      - DEEP_AGENT_BASE_URL=${DEEP_AGENT_BASE_URL:?DEEP_AGENT_BASE_URL is required}
+      - DEEP_AGENT_API_KEY=${DEEP_AGENT_API_KEY:?DEEP_AGENT_API_KEY is required}
+      - DEEP_AGENT_CONTEXT_WINDOW_TOKENS=${DEEP_AGENT_CONTEXT_WINDOW_TOKENS:?DEEP_AGENT_CONTEXT_WINDOW_TOKENS is required}
+      - CAUSAL_MCP_URL=http://causal-mcp:8080/mcp
+      - CAUSAL_MCP_SERVICE_TOKEN=${CAUSAL_MCP_SERVICE_TOKEN:?CAUSAL_MCP_SERVICE_TOKEN is required}
+      - CAUSAL_MCP_SIGNING_KEY_CURRENT=${CAUSAL_MCP_SIGNING_KEY_CURRENT:?CAUSAL_MCP_SIGNING_KEY_CURRENT is required}
+      - CAUSAL_MCP_SIGNING_KEY_ID=${CAUSAL_MCP_SIGNING_KEY_ID:-current}
+      - CAUSAL_MCP_CLIENT_POOL_SIZE=${CAUSAL_MCP_CLIENT_POOL_SIZE:-2}
+      - CAUSAL_MCP_MAX_IN_FLIGHT_PER_CLIENT=${CAUSAL_MCP_MAX_IN_FLIGHT_PER_CLIENT:-1}
+      - CAUSAL_MCP_POOL_ACQUIRE_TIMEOUT_SECONDS=${CAUSAL_MCP_POOL_ACQUIRE_TIMEOUT_SECONDS:-5}
+      - CAUSAL_MCP_CONTROL_POOL_SIZE=${CAUSAL_MCP_CONTROL_POOL_SIZE:-1}
+      - CAUSAL_MCP_CONTROL_MAX_IN_FLIGHT_PER_CLIENT=${CAUSAL_MCP_CONTROL_MAX_IN_FLIGHT_PER_CLIENT:-2}
+      - CAUSAL_MCP_CONTROL_ACQUIRE_TIMEOUT_SECONDS=${CAUSAL_MCP_CONTROL_ACQUIRE_TIMEOUT_SECONDS:-1}
+      - CAUSAL_MCP_CANCEL_TIMEOUT_SECONDS=${CAUSAL_MCP_CANCEL_TIMEOUT_SECONDS:-6}
+      - CAUSAL_MCP_HTTP_MAX_CONNECTIONS=${CAUSAL_MCP_HTTP_MAX_CONNECTIONS:-8}
+      - CAUSAL_MCP_HTTP_MAX_KEEPALIVE_CONNECTIONS=${CAUSAL_MCP_HTTP_MAX_KEEPALIVE_CONNECTIONS:-4}
+      - CAUSAL_MCP_HTTP_READ_TIMEOUT_SECONDS=${CAUSAL_MCP_HTTP_READ_TIMEOUT_SECONDS:-660}
       - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
       - EMBEDDING_BASE_URL=${EMBEDDING_BASE_URL:-}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-qwen3.7-text-embedding}
@@ -313,6 +385,8 @@ services:
     depends_on:
       db-bootstrap:
         condition: service_completed_successfully
+      causal-mcp:
+        condition: service_healthy
     networks:
       - causalagent_network_prod
     restart: unless-stopped

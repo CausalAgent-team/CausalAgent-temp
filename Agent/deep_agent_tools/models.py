@@ -30,6 +30,21 @@ class ContractModel(BaseModel):
     )
 
 
+class PublicDecision(ContractModel):
+    """模型在 Tool Call 中显式生成、可直接展示的简短决策说明。"""
+
+    summary: str = Field(min_length=1, max_length=400)
+
+    @field_validator("summary")
+    @classmethod
+    def validate_summary(cls, value: str) -> str:
+        if value != value.strip():
+            raise ValueError("summary must not contain surrounding whitespace")
+        if any(ord(character) < 32 for character in value):
+            raise ValueError("summary must be a single line without control characters")
+        return value
+
+
 def _non_blank(value: str, *, field_name: str) -> str:
     if not isinstance(value, str) or not value or not value.strip():
         raise ValueError(f"{field_name} must be a non-blank string")
@@ -47,6 +62,23 @@ def _canonical_uuid(value: str | UUID, *, field_name: str) -> str:
         return str(UUID(value))
     except (ValueError, AttributeError, TypeError) as exc:
         raise ValueError(f"{field_name} must be a canonical UUID value") from exc
+
+
+def validate_result_ref_for_invocation(result_ref: str, invocation_id: str) -> str:
+    """验证结果引用只属于指定 invocation 且使用规范的非负索引。"""
+
+    prefix = f"{invocation_id}:"
+    if not result_ref.startswith(prefix):
+        raise ValueError("result_ref must be derived from invocation_id")
+    result_index = result_ref[len(prefix) :]
+    if (
+        not result_index
+        or not result_index.isascii()
+        or not result_index.isdigit()
+        or str(int(result_index)) != result_index
+    ):
+        raise ValueError("result_ref must end with a canonical non-negative result index")
+    return result_ref
 
 
 AlgorithmResultStatus: TypeAlias = Literal[
@@ -238,6 +270,7 @@ class AlgorithmResult(ContractModel):
 
     @model_validator(mode="after")
     def validate_result_contract(self) -> "AlgorithmResult":
+        validate_result_ref_for_invocation(self.result_ref, self.invocation_id)
         if self.status == "valid" and self.standardized_graph is None:
             raise ValueError("valid AlgorithmResult must include standardized_graph")
 
@@ -272,6 +305,8 @@ class AlgorithmResult(ContractModel):
             self.graph_semantics = self.standardized_graph.graph_semantics
         if self.input_identity is None:
             self.input_identity = self.provenance.input_identity
+        elif self.input_identity != self.provenance.input_identity:
+            raise ValueError("input_identity must equal provenance.input_identity")
 
         if self.provenance.invocation_id not in (None, self.invocation_id):
             raise ValueError("provenance.invocation_id does not match invocation_id")
@@ -320,6 +355,13 @@ class InvocationRecord(ContractModel):
     tool_name: str
     final_status: InvocationStatus
     result_ref: str | None = None
+    # 这些字段允许旧 checkpoint 被读取，但 FinalizationGate 对缺失值
+    # fail-closed。新产生的 Ledger 记录必须完整填写它们。
+    job_id: str | None = None
+    attempt_count: int | None = Field(default=None, ge=0)
+    lease_epoch: int | None = Field(default=None, ge=0)
+    worker_id: str | None = None
+    input_identity: str | None = None
     attempts: dict[int, ActionAttempt] = Field(default_factory=dict)
 
     @field_validator(
@@ -332,7 +374,14 @@ class InvocationRecord(ContractModel):
     def validate_strings(cls, value: str, info: Any) -> str:
         return _non_blank(value, field_name=info.field_name)
 
-    @field_validator("provider_response_id", "provider_item_id", "result_ref")
+    @field_validator(
+        "provider_response_id",
+        "provider_item_id",
+        "result_ref",
+        "job_id",
+        "worker_id",
+        "input_identity",
+    )
     @classmethod
     def validate_optional_strings(cls, value: str | None, info: Any) -> str | None:
         return None if value is None else _non_blank(value, field_name=info.field_name)
@@ -355,6 +404,8 @@ class InvocationRecord(ContractModel):
         for retry_ordinal, attempt in self.attempts.items():
             if retry_ordinal != attempt.retry_ordinal:
                 raise ValueError("attempt map key must equal retry_ordinal")
+        if self.job_id is not None:
+            _canonical_uuid(self.job_id, field_name="job_id")
         return self
 
 

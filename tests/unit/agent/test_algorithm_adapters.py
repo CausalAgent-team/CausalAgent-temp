@@ -17,6 +17,7 @@ from Agent.deep_agent_tools.models import (
     StandardizedGraph,
     build_raw_result_metadata,
 )
+from app.agent.worker.execution_guard import JobExecutionRevoked
 
 
 IDENTITY = TrustedJobIdentity(
@@ -412,3 +413,68 @@ def test_adapter_normalizes_legacy_runner_payload_in_execution_path() -> None:
     assert result.status == "valid"
     assert result.standardized_graph.edges[0].edge_type == "directed"
     assert result.provenance.algorithm_runner_version == "legacy-1"
+
+
+def test_job_revocation_is_not_converted_to_failed_algorithm_result() -> None:
+    class RevokingExecutor:
+        async def execute(self, command, context):
+            raise JobExecutionRevoked("revoked")
+
+    from Agent.deep_agent_tools.adapters.base import AdapterInput
+
+    with __import__("pytest").raises(JobExecutionRevoked):
+        asyncio.run(
+            PcAdapter(executor=RevokingExecutor()).run(
+                parameters={"alpha": 0.05},
+                adapter_input=AdapterInput(
+                    data_profile=_profile(),
+                    input_identity="input-sha",
+                ),
+                trusted_context=IDENTITY,
+                provider_call_id="revoked-call",
+                response_identity="response-1",
+            )
+        )
+
+
+def test_algorithm_tool_checks_guard_after_adapter_returns() -> None:
+    class RevokingGuard:
+        def __init__(self):
+            self.calls = 0
+
+        async def ensure_active(self):
+            self.calls += 1
+            if self.calls == 2:
+                raise JobExecutionRevoked("revoked after remote return")
+
+    guard = RevokingGuard()
+    executor = FakeAlgorithmExecutor()
+    backend = build_in_memory_backend(user_id=7)
+    context = AgentRunContext(
+        execution_guard=guard,
+        trusted_identity=IDENTITY,
+        algorithm_executor=executor,
+        filesystem_backend=backend,
+    )
+    registry = build_default_registry(
+        build_default_adapters(executor=executor, raw_backend=backend)
+    )
+    pc_tool = next(
+        tool
+        for tool in build_algorithm_tools(
+            registry,
+            runtime_context=context,
+            data_profile=_profile(),
+        )
+        if tool.name == "causal_pc"
+    )
+
+    with __import__("pytest").raises(JobExecutionRevoked):
+        asyncio.run(
+            pc_tool.ainvoke(
+                {"alpha": 0.05},
+                provider_call_id="late-call",
+                response_identity="response-1",
+            )
+        )
+    assert guard.calls == 2

@@ -1690,6 +1690,7 @@ function addThinkingMessage(options = {}) {
         finishedAt: isActive ? null : performance.now(),
         durationTimer: null,
         steps: new Map(),
+        pendingStepEvents: new Map(),
         streamState: ChatStreamState.createState(),
         draftElement: null,
         draftStreamId: null,
@@ -1827,6 +1828,10 @@ function handleNodeStart(eventData, thinkingElements) {
     
     detail.appendChild(stepItem);
     thinkingElements.steps.set(step_id, { item: stepItem, details: stepDetails });
+    ExecutionPhaseState.takeDeferredStepEvents(
+        thinkingElements.pendingStepEvents,
+        step_id,
+    ).forEach(pendingEvent => handleStepDetail(pendingEvent, thinkingElements));
     
     keepLatestChatContentVisible();
 }
@@ -1935,9 +1940,19 @@ function appendStepDetail(container, text, className = '') {
 function handleStepDetail(eventData, thinkingElements) {
     // 将进度、决策和工具摘要嵌套到对应父阶段。
     const step = thinkingElements.steps.get(eventData.step_id);
-    if (!step) return;
+    if (!step) {
+        ExecutionPhaseState.deferStepEvent(
+            thinkingElements.pendingStepEvents,
+            eventData,
+        );
+        return;
+    }
     let text = eventData.summary || '';
-    if (eventData.type === 'tool_call_start') {
+    if (eventData.type === 'decision' && eventData.decision_kind === 'algorithm') {
+        text = `算法决策：${text}`;
+    } else if (eventData.type === 'decision' && eventData.decision_kind === 'final') {
+        text = `最终决策：${text}`;
+    } else if (eventData.type === 'tool_call_start') {
         const fields = (eventData.argument_keys || []).join('、');
         text = `调用工具：${eventData.tool_name}${fields ? `（参数字段：${fields}）` : ''}`;
     } else if (eventData.type === 'tool_call_result') {

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import inspect
+import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
+
+from Agent.execution_control import JobExecutionRevoked
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -16,12 +19,31 @@ from .runtime_updates import (
     build_tool_command,
     resolve_runtime_invocation,
     with_tool_runtime_schema,
+    emit_tool_lifecycle_event,
 )
 
 
 class EvidenceRetriever(Protocol):
     def get_evidence(self, query: str, *, max_contexts: int | None = None) -> Mapping[str, Any]:
         ...
+
+
+@dataclass
+class _LazyEvidenceRetriever:
+    """延迟创建正式 RAG Service，避免 worker 启动时加载索引和 embedding。"""
+
+    factory: Callable[[], EvidenceRetriever]
+    _service: EvidenceRetriever | None = None
+
+    def get_evidence(
+        self,
+        query: str,
+        *,
+        max_contexts: int | None = None,
+    ) -> Mapping[str, Any]:
+        if self._service is None:
+            self._service = self.factory()
+        return self._service.get_evidence(query, max_contexts=max_contexts)
 
 
 class _RagEvidenceInput(BaseModel):
@@ -72,12 +94,19 @@ class RagEvidenceTool:
     """只调用 retriever.get_evidence，不调用 answer_question。"""
 
     retriever: EvidenceRetriever
+    readiness: Any | None = None
 
     name: str = "rag_evidence_search"
     description: str = (
         "检索当前 active release 的知识库证据。只返回可引用片段和来源元数据，"
         "不生成回答，不替代因果算法。"
     )
+
+    @staticmethod
+    def _readiness_value(readiness: Any, name: str) -> Any:
+        if isinstance(readiness, Mapping):
+            return readiness.get(name)
+        return getattr(readiness, name, None)
 
     def schema(self) -> dict[str, Any]:
         return {
@@ -96,6 +125,24 @@ class RagEvidenceTool:
 
     async def get_evidence(self, query: str, *, max_contexts: int | None = None) -> dict[str, Any]:
         request = RagEvidenceQuery(query=query, max_contexts=max_contexts)
+        readiness = self.readiness() if callable(self.readiness) else self.readiness
+        if readiness is not None and not bool(
+            readiness.get("available")
+            if isinstance(readiness, Mapping)
+            else getattr(readiness, "available", False)
+        ):
+            return {
+                "status": "unavailable",
+                "query": request.query,
+                "release_id": self._readiness_value(readiness, "release_id"),
+                "evidence": [],
+                "evidence_by_ref": {},
+                "sufficiency": "unavailable",
+                "diagnostics": {
+                    "reason_code": self._readiness_value(readiness, "error_code")
+                    or "rag_not_ready"
+                },
+            }
         try:
             raw = self.retriever.get_evidence(
                 request.query,
@@ -103,6 +150,8 @@ class RagEvidenceTool:
             )
             if inspect.isawaitable(raw):
                 raw = await raw
+        except (asyncio.CancelledError, JobExecutionRevoked):
+            raise
         except Exception:
             return {
                 "status": "unavailable",
@@ -130,6 +179,35 @@ class RagEvidenceTool:
         }:
             status = "protocol_error"
         release_id = raw.get("release_id")
+        expected_release_id = (
+            self._readiness_value(readiness, "release_id")
+            if readiness is not None
+            else None
+        )
+        if release_id is None and readiness is not None:
+            release_id = expected_release_id
+        if status == "available" and not release_id:
+            return {
+                "status": "protocol_error",
+                "query": request.query,
+                "release_id": None,
+                "evidence": [],
+                "evidence_by_ref": {},
+                "diagnostics": {"reason_code": "rag_release_missing"},
+            }
+        if (
+            status == "available"
+            and expected_release_id
+            and release_id != expected_release_id
+        ):
+            return {
+                "status": "protocol_error",
+                "query": request.query,
+                "release_id": release_id,
+                "evidence": [],
+                "evidence_by_ref": {},
+                "diagnostics": {"reason_code": "rag_release_mismatch"},
+            }
         try:
             evidence = [
                 _coerce_evidence(item, release_id=release_id)
@@ -182,7 +260,34 @@ class RagEvidenceTool:
             identity = resolve_runtime_invocation(runtime)
             await identity.runtime_context.ensure_active()
             started_at = datetime.now(timezone.utc)
-            payload = await self.get_evidence(query, max_contexts=max_contexts)
+            await emit_tool_lifecycle_event(
+                runtime,
+                event_type="tool_call_start",
+                identity=identity,
+                tool_name=self.name,
+            )
+            try:
+                payload = await self.get_evidence(query, max_contexts=max_contexts)
+                await identity.runtime_context.ensure_active()
+            except (asyncio.CancelledError, JobExecutionRevoked):
+                await emit_tool_lifecycle_event(
+                    runtime,
+                    event_type="tool_call_result",
+                    identity=identity,
+                    tool_name=self.name,
+                    status="canceled",
+                )
+                raise
+            except Exception:
+                await emit_tool_lifecycle_event(
+                    runtime,
+                    event_type="tool_call_result",
+                    identity=identity,
+                    tool_name=self.name,
+                    status="failed",
+                    safe_error_code="RAG_PROTOCOL_ERROR",
+                )
+                raise
             status = str(payload.get("status") or "protocol_error")
             attempt_status = (
                 "succeeded"
@@ -193,6 +298,14 @@ class RagEvidenceTool:
                 "unavailable": "RAG_RETRIEVAL_UNAVAILABLE",
                 "protocol_error": "RAG_PROTOCOL_ERROR",
             }.get(status)
+            await emit_tool_lifecycle_event(
+                runtime,
+                event_type="tool_call_result",
+                identity=identity,
+                tool_name=self.name,
+                status=("succeeded" if attempt_status == "succeeded" else "failed"),
+                safe_error_code=safe_error_code,
+            )
             evidence_by_ref = {
                 str(ref): EvidenceResult.model_validate(value)
                 for ref, value in dict(payload.get("evidence_by_ref") or {}).items()
@@ -226,15 +339,15 @@ class RagEvidenceTool:
         )
 
 
-def build_default_rag_evidence_tool(*, service: EvidenceRetriever | None = None) -> RagEvidenceTool:
+def build_default_rag_evidence_tool(
+    *,
+    service: EvidenceRetriever | None = None,
+    readiness: Any | None = None,
+) -> RagEvidenceTool:
     """惰性绑定当前 RagService；不会在模块 import 时初始化索引或模型。"""
 
     if service is None:
-        from Agent.knowledge_base.rag_service import UnavailableRagService
         from Agent.knowledge_base.query_rag import _get_rag_service
 
-        try:
-            service = _get_rag_service()
-        except Exception:
-            service = UnavailableRagService()
-    return RagEvidenceTool(service)
+        service = _LazyEvidenceRetriever(factory=_get_rag_service)
+    return RagEvidenceTool(service, readiness=readiness)

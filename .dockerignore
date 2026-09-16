@@ -43,6 +43,11 @@ test_*.py
 !requirements.txt
 !requirements-base.txt
 !requirements-test.txt
+!tests/
+tests/*
+!tests/smoke/
+tests/smoke/*
+!tests/smoke/requirements-deep-agent-py311-linux.lock
 
 # 原因：
 # - 测试文件运行时不需要
