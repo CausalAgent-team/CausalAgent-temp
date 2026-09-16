@@ -2075,36 +2075,6 @@
       }
     },
     {
-      "capability_id": "causal.olc",
-      "spec_digest": "d3e6d8dff2d8ebfea6e4e3c293a2f69f914a7926fb508c12d1f0176208fbf257",
-      "tool": {
-        "name": "causal_olc",
-        "description": "在连续表格数据上使用 OLC 处理可能存在潜在混杂的因果发现。它不适用于离散变量、非常小的样本或可以明确排除潜在混杂的场景。",
-        "parameters": {
-          "additionalProperties": false,
-          "description": "OLC 的模型可见显著性参数。",
-          "properties": {
-            "alpha": {
-              "default": 0.05,
-              "exclusiveMaximum": 1.0,
-              "exclusiveMinimum": 0.0,
-              "title": "Alpha",
-              "type": "number"
-            },
-            "beta": {
-              "default": 0.01,
-              "exclusiveMaximum": 1.0,
-              "exclusiveMinimum": 0.0,
-              "title": "Beta",
-              "type": "number"
-            }
-          },
-          "title": "CausalOlcInput",
-          "type": "object"
-        }
-      }
-    },
-    {
       "capability_id": "causal.pc",
       "spec_digest": "2be84a02ec63d244fbc0533f130fdf5c3f7ea1f43364414d9a3bb8d4c56036db",
       "tool": {

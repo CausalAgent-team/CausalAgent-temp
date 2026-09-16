@@ -432,7 +432,7 @@ def build_algorithm_tools(
     dataset_csv: str | None = None,
     missing_values_present: bool = False,
 ) -> tuple[AlgorithmTool, ...]:
-    """按 Registry 静态顺序生成三项领域工具。"""
+    """按 Registry 静态顺序生成当前启用的领域工具。"""
 
     adapter_input = None
     if runtime_context is not None and data_profile is not None:

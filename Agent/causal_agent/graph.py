@@ -612,6 +612,7 @@ async def _finalization_gate_node(
     state,
     *,
     runtime,
+    config,
     gate: FinalizationGate,
 ):
     """执行纯确定性 finalization；失败只消耗一次持久化修正机会。"""

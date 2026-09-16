@@ -1,4 +1,4 @@
-"""主程序维护的 AlgorithmSpec 单一事实源和首版三项能力。"""
+"""主程序维护的 AlgorithmSpec 单一事实源；默认启用 PC 与 DirectLiNGAM。"""
 
 from __future__ import annotations
 
@@ -237,7 +237,6 @@ DIRECT_LINGAM_SPEC = AlgorithmSpec(
 
 DEFAULT_ALGORITHM_SPECS: tuple[AlgorithmSpec, ...] = (
     PC_SPEC,
-    OLC_SPEC,
     DIRECT_LINGAM_SPEC,
 )
 

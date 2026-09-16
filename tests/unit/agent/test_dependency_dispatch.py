@@ -60,6 +60,7 @@ def test_tool_node_dispatches_each_algorithm_call_once() -> None:
             registry,
             runtime_context=context,
             data_profile=profile,
+            dataset_csv="x,y\n1,2\n2,3\n",
         )
     ]
     middleware = build_algorithm_dependency_middleware(registry=registry)
@@ -91,9 +92,9 @@ def test_tool_node_dispatches_each_algorithm_call_once() -> None:
                                 "type": "tool_call",
                             },
                             {
-                                "name": "causal_olc",
-                                "args": {"alpha": 0.05, "beta": 0.01},
-                                "id": "dispatch-olc-1",
+                                "name": "causal_direct_lingam",
+                                "args": {},
+                                "id": "dispatch-direct-lingam-1",
                                 "type": "tool_call",
                             },
                         ],
@@ -113,10 +114,10 @@ def test_tool_node_dispatches_each_algorithm_call_once() -> None:
     assert len(executor.calls) == 2
     assert {call.command.capability_id for call in executor.calls} == {
         "causal.pc",
-        "causal.olc",
+        "causal.direct_lingam",
     }
     assert len(state["algorithm_results"]) == 2
     assert all(result.status == "valid" for result in state["algorithm_results"].values())
     assert {
         record.provider_call_id for record in state["action_ledger"].values()
-    } == {"dispatch-pc-1", "dispatch-olc-1"}
+    } == {"dispatch-pc-1", "dispatch-direct-lingam-1"}

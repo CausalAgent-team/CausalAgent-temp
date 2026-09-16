@@ -19,9 +19,13 @@ from Agent.CausalAgentMCP.executor_pool import (
     ExecutionOutcome,
     PoolExecutionError,
 )
-from Agent.CausalAgentMCP.runner_registry import _pc, build_default_registry
+from Agent.CausalAgentMCP.runner_registry import (
+    RunnerRegistryError,
+    _pc,
+    build_default_registry,
+)
 from Agent.CausalAgentMCP.service import CausalMcpService, McpServiceError
-from Agent.deep_agent_tools.algorithm_specs import PC_SPEC
+from Agent.deep_agent_tools.algorithm_specs import OLC_SPEC, PC_SPEC
 from Agent.deep_agent_tools.error_codes import SafeErrorCode
 from Agent.deep_agent_tools.identity import build_result_ref
 from Agent.deep_agent_tools.models import (
@@ -40,6 +44,22 @@ from app.agent.worker.mcp_client_pool import (
 )
 from app.agent.worker.execution_guard import JobExecutionGuard, JobExecutionRevoked
 from observability.logging_runtime import current_log_context
+
+
+def test_default_mcp_registry_does_not_expose_disabled_olc() -> None:
+    registry = build_default_registry()
+
+    assert [item[0] for item in registry.capability_summary()] == [
+        "causal.direct_lingam",
+        "causal.pc",
+    ]
+    with pytest.raises(RunnerRegistryError) as exc_info:
+        registry.resolve(
+            OLC_SPEC.capability_id,
+            OLC_SPEC.version,
+            OLC_SPEC.spec_digest,
+        )
+    assert exc_info.value.safe_error_code is SafeErrorCode.UNKNOWN_CAPABILITY
 
 
 def _context() -> McpInvocationContext:

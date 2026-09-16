@@ -362,12 +362,6 @@
       "tool_name": "causal_direct_lingam"
     },
     {
-      "capability_id": "causal.olc",
-      "schema_sha256": "1b6692f63f1ed9b722447780822960536d6c6448d84247bcac8241ce7d20de63",
-      "spec_digest": "d3e6d8dff2d8ebfea6e4e3c293a2f69f914a7926fb508c12d1f0176208fbf257",
-      "tool_name": "causal_olc"
-    },
-    {
       "capability_id": "causal.pc",
       "schema_sha256": "96e8aae99ad6c0a2609db45d287d65ffe43c5a1fc176d5a9f8272c59048ecfac",
       "spec_digest": "2be84a02ec63d244fbc0533f130fdf5c3f7ea1f43364414d9a3bb8d4c56036db",

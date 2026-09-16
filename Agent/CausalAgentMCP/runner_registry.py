@@ -6,9 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
 from Agent.deep_agent_tools.algorithm_specs import (
-    DIRECT_LINGAM_SPEC,
-    OLC_SPEC,
-    PC_SPEC,
+    DEFAULT_ALGORITHM_SPECS,
     AlgorithmSpec,
 )
 from Agent.deep_agent_tools.error_codes import SafeErrorCode
@@ -55,7 +53,7 @@ def _direct_lingam(csv_data: str, _parameters: Mapping[str, Any]) -> dict[str, A
 
 
 class RunnerRegistry:
-    """Index the three reviewed capabilities and reject incompatible callers."""
+    """Index the enabled reviewed capabilities and reject incompatible callers."""
 
     def __init__(self, entries: list[RunnerSpec]) -> None:
         by_capability: dict[str, RunnerSpec] = {}
@@ -83,10 +81,13 @@ class RunnerRegistry:
 
 
 def build_default_registry() -> RunnerRegistry:
+    runners = {
+        "causal.pc": _pc,
+        "causal.olc": _olc,
+        "causal.direct_lingam": _direct_lingam,
+    }
     entries = [
-        (PC_SPEC, _pc),
-        (OLC_SPEC, _olc),
-        (DIRECT_LINGAM_SPEC, _direct_lingam),
+        (spec, runners[spec.capability_id]) for spec in DEFAULT_ALGORITHM_SPECS
     ]
     return RunnerRegistry(
         [
