@@ -203,6 +203,19 @@ RESULT_KIND = DetailRule(
     choices=frozenset({"structured_result", "other_result"}),
     max_bytes=32,
 )
+ERROR_CATEGORY = DetailRule(
+    (str,),
+    choices=frozenset(
+        {
+            "provider_error",
+            "protocol_error",
+            "checkpoint_error",
+            "runtime_contract_error",
+            "internal_error",
+        }
+    ),
+    max_bytes=32,
+)
 
 
 def _details(**rules: DetailRule) -> Mapping[str, DetailRule]:
@@ -399,6 +412,7 @@ _events: dict[str, EventSpec] = {
         "分析任务执行失败",
         failure_phase=TOKEN,
         reason_code=REASON,
+        error_category=ERROR_CATEGORY,
         attempt=POSITIVE_COUNT,
         duration_ms=DURATION,
     ),

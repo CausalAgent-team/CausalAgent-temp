@@ -1310,6 +1310,14 @@
   - 【文档与测试】：增加 workflow 静态安全契约测试，并同步桌面发布、CD 恢复流程和 v0.1.0 Release Notes 的验收边界。
 
 ---
+2026.9.16
+- 【Agent worker：graph 终态失败日志保真】
+  - 【异常传递】：`graph_runner` 不再把 LangGraph 抛出的异常压缩成一句脱敏文案后丢弃；公开 `message` 保持 `sanitize_public_error()` 原有文案不变，真实异常改由 `_diagnostic` 内部字段携带 `error_category`、真实 `reason_code` 和 `exc_info` 继续传递。
+  - 【内部通道】：`OrderedEventWriter` 只把 `message` 交给 `fail_job`，诊断与 `terminal_type == "error"` 同步挂在只读的 `terminal_diagnostic` 上；`_diagnostic` 不进入 `analysis_job_events`、SSE、聊天投影或管理员接口。
+  - 【稳定分类】：`worker.job.failed` 新增 `error_category` 字段，取值为 `provider_error/protocol_error/checkpoint_error/runtime_contract_error/internal_error`，只按异常类名（含基类）判定、不读取异常文本；`reason_code` 由固定 `node_error` 改为按异常映射到既有 `REASON_CODES`，未识别异常仍保留 `node_error`。
+  - 【日志产出】：`worker.job.failed` 现在带上非 null 的 `exception_type` 与清理后的 `stack`，可定位到具体堆栈帧。
+  - 【同步更新】：`Document/development/observability.md` 的事件表与关联链路补充 `error_category` 取值和内部诊断边界。
+  - 【验证】：新增 7 项单测覆盖分类映射、判定顺序、诊断不落库与 fencing 不置位；Docker `unit-test` 基线 895 passed，与干净 HEAD 的 888 passed 相比只多出这 7 项，既有 9 项失败与 `test_rag_evidence_tool` 收集错误在干净 HEAD 上逐条复现。
 2026.9.15
 - 【MCP/Deep Agent：完成 P2-M 代码切片与 P2-U fake executor 前置】
   - 【P2-M 服务】：新增独立 `causal-mcp` 服务，提供 MCP 2.2 Streamable HTTP、Bearer/HMAC 鉴权、MySQL primary strong read 与旧 lease/worker fencing、固定 PC/OLC/DirectLiNGAM runner、bounded ProcessPool 和 N×K client pool。

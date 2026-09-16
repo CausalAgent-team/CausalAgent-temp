@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 import re
 import time
@@ -75,6 +76,87 @@ def sanitize_public_error(error: Any) -> str:
     if any(token in normalized for token in ("permission", "auth")):
         return "服务授权失败"
     return "节点执行失败"
+
+
+# 运行日志的故障域分类。注意与 Agent/causal_agent/graph_utils.py 自定义流里的
+# `error_kind`（原始异常类名）区分：两者在不同命名空间，此处统一用 error_category。
+ERROR_CATEGORY_PROVIDER = "provider_error"
+ERROR_CATEGORY_PROTOCOL = "protocol_error"
+ERROR_CATEGORY_CHECKPOINT = "checkpoint_error"
+ERROR_CATEGORY_RUNTIME_CONTRACT = "runtime_contract_error"
+ERROR_CATEGORY_INTERNAL = "internal_error"
+
+# 判定顺序即优先级：provider SDK 的 RateLimitError/AuthenticationError/APITimeoutError
+# 的 MRO 里都含 APIStatusError，若把服务端错误提前判定，这些子类会被误判成 server_error。
+_ERROR_NAME_RULES: tuple[tuple[tuple[str, ...], str, str], ...] = (
+    (("checkpoint",), ERROR_CATEGORY_CHECKPOINT, "checkpoint_unavailable"),
+    (("contract",), ERROR_CATEGORY_RUNTIME_CONTRACT, "invalid_runtime_context"),
+    (("protocol",), ERROR_CATEGORY_PROTOCOL, "protocol_error"),
+    (
+        ("ratelimit", "rate_limit", "toomanyrequest"),
+        ERROR_CATEGORY_PROVIDER,
+        "rate_limited",
+    ),
+    (("quota", "billing"), ERROR_CATEGORY_PROVIDER, "quota_billing"),
+    (
+        ("auth", "permission", "apikey", "unauthorized", "forbidden"),
+        ERROR_CATEGORY_PROVIDER,
+        "auth_failed",
+    ),
+    (("timeout",), ERROR_CATEGORY_PROVIDER, "timeout"),
+    (
+        ("connection", "connect", "network", "transport"),
+        ERROR_CATEGORY_PROVIDER,
+        "connection_unavailable",
+    ),
+    (
+        ("apistatus", "servererror", "internalserver", "serviceunavailable", "overloaded"),
+        ERROR_CATEGORY_PROVIDER,
+        "server_error",
+    ),
+)
+
+
+@dataclass(frozen=True)
+class FailureDiagnostic:
+    """graph 终态失败的内部诊断，只在内进程传递，不进入持久化事件。"""
+
+    error_category: str
+    reason_code: str
+    exc_info: tuple[type[BaseException], BaseException, Any] | None
+
+
+def _exception_class_names(error: Any) -> str:
+    """取异常自身及其基类的类名小写串，不读取异常文本。"""
+    if isinstance(error, str):
+        return error.lower()
+    exception_type = error if isinstance(error, type) else type(error)
+    bases = getattr(exception_type, "__mro__", None) or (exception_type,)
+    return " ".join(getattr(base, "__name__", "").lower() for base in bases)
+
+
+def _safe_exc_info(error: Any) -> tuple[type[BaseException], BaseException, Any] | None:
+    """生成日志运行时可直接消费的 exc_info 三元组，缺失时返回 None。"""
+    if not isinstance(error, BaseException):
+        return None
+    return type(error), error, error.__traceback__
+
+
+def classify_graph_failure(error: Any) -> FailureDiagnostic:
+    """把 graph 终态异常映射为稳定故障域与原因码，不读取异常文本。
+
+    只按异常类名（含基类）归类，因此不会把连接串、路径或用户数据带进分类结果。
+    未识别的异常保持既有的 ``node_error`` 语义。
+    """
+    names = _exception_class_names(error)
+    for tokens, error_category, reason_code in _ERROR_NAME_RULES:
+        if any(token in names for token in tokens):
+            return FailureDiagnostic(error_category, reason_code, _safe_exc_info(error))
+    return FailureDiagnostic(
+        ERROR_CATEGORY_INTERNAL,
+        "node_error",
+        _safe_exc_info(error),
+    )
 
 
 class LangGraphEventAdapter:
