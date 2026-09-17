@@ -69,7 +69,7 @@ def test_deep_agent_model_uses_validated_responses_profile(monkeypatch):
         model="deepseek-v4-flash",
         base_url="https://provider.example",
         api_key="test-only",
-        streaming=False,
+        streaming=True,
         use_responses_api=True,
         output_version="responses/v1",
         reasoning={"effort": "none"},

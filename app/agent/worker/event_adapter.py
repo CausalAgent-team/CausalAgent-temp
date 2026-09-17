@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import json
 import re
 import time
 from typing import Any
@@ -25,7 +26,7 @@ NODE_DESCRIPTIONS = {
     "normal_chat": "生成回答",
     "inquiry_answer": "回答报告追问",
 }
-TEXT_STREAM_NODES = {"normal_chat", "inquiry_answer"}
+TEXT_STREAM_NODES = {"normal_chat", "inquiry_answer", "report"}
 TOOL_STAGE_NODES = {
     "mcp_planner": "mcp",
     "mcp_tool_node": "mcp",
@@ -55,6 +56,15 @@ _ALGORITHM_TOOL_NAMES = {
     "causal.olc": "causal_olc",
     "causal.direct_lingam": "causal_direct_lingam",
 }
+_DECISION_TOOL_KINDS = {
+    "causal_pc": "algorithm",
+    "causal_olc": "algorithm",
+    "causal_direct_lingam": "algorithm",
+    "rag_evidence_search": "evidence",
+    "web_evidence_search": "evidence",
+}
+_MAX_DECISION_ARGS = 16_384
+_MAX_DECISION_SUMMARY = 1_200
 
 
 def _opaque_id(*parts: Any) -> str:
@@ -170,6 +180,7 @@ class LangGraphEventAdapter:
         self.active_by_node: dict[str, str] = {}
         self.failed_attempts: dict[str, str] = {}
         self.streams: dict[str, dict[str, Any]] = {}
+        self.decision_streams: dict[str, dict[str, Any]] = {}
         self._lifecycle_tools: set[str] = set()
         self._lifecycle_started_tools: set[str] = set()
 
@@ -259,6 +270,14 @@ class LangGraphEventAdapter:
         if not isinstance(data, dict):
             return []
         event_type = data.get("type")
+        if event_type == "message_chunk":
+            return self._message_event(
+                {
+                    "type": "messages",
+                    "ns": data.get("ns") or (),
+                    "data": data.get("data"),
+                }
+            )
         if event_type == "progress":
             # 阶段级公开说明：只接受已登记节点名和纯文本 summary，并按该节点
             # 当前活跃阶段绑定；step_id 缺省时由适配器补齐。
@@ -497,6 +516,122 @@ class LangGraphEventAdapter:
             events.append(event)
         return events
 
+    @staticmethod
+    def _partial_json_string(raw: str, key: str) -> str:
+        """从尚未闭合的 JSON 参数中安全提取一个字符串前缀。"""
+
+        decision_offset = raw.find('"public_decision"')
+        if decision_offset < 0:
+            return ""
+        match = re.search(
+            rf'"{re.escape(key)}"\s*:\s*"',
+            raw[decision_offset:],
+        )
+        if match is None:
+            return ""
+        start = decision_offset + match.end()
+        end = start
+        escaped = False
+        while end < len(raw):
+            char = raw[end]
+            if char == '"' and not escaped:
+                break
+            if char == "\\" and not escaped:
+                escaped = True
+            else:
+                escaped = False
+            end += 1
+        encoded = raw[start:end]
+        for length in range(len(encoded), -1, -1):
+            try:
+                value = json.loads('"' + encoded[:length] + '"')
+            except (TypeError, ValueError):
+                continue
+            return value if isinstance(value, str) else ""
+        return ""
+
+    def _decision_chunk_events(self, message: Any) -> list[dict[str, Any]]:
+        """把工具调用参数中的公开决策摘要转换为真实增量事件。"""
+
+        chunks = getattr(message, "tool_call_chunks", None) or []
+        if not chunks:
+            return []
+        step = self._active_step("deep_agent")
+        if step is None:
+            return []
+        events: list[dict[str, Any]] = []
+        for chunk in chunks:
+            if not isinstance(chunk, dict):
+                continue
+            index = chunk.get("index")
+            call_key = (
+                f"index:{index}"
+                if index is not None
+                else f"id:{chunk.get('id') or 'unknown'}"
+            )
+            key = f"{step['step_id']}:{call_key}"
+            existing = self.decision_streams.get(key)
+            tool_name = str(
+                chunk.get("name") or (existing or {}).get("tool_name") or ""
+            ).strip()
+            decision_kind = _DECISION_TOOL_KINDS.get(tool_name)
+            if decision_kind is None:
+                continue
+            if existing is None:
+                existing = {
+                    "tool_name": tool_name,
+                    "raw_args": "",
+                    "summary": "",
+                    "stream_id": _opaque_id(
+                        self.job_id,
+                        self.job_attempt,
+                        "decision",
+                        key,
+                    ),
+                    "sequence": 0,
+                }
+                self.decision_streams[key] = existing
+            elif tool_name and not existing.get("tool_name"):
+                existing["tool_name"] = tool_name
+
+            raw_args = chunk.get("args")
+            if isinstance(raw_args, dict):
+                raw_args = json.dumps(
+                    raw_args,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            if not isinstance(raw_args, str) or not raw_args:
+                continue
+            previous_raw = str(existing.get("raw_args") or "")
+            combined_raw = (
+                raw_args
+                if raw_args.startswith(previous_raw)
+                else previous_raw + raw_args
+            )[:_MAX_DECISION_ARGS]
+            existing["raw_args"] = combined_raw
+            summary = self._partial_json_string(combined_raw, "summary")[
+                :_MAX_DECISION_SUMMARY
+            ]
+            previous_summary = str(existing.get("summary") or "")
+            if not summary or len(summary) <= len(previous_summary):
+                continue
+            delta = summary[len(previous_summary):]
+            existing["summary"] = summary
+            existing["sequence"] += 1
+            event = self._base("decision_chunk", step)
+            event.update(
+                {
+                    "stream_id": existing["stream_id"],
+                    "sequence": existing["sequence"],
+                    "delta": delta,
+                    "decision_kind": decision_kind,
+                    "tool_name": self._safe_public_tool_name(tool_name),
+                }
+            )
+            events.append(event)
+        return events
+
     def _update_event(self, namespace: Any, data: Any) -> list[dict[str, Any]]:
         """从显式 State 和规范化结果生成 decision、progress 与工具摘要。"""
         if not isinstance(data, dict):
@@ -565,12 +700,15 @@ class LangGraphEventAdapter:
         return events
 
     def _message_event(self, data: Any) -> list[dict[str, Any]]:
-        """仅转换普通问答和报告追问的非空字符串 token。"""
+        """转换公开正文 token 或工具参数中的公开决策摘要 token。"""
         if not isinstance(data, (tuple, list)) or len(data) != 2:
             return []
         chunk, metadata = data
         if not isinstance(metadata, dict):
             return []
+        decision_events = self._decision_chunk_events(chunk)
+        if decision_events:
+            return decision_events
         node_name = metadata.get("langgraph_node")
         content = getattr(chunk, "content", None)
         if (

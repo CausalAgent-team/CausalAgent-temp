@@ -15,6 +15,13 @@ _EVENT_FIELDS = {
     "node_retry": {"message", "discard_stream_id"},
     "node_end": {"duration", "status", "message"},
     "text_delta": {"stream_id", "sequence", "delta"},
+    "decision_delta": {
+        "stream_id",
+        "sequence",
+        "delta",
+        "decision_kind",
+        "tool_name",
+    },
     "final_result": {"data"},
     "interrupt": {"message", "question_id"},
     "error": {"message"},

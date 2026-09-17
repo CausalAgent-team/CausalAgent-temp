@@ -41,50 +41,11 @@
         return events;
     }
 
-    function shouldAnimateDecision({ historyMode = false, reducedMotion = false } = {}) {
-        return !historyMode && !reducedMotion;
-    }
-
-    function createSerialTaskQueue() {
-        const pending = [];
-        let running = false;
-
-        function startNext() {
-            if (running || pending.length === 0) return;
-            running = true;
-            const task = pending.shift();
-            let completed = false;
-            const complete = () => {
-                if (completed) return;
-                completed = true;
-                running = false;
-                startNext();
-            };
-            try {
-                task(complete);
-            } catch (error) {
-                complete();
-                throw error;
-            }
-        }
-
-        return {
-            enqueue(task) {
-                if (typeof task !== 'function') return false;
-                pending.push(task);
-                startNext();
-                return true;
-            },
-        };
-    }
-
     return {
         isHistoryEvent,
         isActivePhase,
         mergeActiveJob,
         deferStepEvent,
         takeDeferredStepEvents,
-        shouldAnimateDecision,
-        createSerialTaskQueue,
     };
 });

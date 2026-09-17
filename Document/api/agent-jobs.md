@@ -58,7 +58,7 @@ Last-Event-ID: 42
 
 收到 `interrupt` 后，前端应展示公开问题并等待恢复；收到 `final_result`、`error` 或 `canceled` 后连接结束。若 Job 已经进入终态，即使数据库查询时没有新的事件，服务端也会结束连接。
 
-`decision` 事件除既有路由说明外，还可包含 `decision_kind=algorithm|evidence|final`。`algorithm` 表示模型在同一次算法 Tool Call 中显式提交的公开选择依据，`evidence` 表示同一位置的 `rag_evidence_search`/`web_evidence_search` 检索依据，两者都可同时带公开工具名；`final` 只在 FinalizationGate 验证成功后产生，可带 `low|medium|high` 置信度。公开说明是展示文本而非隐藏思维链，不包含内部结果引用；缺失或格式无效的工具说明不会阻止工具执行。三类事件都持久化到 `analysis_job_events`，SSE 重连和会话刷新按原 Event ID 回放，历史回放直接展示完整文本。
+`decision` 事件除既有路由说明外，还可包含 `decision_kind=algorithm|evidence|final`。`algorithm` 表示模型在同一次算法 Tool Call 中显式提交的公开选择依据，`evidence` 表示同一位置的 `rag_evidence_search`/`web_evidence_search` 检索依据，两者都可同时带公开工具名；`final` 只在 FinalizationGate 验证成功后产生，可带 `low|medium|high` 置信度。模型工具参数流中的公开摘要会先以 `decision_delta` 增量事件发送，工具开始/结果仍分别由可信工具边界发布；完整 `decision` 仍作为历史回放和无增量回退。公开说明是展示文本而非隐藏思维链，不包含内部结果引用；缺失或格式无效的工具说明不会阻止工具执行。相关事件都持久化到 `analysis_job_events`，SSE 重连按原 Event ID 续传，历史回放直接展示完整 `decision` 文本。
 
 FinalizationGate 拒绝时额外发布 `progress` 阶段说明，只含 `summary` 文本：第一次失败挂在 `finalization_gate` 阶段，说明未通过校验并给出脱敏后的具体修正要求；若该次修正仍未通过，则在同一阶段说明本次降级为仅基于已验证输入的报告。第二次 Deep Agent 启动修正时，`progress` 说明挂在新创建的 `deep_agent` 阶段，指出该阶段沿用已有工具结果、不重复调用工具。这两类说明与 `decision` 一样按稳定 `event_key` 幂等落库，SSE 重连和会话刷新按原 Event ID 回放。
 
@@ -82,7 +82,7 @@ FinalizationGate 拒绝时额外发布 `progress` 阶段说明，只含 `summary
 }
 ```
 
-引用随 assistant 消息独立持久化；重新加载会话时通过 `message.references` 返回相同的 `title + url` 数组。后端只提供该字段契约，不要求前端展示引用。报告、预处理和后处理节点不发送文字增量；公开 `text_delta` 仍只来自普通问答和报告追问节点。
+引用随 assistant 消息独立持久化；重新加载会话时通过 `message.references` 返回相同的 `title + url` 数组。后端只提供该字段契约，不要求前端展示引用。报告、普通问答和报告追问节点的公开正文使用 `text_delta` 增量；预处理和后处理节点不发送文字增量。算法选择说明使用独立的 `decision_delta`，不进入聊天正文。
 
 ## Resume 与 Cancel
 

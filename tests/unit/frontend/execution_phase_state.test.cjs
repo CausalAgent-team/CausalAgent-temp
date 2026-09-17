@@ -6,6 +6,7 @@ const phaseState = require('../../../app/static/js/execution_phase_state.js');
 test('history replay accepts node events but rejects message side effects', () => {
     assert.equal(phaseState.isHistoryEvent('node_start'), true);
     assert.equal(phaseState.isHistoryEvent('tool_call_result'), true);
+    assert.equal(phaseState.isHistoryEvent('decision_delta'), false);
     assert.equal(phaseState.isHistoryEvent('text_delta'), false);
     assert.equal(phaseState.isHistoryEvent('final_result'), false);
     assert.equal(phaseState.isHistoryEvent('interrupt'), false);
@@ -39,31 +40,4 @@ test('step details that arrive before their parent are deferred and replayed onc
         renderOptions: { historyMode: true },
     }]);
     assert.deepEqual(phaseState.takeDeferredStepEvents(pending, 'deep-step'), []);
-});
-
-test('only live decisions animate and reduced motion is respected', () => {
-    assert.equal(phaseState.shouldAnimateDecision(), true);
-    assert.equal(phaseState.shouldAnimateDecision({ historyMode: true }), false);
-    assert.equal(phaseState.shouldAnimateDecision({ reducedMotion: true }), false);
-});
-
-test('parallel decision animations are started serially', () => {
-    const queue = phaseState.createSerialTaskQueue();
-    const started = [];
-    let finishFirst;
-    let finishSecond;
-
-    queue.enqueue(done => {
-        started.push('first');
-        finishFirst = done;
-    });
-    queue.enqueue(done => {
-        started.push('second');
-        finishSecond = done;
-    });
-
-    assert.deepEqual(started, ['first']);
-    finishFirst();
-    assert.deepEqual(started, ['first', 'second']);
-    finishSecond();
 });

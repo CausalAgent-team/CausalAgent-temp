@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
+from langchain_core.messages import AIMessageChunk
 
 from Agent.causal_agent.graph import (
     _deep_agent_parent_node,
@@ -221,6 +222,81 @@ def test_parent_node_reads_matching_child_checkpoint_instead_of_projecting_messa
 
     assert calls == [None]
     assert "deep_agent_messages" not in update
+
+
+def test_parent_node_consumes_child_message_stream_before_projecting_state() -> None:
+    """父节点必须消费内层 messages 流，不能用 ainvoke 把 token 收成一次状态。"""
+    identity = TrustedJobIdentity(
+        job_id="00000000-0000-0000-0000-000000000451",
+        session_id="00000000-0000-0000-0000-000000000452",
+        user_id=7,
+        attempt_count=1,
+        lease_epoch=2,
+        worker_id="worker-1",
+        input_identity="input-sha",
+    )
+    current_scope = build_deep_agent_execution_scope(
+        job_id=identity.job_id,
+        attempt_count=identity.attempt_count,
+        lease_epoch=identity.lease_epoch,
+        input_identity=identity.input_identity,
+    )
+    child_values = {
+        "messages": [],
+        "algorithm_results": {},
+        "action_ledger": {},
+        "rag_evidence": {},
+        "web_evidence": {},
+        "structured_response": None,
+        "deep_agent_run_id": build_deep_agent_run_id(job_id=identity.job_id),
+        "execution_scope": current_scope,
+    }
+    stream_calls = []
+    forwarded = []
+    stream_chunk = {
+        "type": "messages",
+        "ns": (),
+        "data": (
+            AIMessageChunk(content="公开片段"),
+            {"langgraph_node": "model"},
+        ),
+    }
+
+    class Child:
+        async def aget_state(self, config):
+            return SimpleNamespace(values=child_values)
+
+        async def astream(self, value, *, config, context, stream_mode, subgraphs, version):
+            stream_calls.append((value, config, context, stream_mode, subgraphs, version))
+            yield stream_chunk
+
+    asyncio.run(
+        _deep_agent_parent_node(
+            {
+                "job_id": identity.job_id,
+                "messages": [],
+                "analysis_parameters": {},
+                "file_summary": {},
+                "deep_agent_run_id": child_values["deep_agent_run_id"],
+            },
+            runtime=SimpleNamespace(
+                context=AgentRunContext(execution_guard=None, trusted_identity=identity),
+                stream_writer=forwarded.append,
+            ),
+            config={"configurable": {"thread_id": identity.job_id}},
+            deep_agent=Child(),
+            store=None,
+            memory_init_lock=asyncio.Lock(),
+        )
+    )
+
+    assert len(stream_calls) == 1
+    assert stream_calls[0][3:] == (["messages", "values"], True, "v2")
+    assert forwarded == [{
+        "type": "message_chunk",
+        "ns": (),
+        "data": stream_chunk["data"],
+    }]
 
 
 def test_retry_path_emits_public_progress_notices() -> None:

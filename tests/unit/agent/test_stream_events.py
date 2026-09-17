@@ -49,13 +49,14 @@ class StreamEventAdapterTests(unittest.TestCase):
         self.assertEqual(first["attempt"], 3)
 
     def test_only_public_answer_nodes_emit_text_chunks(self):
-        """planner 和 report token 必须被过滤，普通回答 token 保持顺序。"""
+        """内部 planner 被过滤，公开回答和报告 token 保持顺序。"""
         self.adapter.convert(task_start("task-chat", "normal_chat"))
         planner = self.adapter.convert({
             "type": "messages",
             "ns": (),
             "data": (AIMessageChunk(content="hidden"), {"langgraph_node": "mcp_planner"}),
         })
+        self.adapter.convert(task_start("task-report", "report"))
         report = self.adapter.convert({
             "type": "messages",
             "ns": (),
@@ -73,9 +74,55 @@ class StreamEventAdapterTests(unittest.TestCase):
         })[0]
 
         self.assertEqual(planner, [])
-        self.assertEqual(report, [])
+        self.assertEqual(report[0]["type"], "text_chunk")
+        self.assertEqual(report[0]["delta"], "hidden")
         self.assertEqual((first["sequence"], second["sequence"]), (1, 2))
         self.assertEqual(first["stream_id"], second["stream_id"])
+
+    def test_public_decision_tool_call_chunks_emit_decision_chunks(self):
+        """工具参数流只提取公开决策摘要，不把半截 JSON 或隐藏内容外带。"""
+        self.adapter.convert(task_start("task-deep", "deep_agent"))
+        first = self.adapter.convert({
+            "type": "messages",
+            "ns": ("deep_agent:task-deep",),
+            "data": (
+                AIMessageChunk(
+                    content="",
+                    tool_call_chunks=[{
+                        "name": "causal_pc",
+                        "args": '{"public_decision":{"summary":"连续数据适合',
+                        "id": "call-1",
+                        "index": 0,
+                    }],
+                ),
+                {"langgraph_node": "model"},
+            ),
+        })
+        second = self.adapter.convert({
+            "type": "messages",
+            "ns": ("deep_agent:task-deep",),
+            "data": (
+                AIMessageChunk(
+                    content="",
+                    tool_call_chunks=[{
+                        "name": None,
+                        "args": '使用 PC。"}}',
+                        "id": None,
+                        "index": 0,
+                    }],
+                ),
+                {"langgraph_node": "model"},
+            ),
+        })
+
+        self.assertEqual(first[0]["type"], "decision_chunk")
+        self.assertEqual(first[0]["decision_kind"], "algorithm")
+        self.assertEqual(first[0]["tool_name"], "causal_pc")
+        self.assertEqual(first[0]["delta"], "连续数据适合")
+        self.assertEqual(second[0]["delta"], "使用 PC。")
+        self.assertEqual((first[0]["sequence"], second[0]["sequence"]), (1, 2))
+        self.assertEqual(first[0]["stream_id"], second[0]["stream_id"])
+        self.assertNotIn("public_decision", repr(first + second))
 
     def test_retry_is_only_emitted_after_next_attempt_starts(self):
         """最终失败不算重试，只有失败后确实再次开始才产生 node_retry。"""
@@ -409,6 +456,25 @@ class StreamEventAdapterTests(unittest.TestCase):
         self.assertEqual(public["status"], "failed")
         self.assertEqual(public["safe_error_code"], "ALGORITHM_EXECUTION_FAILED")
         self.assertNotIn("raw_result", public)
+
+    def test_sse_public_payload_keeps_decision_delta_only(self):
+        public = _public_event_payload({
+            "type": "decision_delta",
+            "step_id": "opaque",
+            "node_name": "deep_agent",
+            "title": "执行 Deep Agent 分析",
+            "stream_id": "stream-1",
+            "sequence": 1,
+            "delta": "连续数据",
+            "decision_kind": "algorithm",
+            "tool_name": "causal_pc",
+            "attempt": 4,
+            "raw_arguments": "private",
+        })
+
+        self.assertEqual(public["delta"], "连续数据")
+        self.assertNotIn("attempt", public)
+        self.assertNotIn("raw_arguments", public)
 
     def test_canceled_tool_lifecycle_is_not_reported_as_succeeded(self):
         self.adapter.convert(task_start("task-deep", "deep_agent"))

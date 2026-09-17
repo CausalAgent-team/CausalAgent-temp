@@ -99,7 +99,11 @@ def build_graph(
         event_node_name="inquiry_answer",
         llm=streaming_llm,
     )
-    report_node_with_llm = bind_node(nodes.report_node, event_node_name="report", llm=llm)
+    report_node_with_llm = bind_node(
+        nodes.report_node,
+        event_node_name="report",
+        llm=streaming_llm,
+    )
     normal_chat_node_with_llm = bind_node(
         nodes.normal_chat_node,
         event_node_name="normal_chat",
@@ -446,6 +450,79 @@ def _legacy_analysis_result(
     return payload
 
 
+async def _stream_deep_agent(
+    deep_agent: Any,
+    child_input: Any,
+    *,
+    child_config: dict[str, Any],
+    child_context: AgentRunContext,
+    runtime: Any,
+) -> Mapping[str, Any]:
+    """消费内层 messages 流，并保留 values 流提供的完整 State。"""
+
+    stream = getattr(deep_agent, "astream", None)
+    if not callable(stream):
+        result = await deep_agent.ainvoke(
+            child_input,
+            config=child_config,
+            context=child_context,
+        )
+        if not isinstance(result, Mapping):
+            raise RuntimeError("Deep Agent returned an invalid State")
+        return result
+
+    stream_config = {
+        "configurable": {
+            "thread_id": child_config["configurable"]["thread_id"],
+            "checkpoint_ns": child_config["configurable"]["checkpoint_ns"],
+        },
+        "metadata": dict(child_config.get("metadata") or {}),
+    }
+    checkpointer = child_config["configurable"].get("__pregel_checkpointer")
+    if checkpointer is not None:
+        stream_config["configurable"]["__pregel_checkpointer"] = checkpointer
+    if "recursion_limit" in child_config:
+        stream_config["recursion_limit"] = child_config["recursion_limit"]
+
+    writer = getattr(runtime, "stream_writer", None)
+    final_values: Mapping[str, Any] | None = None
+    async for chunk in stream(
+        child_input,
+        config=stream_config,
+        context=child_context,
+        stream_mode=["messages", "values"],
+        subgraphs=True,
+        version="v2",
+    ):
+        if child_context is not None and hasattr(child_context, "ensure_active"):
+            await child_context.ensure_active()
+        if (
+            isinstance(chunk, Mapping)
+            and chunk.get("type") == "values"
+            and isinstance(chunk.get("data"), Mapping)
+        ):
+            final_values = chunk["data"]
+        if (
+            isinstance(chunk, Mapping)
+            and chunk.get("type") == "messages"
+            and callable(writer)
+        ):
+            writer(
+                {
+                    "type": "message_chunk",
+                    "ns": chunk.get("ns") or (),
+                    "data": chunk.get("data"),
+                }
+            )
+    if final_values is None:
+        snapshot = await deep_agent.aget_state(child_config)
+        final_values = getattr(snapshot, "values", None)
+    result = final_values
+    if not isinstance(result, Mapping):
+        raise RuntimeError("Deep Agent returned an invalid State")
+    return result
+
+
 async def _deep_agent_parent_node(
     state,
     *,
@@ -545,10 +622,12 @@ async def _deep_agent_parent_node(
         child_input["execution_scope"] = current_scope
     if child_input is not None and context is not None and hasattr(context, "assert_state_safe"):
         context.assert_state_safe(child_input)
-    child_state = await deep_agent.ainvoke(
+    child_state = await _stream_deep_agent(
+        deep_agent,
         child_input,
-        config=child_config,
-        context=child_context,
+        child_config=child_config,
+        child_context=child_context,
+        runtime=runtime,
     )
     if context is not None and hasattr(context, "check_after_call"):
         await context.check_after_call()
@@ -918,7 +997,7 @@ def build_deep_agent_parent_graph(
     )
     workflow.add_node(
         "report",
-        bind_node(nodes.report_node, event_node_name="report", llm=llm),
+        bind_node(nodes.report_node, event_node_name="report", llm=streaming_llm),
         retry_policy=short_retry(),
         timeout=timeout(run_timeout=180, idle_timeout=60),
         error_handler=guarded_error_handler(

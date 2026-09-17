@@ -1360,17 +1360,6 @@
     overflow-wrap: anywhere;
 }
 
-.step-detail.streaming-decision::after {
-    content: '▍';
-    margin-left: 1px;
-    color: #9ca3af;
-    animation: decision-caret 0.8s steps(1, end) infinite;
-}
-
-@keyframes decision-caret {
-    50% { opacity: 0; }
-}
-
 .step-detail.error {
     color: #b42318;
 }

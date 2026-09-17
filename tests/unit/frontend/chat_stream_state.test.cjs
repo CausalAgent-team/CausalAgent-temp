@@ -43,11 +43,17 @@ test('retry discards only the failed stream', () => {
     assert.equal(state.streams.get('new'), 'new draft');
 });
 
-test('only an ordinary text result corrects an existing draft', () => {
+test('presentation text advances without dropping the received buffer', () => {
+    assert.equal(streamState.advancePresentationText('', '你好世界', 1), '你');
+    assert.equal(streamState.advancePresentationText('你', '你好世界', 2), '你好世');
+    assert.equal(streamState.advancePresentationText('你好世', '你好世界', 4), '你好世界');
+});
+
+test('a text result corrects an existing streamed draft', () => {
     assert.equal(streamState.shouldCorrectDraft(true, { type: 'text', summary: 'done' }), true);
     assert.equal(
         streamState.shouldCorrectDraft(true, { type: 'text', layout: 'report', summary: 'report' }),
-        false,
+        true,
     );
     assert.equal(streamState.shouldCorrectDraft(true, { type: 'causal_graph' }), false);
     assert.equal(streamState.shouldCorrectDraft(false, { type: 'text' }), false);

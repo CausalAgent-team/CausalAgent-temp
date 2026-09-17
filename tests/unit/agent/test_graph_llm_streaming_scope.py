@@ -24,12 +24,12 @@ def _node_llm_bindings() -> dict[str, str]:
 
 
 class TestGraphLlmStreamingScope(unittest.TestCase):
-    def test_only_public_answer_nodes_use_streaming_llm(self):
+    def test_public_text_nodes_use_streaming_llm(self):
         bindings = _node_llm_bindings()
 
         self.assertEqual(bindings["preprocess"], "llm")
         self.assertEqual(bindings["postprocess"], "llm")
-        self.assertEqual(bindings["report"], "llm")
+        self.assertEqual(bindings["report"], "streaming_llm")
         self.assertEqual(bindings["normal_chat"], "streaming_llm")
         self.assertEqual(bindings["inquiry_answer"], "streaming_llm")
 

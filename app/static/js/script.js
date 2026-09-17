@@ -1520,7 +1520,7 @@ function subscribeToJobEvents(jobId, thinkingElements, afterEventId = 0, generat
         };
 
         [
-            'node_start', 'progress', 'decision', 'tool_call_start',
+            'node_start', 'progress', 'decision', 'decision_delta', 'tool_call_start',
             'tool_call_result', 'node_retry', 'node_end', 'text_delta',
             'final_result', 'interrupt', 'error', 'canceled', 'heartbeat'
         ].forEach(bindEvent);
@@ -1691,6 +1691,8 @@ function addThinkingMessage(options = {}) {
         durationTimer: null,
         steps: new Map(),
         pendingStepEvents: new Map(),
+        decisionStreams: new Map(),
+        presentationStreams: new Map(),
         streamState: ChatStreamState.createState(),
         draftElement: null,
         draftStreamId: null,
@@ -1749,6 +1751,9 @@ function handleStreamEvent(eventData, thinkingElements, jobId = null, historyMod
         case 'tool_call_start':
         case 'tool_call_result':
             handleStepDetail(eventData, thinkingElements, { historyMode });
+            break;
+        case 'decision_delta':
+            handleDecisionDelta(eventData, thinkingElements, { historyMode });
             break;
         case 'node_retry':
             handleNodeRetry(eventData, thinkingElements);
@@ -1912,6 +1917,7 @@ function markThinkingCanceled(thinkingElements, message = getText('jobCanceled')
     if (!thinkingElements) return;
 
     stopThinkingDuration(thinkingElements);
+    stopPresentationStreams(thinkingElements);
     setTimelineStatus(thinkingElements, message);
     const dots = thinkingElements.bubble?.querySelector('.thinking-dots');
     if (dots) dots.style.display = 'none';
@@ -1930,62 +1936,203 @@ function markThinkingCanceled(thinkingElements, message = getText('jobCanceled')
     });
 }
 
-const decisionAnimationQueues = new WeakMap();
-
-function appendStepDetail(container, text, className = '', { animate = false } = {}) {
+function appendStepDetail(container, text, className = '') {
     // 以纯文本添加脱敏阶段详情，避免把协议内容当作 HTML。
     if (!container || !text) return;
     const row = document.createElement('div');
     row.className = `step-detail ${className}`.trim();
-    row.textContent = animate ? '' : text;
+    row.textContent = text;
     container.appendChild(row);
-    if (animate) enqueueStepDetailAnimation(container, row, text);
     return row;
 }
 
-function enqueueStepDetailAnimation(container, row, text) {
-    let queue = decisionAnimationQueues.get(container);
-    if (!queue) {
-        queue = ExecutionPhaseState.createSerialTaskQueue();
-        decisionAnimationQueues.set(container, queue);
+const PRESENTATION_CHARS_PER_SECOND = 40;
+const PRESENTATION_TICK_MS = 25;
+const PRESENTATION_CHARS_PER_TICK = Math.max(
+    1,
+    Math.round(PRESENTATION_CHARS_PER_SECOND * PRESENTATION_TICK_MS / 1000),
+);
+
+function scheduleRenderFrame(callback) {
+    if (typeof window.requestAnimationFrame === 'function') {
+        return window.requestAnimationFrame(callback);
     }
-    row.hidden = true;
-    queue.enqueue(complete => {
-        row.hidden = false;
-        animateStepDetailText(row, text, complete);
+    return window.setTimeout(callback, 16);
+}
+
+function cancelRenderFrame(frame) {
+    if (frame === null || frame === undefined) return;
+    window.cancelAnimationFrame?.(frame);
+    window.clearTimeout(frame);
+}
+
+function textLength(text) {
+    return Array.from(text || '').length;
+}
+
+function createPresentationStream({ render = null, onComplete = null } = {}) {
+    return {
+        target: '',
+        visible: '',
+        render,
+        onComplete,
+        pendingValue: null,
+        renderFrame: null,
+        timer: null,
+        complete: false,
+        completionNotified: false,
+        pendingEvents: [],
+    };
+}
+
+function schedulePresentationRender(stream) {
+    if (stream.renderFrame !== null) return;
+    stream.pendingValue = stream.visible;
+    stream.renderFrame = scheduleRenderFrame(() => {
+        stream.renderFrame = null;
+        const value = stream.pendingValue;
+        stream.pendingValue = null;
+        if (value !== null && value !== undefined) stream.render?.(value);
     });
 }
 
-function animateStepDetailText(row, text, complete = () => {}) {
-    const characters = Array.from(text);
-    // 单条说明最多 400 字；按长度调速，保证整段展示控制在约 2.4 秒内。
-    const charactersPerTick = Math.max(2, Math.ceil(characters.length / 100));
-    let index = 0;
-    row.classList.add('streaming-decision');
-    row.setAttribute('aria-label', text);
-    if (!row.isConnected) {
-        complete();
+function maybeCompletePresentationStream(stream) {
+    if (
+        !stream.complete
+        || textLength(stream.visible) < textLength(stream.target)
+        || stream.completionNotified
+    ) {
         return;
     }
-    const timer = window.setInterval(() => {
-        if (!row.isConnected) {
-            window.clearInterval(timer);
-            complete();
-            return;
-        }
-        index = Math.min(index + charactersPerTick, characters.length);
-        row.textContent = characters.slice(0, index).join('');
-        if (index >= characters.length) {
-            window.clearInterval(timer);
-            row.classList.remove('streaming-decision');
-            row.removeAttribute('aria-label');
-            complete();
-        }
-        keepLatestChatContentVisible();
-    }, 24);
+    stream.completionNotified = true;
+    if (stream.timer !== null) {
+        window.clearInterval(stream.timer);
+        stream.timer = null;
+    }
+    stream.onComplete?.();
 }
 
-function handleStepDetail(eventData, thinkingElements, { historyMode = false } = {}) {
+function advancePresentationStream(stream) {
+    if (textLength(stream.visible) < textLength(stream.target)) {
+        stream.visible = ChatStreamState.advancePresentationText(
+            stream.visible,
+            stream.target,
+            PRESENTATION_CHARS_PER_TICK,
+        );
+        schedulePresentationRender(stream);
+    }
+    maybeCompletePresentationStream(stream);
+}
+
+function startPresentationStream(stream) {
+    if (stream.timer !== null) return;
+    stream.timer = window.setInterval(
+        () => advancePresentationStream(stream),
+        PRESENTATION_TICK_MS,
+    );
+}
+
+function stopPresentationStream(stream, { flush = false } = {}) {
+    if (flush) {
+        stream.complete = true;
+        stream.visible = stream.target;
+    }
+    if (stream.timer !== null) {
+        window.clearInterval(stream.timer);
+        stream.timer = null;
+    }
+    cancelRenderFrame(stream.renderFrame);
+    stream.renderFrame = null;
+    stream.pendingValue = null;
+    if (flush) {
+        stream.render?.(stream.visible);
+        maybeCompletePresentationStream(stream);
+    }
+}
+
+function stopPresentationStreams(thinkingElements) {
+    thinkingElements.presentationStreams.forEach(stream => stopPresentationStream(stream));
+}
+
+function cancelDraftRender(thinkingElements) {
+    const streamId = thinkingElements.draftStreamId;
+    const stream = thinkingElements.presentationStreams.get(streamId);
+    if (stream) {
+        stopPresentationStream(stream);
+        thinkingElements.presentationStreams.delete(streamId);
+    }
+}
+
+function releasePendingDecisionEvents(stream, thinkingElements) {
+    const pending = stream.pendingEvents.splice(0);
+    pending.forEach(eventData => {
+        handleStepDetail(eventData, thinkingElements, { bypassDecisionGate: true });
+    });
+}
+
+function decisionStreamKey(eventData) {
+    return `${eventData.step_id}:${eventData.decision_kind}:${eventData.tool_name}`;
+}
+
+function findDecisionStreamForTool(eventData, thinkingElements) {
+    for (const decisionKind of ['algorithm', 'evidence']) {
+        const key = `${eventData.step_id}:${decisionKind}:${eventData.tool_name}`;
+        const stream = thinkingElements.decisionStreams.get(key);
+        if (stream) return stream;
+    }
+    return null;
+}
+
+function flushDecisionStreams(thinkingElements) {
+    thinkingElements.decisionStreams.forEach(stream => {
+        stopPresentationStream(stream, { flush: true });
+    });
+}
+
+function handleDecisionDelta(eventData, thinkingElements, { historyMode = false } = {}) {
+    const step = thinkingElements.steps.get(eventData.step_id);
+    if (!step) {
+        ExecutionPhaseState.deferStepEvent(
+            thinkingElements.pendingStepEvents,
+            eventData,
+            { historyMode },
+        );
+        return;
+    }
+    const { duplicate, buffer } = ChatStreamState.appendTextDelta(
+        thinkingElements.streamState,
+        eventData,
+    );
+    if (duplicate) return;
+    const key = decisionStreamKey(eventData);
+    let stream = thinkingElements.decisionStreams.get(key);
+    if (!stream) {
+        const prefix = eventData.decision_kind === 'evidence' ? '检索决策：' : '算法决策：';
+        const row = appendStepDetail(step.details, prefix, '');
+        stream = {
+            row,
+            prefix,
+            ...createPresentationStream({
+                onComplete: () => releasePendingDecisionEvents(stream, thinkingElements),
+            }),
+        };
+        stream.render = value => {
+            if (!stream.row.isConnected) return;
+            stream.row.textContent = `${stream.prefix}${value}`;
+            stream.row.setAttribute('aria-label', stream.row.textContent);
+            keepLatestChatContentVisible();
+        };
+        thinkingElements.decisionStreams.set(key, stream);
+    }
+    stream.target = buffer;
+    startPresentationStream(stream);
+}
+
+function handleStepDetail(
+    eventData,
+    thinkingElements,
+    { historyMode = false, bypassDecisionGate = false } = {},
+) {
     // 将进度、决策和工具摘要嵌套到对应父阶段。
     const step = thinkingElements.steps.get(eventData.step_id);
     if (!step) {
@@ -1995,6 +2142,34 @@ function handleStepDetail(eventData, thinkingElements, { historyMode = false } =
             { historyMode },
         );
         return;
+    }
+    if (
+        !bypassDecisionGate
+        && eventData.type === 'decision'
+        && eventData.decision_kind !== 'final'
+        && eventData.tool_name
+    ) {
+        const stream = thinkingElements.decisionStreams.get(decisionStreamKey(eventData));
+        if (stream) {
+            stream.complete = true;
+            startPresentationStream(stream);
+            maybeCompletePresentationStream(stream);
+            return;
+        }
+    }
+    if (
+        !bypassDecisionGate
+        && (eventData.type === 'tool_call_start' || eventData.type === 'tool_call_result')
+    ) {
+        const stream = findDecisionStreamForTool(eventData, thinkingElements);
+        if (stream && !stream.completionNotified) {
+            stream.pendingEvents.push(eventData);
+            if (eventData.type === 'tool_call_result') {
+                // 异常/旧端点没有完整 decision 结束事件时，不能永久挂起工具结果。
+                stopPresentationStream(stream, { flush: true });
+            }
+            return;
+        }
     }
     let text = eventData.summary || '';
     if (eventData.type === 'decision' && eventData.decision_kind === 'algorithm') {
@@ -2009,16 +2184,12 @@ function handleStepDetail(eventData, thinkingElements, { historyMode = false } =
     } else if (eventData.type === 'tool_call_result') {
         text = `${eventData.tool_name}：${eventData.summary}`;
     }
-    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || false;
-    const animate = eventData.type === 'decision' && ExecutionPhaseState.shouldAnimateDecision({
-        historyMode,
-        reducedMotion,
-    });
-    appendStepDetail(step.details, text, '', { animate });
+    appendStepDetail(step.details, text);
 }
 
 function handleNodeRetry(eventData, thinkingElements) {
     // 展示真实重试，并废弃失败生成实例对应的文字草稿。
+    cancelDraftRender(thinkingElements);
     const step = thinkingElements.steps.get(eventData.step_id);
     if (step) {
         step.item.className = 'step-item in-progress expanded';
@@ -2045,13 +2216,24 @@ function handleTextDelta(eventData, thinkingElements) {
     );
     if (duplicate) return;
     if (!thinkingElements.draftElement || thinkingElements.draftStreamId !== eventData.stream_id) {
+        cancelDraftRender(thinkingElements);
         thinkingElements.draftElement = addMessage('ai', { type: 'text', summary: ' ' });
         thinkingElements.draftElement.classList.add('streaming-draft');
         thinkingElements.draftStreamId = eventData.stream_id;
     }
-    const content = thinkingElements.draftElement.querySelector('.content');
-    if (content) content.innerHTML = marked.parse(buffer);
-    keepLatestChatContentVisible();
+    let stream = thinkingElements.presentationStreams.get(eventData.stream_id);
+    if (!stream) {
+        stream = createPresentationStream();
+        stream.render = value => {
+            if (!thinkingElements.draftElement?.isConnected) return;
+            const content = thinkingElements.draftElement.querySelector('.content');
+            if (content) content.innerHTML = marked.parse(value);
+            keepLatestChatContentVisible();
+        };
+        thinkingElements.presentationStreams.set(eventData.stream_id, stream);
+    }
+    stream.target = buffer;
+    startPresentationStream(stream);
 }
 
 /**
@@ -2060,6 +2242,7 @@ function handleTextDelta(eventData, thinkingElements) {
 function handleFinalResult(eventData, thinkingElements) {
     const { data } = eventData;
     stopThinkingDuration(thinkingElements);
+    flushDecisionStreams(thinkingElements);
     setTimelineStatus(thinkingElements, '');
     const dots = thinkingElements.bubble.querySelector('.thinking-dots');
     if (dots) dots.style.display = 'none';
@@ -2070,6 +2253,7 @@ function handleFinalResult(eventData, thinkingElements) {
     );
     if (canCorrectDraft) {
         thinkingElements.draftElement.classList.remove('streaming-draft');
+        cancelDraftRender(thinkingElements);
         const content = thinkingElements.draftElement.querySelector('.content');
         if (content) content.innerHTML = marked.parse(data.summary || '');
     } else {

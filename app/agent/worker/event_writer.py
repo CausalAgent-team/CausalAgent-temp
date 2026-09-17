@@ -10,8 +10,8 @@ from app.agent.worker.event_adapter import FailureDiagnostic
 from app.agent.worker.execution_guard import JobExecutionGuard, JobExecutionRevoked
 
 
-TEXT_FLUSH_INTERVAL_SECONDS = 0.150
-TEXT_FLUSH_CHARACTER_LIMIT = 384
+TEXT_FLUSH_INTERVAL_SECONDS = 0.050
+TEXT_FLUSH_CHARACTER_LIMIT = 64
 
 
 async def _complete_terminal_event(
@@ -184,20 +184,25 @@ class OrderedEventWriter:
             raise JobExecutionRevoked("event write fenced")
 
     async def _flush_text(self) -> None:
-        """把当前文字缓冲合并为一个有序 text_delta。"""
+        """把当前增量缓冲合并为一个有序公开增量事件。"""
         if not self.buffer:
             return
         stream_id = self.buffer["stream_id"]
         sequence = self.persisted_sequences.get(stream_id, 0) + 1
         self.persisted_sequences[stream_id] = sequence
+        source_type = self.buffer["source_type"]
         payload = {
             key: value
             for key, value in self.buffer.items()
-            if key not in {"chunks", "character_count", "started_at"}
+            if key not in {"source_type", "chunks", "character_count", "started_at"}
         }
         payload.update(
             {
-                "type": "text_delta",
+                "type": (
+                    "decision_delta"
+                    if source_type == "decision_chunk"
+                    else "text_delta"
+                ),
                 "sequence": sequence,
                 "delta": "".join(self.buffer["chunks"]),
             }
@@ -208,7 +213,11 @@ class OrderedEventWriter:
     async def _accept_text(self, payload: dict[str, Any]) -> None:
         """接收内部 token，并在切流或字符阈值时刷新。"""
         stream_id = payload["stream_id"]
-        if self.buffer and self.buffer["stream_id"] != stream_id:
+        source_type = payload.get("type")
+        if self.buffer and (
+            self.buffer["stream_id"] != stream_id
+            or self.buffer["source_type"] != source_type
+        ):
             await self._flush_text()
         if not self.buffer:
             self.buffer = {
@@ -218,6 +227,7 @@ class OrderedEventWriter:
             }
             self.buffer.update(
                 {
+                    "source_type": source_type,
                     "stream_id": stream_id,
                     "chunks": [],
                     "character_count": 0,
@@ -262,7 +272,7 @@ class OrderedEventWriter:
                     return
                 if self.aborted:
                     raise self.abort_error or JobExecutionRevoked("Event writer aborted")
-                if payload.get("type") == "text_chunk":
+                if payload.get("type") in {"text_chunk", "decision_chunk"}:
                     await self._accept_text(payload)
                 else:
                     await self._flush_text()

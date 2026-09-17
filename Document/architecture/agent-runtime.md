@@ -79,11 +79,11 @@ Deep Agent 使用 `ToolStrategy(FinalAnalysisDecision)` 生成 `structured_respo
 
 ## 公共事件与恢复
 
-worker 使用 LangGraph v2 的 `updates`、`messages`、`custom` 和 `tasks` 流。算法、RAG、Web 工具在外部调用前后通过 `OrderedEventWriter` sink 写入 `tool_call_start`/`tool_call_result`；父 `deep_agent` update 只作为聚合结果的兼容去重兜底。内层 ToolMessage 不进入普通用户事件。
+worker 使用 LangGraph v2 的 `updates`、`messages`、`custom` 和 `tasks` 流。父图以 `deep_agent.astream(..., stream_mode=["messages", "values"], subgraphs=True, version="v2")` 消费内层模型增量并保留完整 State，再通过父图 custom 流交给公共适配器；适配器只提取工具参数中已确认的 `public_decision.summary`，转换为 `decision_delta`，不外带原始参数或隐藏内容。算法、RAG、Web 工具在外部调用前后通过 `OrderedEventWriter` sink 写入 `tool_call_start`/`tool_call_result`；父 `deep_agent` update 只作为聚合结果的兼容去重兜底。内层 ToolMessage 不进入普通用户事件。
 
 公共 payload 由 `event_adapter.py` 与 `public_events.py` 的白名单共同约束。`tool_call_result.status` 只允许受控状态；`safe_error_code` 必须符合固定格式。`finalization_status` 只出现在最终报告数据。事件写入由 Job、attempt、lease、worker 和稳定 `event_key` 保护；失去 lease 或收到取消的 worker 不能提交迟到结果。
 
-SSE 与会话历史都从 MySQL `analysis_job_events` 恢复。页面刷新先重放持久化事件并记录实际处理到的 Event ID，再从该位置续传；前端可以暂存早于父 `node_start` 到达的工具明细，并在相同 `step_id` 出现后补绘。`decision` 事件始终以完整校验文本一条落库；实时页面在收到该事件后按字符渐进显示，同一阶段的并行决策按事件到达顺序串行展示，历史回放和 `prefers-reduced-motion` 环境直接展示完整文本。展示速度不影响工具执行，也不产生逐字符数据库事件。
+SSE 与会话历史都从 MySQL `analysis_job_events` 恢复。页面刷新先重放持久化事件并记录实际处理到的 Event ID，再从该位置续传；前端可以暂存早于父 `node_start` 到达的工具明细，并在相同 `step_id` 出现后补绘。`decision_delta` 与 `text_delta` 都按各自 `stream_id` 和批次序号增量更新；完整 `decision` 作为公开决策的回退/历史投影，实时页面不会再次复制已经完成的决策增量。报告正文通过 `text_delta` 实时渲染，历史回放直接使用已持久化的完整报告正文；展示速度不影响工具执行，也不产生逐字符数据库事件。
 
 ## 修改与验证边界
 
