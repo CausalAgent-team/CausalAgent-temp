@@ -462,7 +462,13 @@ class DataProfile(ContractModel):
 
 class ScientificConflict(ContractModel):
     conflict_id: str
-    result_refs: tuple[str, ...] = ()
+    result_refs: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "冲突涉及的算法结果 result_ref；只能引用本次运行返回的算法结果，"
+            "不要写入检索证据引用。"
+        ),
+    )
     summary: str
     resolution: str | None = None
 
@@ -473,10 +479,23 @@ class ScientificConflict(ContractModel):
 
 
 class RevisionProposal(ContractModel):
-    result_ref: str
+    """针对单个算法结果的修订建议；只作报告说明，不替换算法主图。"""
+
+    result_ref: str = Field(
+        description=(
+            "被建议修订的算法结果 result_ref；只能引用本次运行返回的算法结果。"
+        ),
+    )
     action: Literal["retain", "orient", "reverse", "remove", "uncertain"]
     rationale: str
-    evidence_refs: tuple[str, ...] = ()
+    evidence_refs: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "支撑该建议的检索证据引用；只能填 rag_evidence_search 或 "
+            "web_evidence_search 返回的 evidence_ref。算法结果之间互相印证请写进 "
+            "rationale，不要填在这里。"
+        ),
+    )
 
     @field_validator("result_ref", "rationale")
     @classmethod
@@ -485,7 +504,14 @@ class RevisionProposal(ContractModel):
 
 
 class ResultAssessment(ContractModel):
-    result_ref: str
+    """对单个算法结果的取舍记录；只能引用算法结果。"""
+
+    result_ref: str = Field(
+        description=(
+            "被取舍的算法结果 result_ref；只能引用本次运行返回的算法结果，"
+            "检索证据不要写进这个字段。"
+        ),
+    )
     disposition: Literal["primary", "supporting", "discarded"]
     rationale: str
 
@@ -499,8 +525,17 @@ class FinalAnalysisDecision(ContractModel):
     """ToolStrategy 的静态终态契约；动态归属由后续 FinalizationGate 校验。"""
 
     outcome: Literal["evidence_only", "algorithm_supported", "no_valid_algorithm"]
-    primary_result_ref: str | None = None
-    result_assessments: list[ResultAssessment] = Field(default_factory=list)
+    primary_result_ref: str | None = Field(
+        default=None,
+        description="主结果 result_ref；必须是本次运行返回且状态有效的算法结果。",
+    )
+    result_assessments: list[ResultAssessment] = Field(
+        default_factory=list,
+        description=(
+            "逐算法结果的唯一取舍；每个有效算法结果恰好一条。检索证据引用不属于"
+            "这里，只能出现在 revision_proposals.evidence_refs。"
+        ),
+    )
     conflict_status: Literal["none", "resolved", "unresolved"]
     conflicts: list[ScientificConflict] = Field(default_factory=list)
     revision_proposals: list[RevisionProposal] = Field(default_factory=list)

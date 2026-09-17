@@ -16,9 +16,11 @@ from Agent.causal_agent.graph import (
 from Agent.causal_agent.graph_utils import bind_subgraph_node
 from Agent.causal_agent.state import CausalAgentState
 from Agent.deep_agent.context import AgentRunContext, TrustedJobIdentity
+from Agent.deep_agent.finalization import StructuredResponseError
 from Agent.deep_agent_tools.identity import (
     build_deep_agent_execution_scope,
     build_deep_agent_run_id,
+    build_deep_agent_step_id,
 )
 from Agent.deep_agent_tools.models import FinalAnalysisDecision
 
@@ -219,3 +221,128 @@ def test_parent_node_reads_matching_child_checkpoint_instead_of_projecting_messa
 
     assert calls == [None]
     assert "deep_agent_messages" not in update
+
+
+def test_retry_path_emits_public_progress_notices() -> None:
+    """Gate 拒绝与修正重试都必须留下可回放的阶段公开说明。"""
+
+    identity = TrustedJobIdentity(
+        job_id="00000000-0000-0000-0000-000000000431",
+        session_id="00000000-0000-0000-0000-000000000432",
+        user_id=7,
+        attempt_count=2,
+        lease_epoch=3,
+        worker_id="worker-1",
+        input_identity="input-sha",
+    )
+    events: list[dict] = []
+    context = AgentRunContext(execution_guard=None, trusted_identity=identity)
+
+    class RejectingGate:
+        def validate(self, **kwargs):
+            raise StructuredResponseError(
+                "decision references an unknown algorithm result",
+                rule="assessment_ref_unknown_result",
+            )
+
+    gate_runtime = SimpleNamespace(context=context, stream_writer=events.append)
+    rejected = asyncio.run(
+        _finalization_gate_node(
+            {
+                "deep_agent_structured_response": None,
+                "deep_agent_algorithm_results": {},
+                "deep_agent_action_ledger": {},
+            },
+            runtime=gate_runtime,
+            config={},
+            gate=RejectingGate(),
+        )
+    )
+
+    assert rejected["finalization_retry_count"] == 1
+    assert "result_assessments 只能引用本次运行返回的算法结果" in (
+        rejected["deep_agent_retry_instruction"]
+    )
+    assert len(events) == 1
+    assert events[0]["type"] == "progress"
+    assert events[0]["node_name"] == "finalization_gate"
+    assert events[0]["_event_key"] == "finalization-gate-retry:2:1"
+    assert "修正要求：" in events[0]["summary"]
+
+    events.clear()
+    degraded = asyncio.run(
+        _finalization_gate_node(
+            {
+                "deep_agent_structured_response": None,
+                "deep_agent_algorithm_results": {},
+                "deep_agent_action_ledger": {},
+                "finalization_retry_count": 1,
+            },
+            runtime=gate_runtime,
+            config={},
+            gate=RejectingGate(),
+        )
+    )
+
+    assert degraded["finalization_status"] == "degraded"
+    assert [event["_event_key"] for event in events] == [
+        "finalization-gate-degraded:2"
+    ]
+
+    events.clear()
+    child_values = {
+        "messages": ["private child message"],
+        "algorithm_results": {},
+        "action_ledger": {},
+        "rag_evidence": {},
+        "web_evidence": {},
+        "structured_response": None,
+        "deep_agent_run_id": build_deep_agent_run_id(job_id=identity.job_id),
+        "execution_scope": build_deep_agent_execution_scope(
+            job_id=identity.job_id,
+            attempt_count=identity.attempt_count,
+            lease_epoch=identity.lease_epoch,
+            input_identity=identity.input_identity,
+        ),
+    }
+
+    class Child:
+        async def aget_state(self, config):
+            return SimpleNamespace(values=child_values)
+
+        async def ainvoke(self, value, *, config, context):
+            assert "上一份" in value["messages"][-1]["content"]
+            return child_values
+
+    asyncio.run(
+        _deep_agent_parent_node(
+            {
+                "job_id": identity.job_id,
+                "messages": [],
+                "analysis_parameters": {},
+                "file_summary": {},
+                "deep_agent_retry_instruction": "上一份结构化最终决策未通过程序事实校验。",
+            },
+            runtime=SimpleNamespace(
+                context=context,
+                stream_writer=events.append,
+                execution_info=SimpleNamespace(task_id="task-deep-retry"),
+            ),
+            config={"configurable": {"thread_id": identity.job_id}},
+            deep_agent=Child(),
+            store=None,
+            memory_init_lock=asyncio.Lock(),
+        )
+    )
+
+    expected_step_id = build_deep_agent_step_id(
+        job_id=identity.job_id,
+        attempt_count=identity.attempt_count,
+        task_id="task-deep-retry",
+    )
+    assert len(events) == 1
+    assert events[0]["type"] == "progress"
+    assert events[0]["node_name"] == "deep_agent"
+    assert events[0]["step_id"] == expected_step_id
+    assert events[0]["_event_key"] == f"deep-agent-retry:2:{expected_step_id}"
+    assert "不重复调用工具" in events[0]["summary"]

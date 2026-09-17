@@ -165,7 +165,7 @@
         "selection_rationale",
         "confidence"
       ],
-      "sha256": "a74035fe505bb8d7557eb66c2c30f95483fb5796b6b67cb6add2b434ec789003",
+      "sha256": "398a337fce47181bbc1994bbdef44ec75a9d485e1c6f9e6edb2decbda035909c",
       "title": "FinalAnalysisDecision"
     },
     "GraphEdge": {
@@ -278,7 +278,7 @@
         "disposition",
         "rationale"
       ],
-      "sha256": "2e1568dc60543da5d20871b4159f046c8c1cb39833d091740b7d41265298fc8e",
+      "sha256": "470e990b2b72874ad955153a6b6f07952fedd7371059ce9cdf6d7eef674902f1",
       "title": "ResultAssessment"
     },
     "RevisionProposal": {
@@ -293,7 +293,7 @@
         "action",
         "rationale"
       ],
-      "sha256": "bef01356598e2c916a4cc1fc2fd9f74ae769c09c7512ff7d8c231fedd8cf6697",
+      "sha256": "6eaae3b1819119d82ee6c3ac173d0071a8d5e74322ba273dfc56395c0282bd46",
       "title": "RevisionProposal"
     },
     "SafeWarning": {
@@ -319,7 +319,7 @@
         "conflict_id",
         "summary"
       ],
-      "sha256": "9bb44cbfa55f013ca2151f02c469d5a4c86827da83fb32a65db3e65ab9138042",
+      "sha256": "d7c2e37166847ec7a7c082df645384125af1a58caa77d273851325de75f41095",
       "title": "ScientificConflict"
     },
     "StandardizedGraph": {

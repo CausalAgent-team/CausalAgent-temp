@@ -259,6 +259,27 @@ class LangGraphEventAdapter:
         if not isinstance(data, dict):
             return []
         event_type = data.get("type")
+        if event_type == "progress":
+            # 阶段级公开说明：只接受已登记节点名和纯文本 summary，并按该节点
+            # 当前活跃阶段绑定；step_id 缺省时由适配器补齐。
+            node_name = data.get("node_name")
+            summary = data.get("summary")
+            if not isinstance(node_name, str) or node_name not in NODE_DESCRIPTIONS:
+                return []
+            if not isinstance(summary, str) or not summary or len(summary) > 1200:
+                return []
+            step = self._active_step(node_name)
+            if step is None:
+                return []
+            event = self._base("progress", step)
+            event["summary"] = summary
+            supplied_step_id = str(data.get("step_id") or "")
+            if _SAFE_STEP_ID.fullmatch(supplied_step_id):
+                event["step_id"] = supplied_step_id
+            supplied_event_key = str(data.get("_event_key") or "")
+            if supplied_event_key and len(supplied_event_key) <= 255:
+                event["_event_key"] = supplied_event_key
+            return [event]
         if event_type == "decision":
             decision_kind = data.get("decision_kind")
             summary = data.get("summary")

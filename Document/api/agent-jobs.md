@@ -60,6 +60,8 @@ Last-Event-ID: 42
 
 `decision` 事件除既有路由说明外，还可包含 `decision_kind=algorithm|evidence|final`。`algorithm` 表示模型在同一次算法 Tool Call 中显式提交的公开选择依据，`evidence` 表示同一位置的 `rag_evidence_search`/`web_evidence_search` 检索依据，两者都可同时带公开工具名；`final` 只在 FinalizationGate 验证成功后产生，可带 `low|medium|high` 置信度。公开说明是展示文本而非隐藏思维链，不包含内部结果引用；缺失或格式无效的工具说明不会阻止工具执行。三类事件都持久化到 `analysis_job_events`，SSE 重连和会话刷新按原 Event ID 回放，历史回放直接展示完整文本。
 
+FinalizationGate 拒绝时额外发布 `progress` 阶段说明，只含 `summary` 文本：第一次失败挂在 `finalization_gate` 阶段，说明未通过校验并给出脱敏后的具体修正要求；若该次修正仍未通过，则在同一阶段说明本次降级为仅基于已验证输入的报告。第二次 Deep Agent 启动修正时，`progress` 说明挂在新创建的 `deep_agent` 阶段，指出该阶段沿用已有工具结果、不重复调用工具。这两类说明与 `decision` 一样按稳定 `event_key` 幂等落库，SSE 重连和会话刷新按原 Event ID 回放。
+
 新 Deep Agent 报告的 `final_result.data` 可包含程序生成的 `finalization_status`：`valid` 表示最终结构化决策已通过当前 Job/attempt/lease、AlgorithmResult 与 Action Ledger 校验；`degraded` 表示一次修正仍未通过，但系统生成了安全报告并将 Job 置为 `succeeded`。`degraded` 结果不展示未经 Gate 验证的主图，也不把内部校验错误、provider ID、raw result 或工具参数返回给用户。该字段是结果质量元数据，不是模型的 `outcome`，旧 Job 没有该字段时按兼容语义处理。
 
 联网搜索成功且存在结果时，报告终态的 `final_result.data` 额外包含最多 9 条引用。报告/追问使用的搜索结果与公开引用共用 `WEB_SEARCH_MAX_RESULTS=9` 上限。引用只公开网页标题和 URL，不返回网页正文、搜索工具内部字段或完整搜索结果：

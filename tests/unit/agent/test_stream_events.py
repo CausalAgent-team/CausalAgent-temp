@@ -292,6 +292,89 @@ class StreamEventAdapterTests(unittest.TestCase):
         self.assertEqual(public["summary"], final["summary"])
         self.assertEqual(public["confidence"], "medium")
 
+    def test_stage_progress_notices_bind_to_the_named_active_step(self):
+        """Gate 失败说明与修正重试说明必须挂在各自阶段的活跃实例上。"""
+        gate_step = self.adapter.convert(task_start("task-gate-1", "finalization_gate"))[0]
+        gate_notice = self.adapter.convert(
+            {
+                "type": "custom",
+                "ns": (),
+                "data": {
+                    "type": "progress",
+                    "node_name": "finalization_gate",
+                    "summary": "结构化最终决策未通过程序事实校验，已发起一次修正。",
+                    "_event_key": "finalization-gate-retry:0:1",
+                },
+            }
+        )[0]
+        # 关闭 Gate 阶段后再进入第二次 Deep Agent，确保绑定到新的阶段实例。
+        self.adapter.convert(
+            {
+                "type": "tasks",
+                "ns": (),
+                "data": {"id": "task-gate-1", "name": "finalization_gate", "output": {}},
+            }
+        )
+        retry_step = self.adapter.convert(task_start("task-deep-2", "deep_agent"))[0]
+        retry_notice = self.adapter.convert(
+            {
+                "type": "custom",
+                "ns": (),
+                "data": {
+                    "type": "progress",
+                    "node_name": "deep_agent",
+                    "step_id": retry_step["step_id"],
+                    "summary": "正在按校验要求修正最终决策：沿用已有工具结果，不重复调用工具。",
+                    "_event_key": f"deep-agent-retry:0:{retry_step['step_id']}",
+                },
+            }
+        )[0]
+
+        self.assertEqual(gate_notice["type"], "progress")
+        self.assertEqual(gate_notice["step_id"], gate_step["step_id"])
+        self.assertEqual(gate_notice["node_name"], "finalization_gate")
+        self.assertEqual(gate_notice["title"], "校验最终分析决策")
+        self.assertEqual(retry_notice["step_id"], retry_step["step_id"])
+        self.assertEqual(retry_notice["node_name"], "deep_agent")
+        self.assertEqual(retry_notice["title"], "执行 Deep Agent 分析")
+
+        public = _public_event_payload(gate_notice)
+        self.assertEqual(public["summary"], gate_notice["summary"])
+        self.assertNotIn("_event_key", public)
+
+    def test_stage_progress_notices_reject_unregistered_nodes_and_blank_summary(self):
+        """阶段说明只接受已登记节点和非空文本，避免任意文本外带。"""
+        self.adapter.convert(task_start("task-deep-1", "deep_agent"))
+
+        self.assertEqual(
+            self.adapter.convert(
+                {
+                    "type": "custom",
+                    "ns": (),
+                    "data": {
+                        "type": "progress",
+                        "node_name": "private_node",
+                        "summary": "不应外带",
+                    },
+                }
+            ),
+            [],
+        )
+        self.assertEqual(
+            self.adapter.convert(
+                {
+                    "type": "custom",
+                    "ns": (),
+                    "data": {
+                        "type": "progress",
+                        "node_name": "deep_agent",
+                        "summary": "",
+                    },
+                }
+            ),
+            [],
+        )
+
     def test_sse_public_payload_removes_backend_attempt(self):
         """job attempt 可以持久化，但不能进入普通用户 SSE 协议。"""
         payload = {

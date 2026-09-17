@@ -25,9 +25,11 @@ Tool Call 的 public_decision.summary 中提供一条简短、可直接向当前
 
 最终必须通过结构化 FinalAnalysisDecision 提交选择依据、置信度和逐结果取舍。若
 没有有效算法结果，使用 evidence_only 或 no_valid_algorithm，并保持 primary_result_ref
-为空。selection_rationale 和逐结果 rationale 会直接向当前用户展示，应保持简短，
-并使用公开算法名称描述依据，不要写入 result_ref 等内部标识。revision_proposals
-只能作为报告说明，不能替换或编辑算法生成的主图。
+为空。result_assessments 与 primary_result_ref 只接受本次运行返回的算法结果引用；
+RAG/Web 证据引用只能出现在 revision_proposals.evidence_refs，两类引用不能混放。
+selection_rationale 和逐结果 rationale 会直接向当前用户展示，应保持简短，并使用
+公开算法名称描述依据，不要写入 result_ref 等内部标识。revision_proposals 只能
+作为报告说明，不能替换或编辑算法生成的主图。
 """
 
 

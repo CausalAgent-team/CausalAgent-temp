@@ -16,7 +16,16 @@ from Agent.deep_agent_tools.models import (
 
 
 class StructuredResponseError(ValueError):
-    """模型没有提交可验证的 ``structured_response``。"""
+    """模型没有提交可验证的 ``structured_response``。
+
+    ``rule`` 是稳定的失败规则标识。只有模型可以自行修正的失败才带 rule，
+    身份、账本或状态一致性问题保持为空，避免把内部完整性问题包装成
+    可以把修正责任交还给模型的指令。
+    """
+
+    def __init__(self, message: str, *, rule: str | None = None) -> None:
+        super().__init__(message)
+        self.rule = rule
 
 
 def validate_structured_response(value: Any) -> FinalAnalysisDecision:
@@ -28,8 +37,14 @@ def validate_structured_response(value: Any) -> FinalAnalysisDecision:
         try:
             return FinalAnalysisDecision.model_validate(value)
         except Exception as exc:  # Pydantic 的细节不能透传到公共输出
-            raise StructuredResponseError("structured_response schema validation failed") from exc
-    raise StructuredResponseError("structured_response is required")
+            raise StructuredResponseError(
+                "structured_response schema validation failed",
+                rule="decision_schema_invalid",
+            ) from exc
+    raise StructuredResponseError(
+        "structured_response is required",
+        rule="decision_missing",
+    )
 
 
 def validate_decision_references(
@@ -43,17 +58,32 @@ def validate_decision_references(
     result_refs = set(algorithm_result_refs)
     assessment_refs = {item.result_ref for item in decision.result_assessments}
     if not assessment_refs.issubset(result_refs):
-        raise StructuredResponseError("decision references an unknown algorithm result")
+        raise StructuredResponseError(
+            "decision references an unknown algorithm result",
+            rule="assessment_ref_unknown_result",
+        )
     if decision.primary_result_ref and decision.primary_result_ref not in result_refs:
-        raise StructuredResponseError("primary_result_ref is not an available result")
+        raise StructuredResponseError(
+            "primary_result_ref is not an available result",
+            rule="primary_ref_unknown_result",
+        )
     for proposal in decision.revision_proposals:
         if proposal.result_ref not in result_refs:
-            raise StructuredResponseError("revision proposal references an unknown result")
+            raise StructuredResponseError(
+                "revision proposal references an unknown result",
+                rule="proposal_ref_unknown_result",
+            )
         if not set(proposal.evidence_refs).issubset(evidence_refs):
-            raise StructuredResponseError("revision proposal references unknown evidence")
+            raise StructuredResponseError(
+                "revision proposal references unknown evidence",
+                rule="proposal_evidence_ref_unknown",
+            )
     for conflict in decision.conflicts:
         if not set(conflict.result_refs).issubset(result_refs):
-            raise StructuredResponseError("conflict references an unknown result")
+            raise StructuredResponseError(
+                "conflict references an unknown result",
+                rule="conflict_ref_unknown_result",
+            )
     return decision.model_copy(deep=True)
 
 
@@ -307,30 +337,44 @@ class FinalizationGate:
             for assessment in normalized_decision.result_assessments
         }
         if not valid_refs.issubset(assessment_by_ref):
-            raise StructuredResponseError("each eligible valid result needs one assessment")
+            raise StructuredResponseError(
+                "each eligible valid result needs one assessment",
+                rule="valid_result_without_assessment",
+            )
         for assessment in normalized_decision.result_assessments:
             result = eligible[assessment.result_ref]
             if result.status != "valid" and assessment.disposition != "discarded":
-                raise StructuredResponseError("non-valid results may only be discarded")
+                raise StructuredResponseError(
+                    "non-valid results may only be discarded",
+                    rule="non_valid_result_not_discarded",
+                )
 
         if normalized_decision.outcome == "algorithm_supported":
             primary = normalized_decision.primary_result_ref
             if primary not in valid_refs:
-                raise StructuredResponseError("primary result must be an eligible valid result")
+                raise StructuredResponseError(
+                    "primary result must be an eligible valid result",
+                    rule="primary_result_not_valid",
+                )
         elif normalized_decision.outcome == "evidence_only":
             if any(
                 assessment_by_ref[ref].disposition != "discarded"
                 for ref in valid_refs
             ):
                 raise StructuredResponseError(
-                    "evidence_only must discard every eligible valid result"
+                    "evidence_only must discard every eligible valid result",
+                    rule="evidence_only_with_valid_result",
                 )
         elif normalized_decision.outcome == "no_valid_algorithm":
             if valid_refs:
-                raise StructuredResponseError("no_valid_algorithm has an eligible valid result")
+                raise StructuredResponseError(
+                    "no_valid_algorithm has an eligible valid result",
+                    rule="no_valid_algorithm_with_valid_result",
+                )
             if not current_ledger:
                 raise StructuredResponseError(
-                    "no_valid_algorithm requires a real algorithm invocation"
+                    "no_valid_algorithm requires a real algorithm invocation",
+                    rule="no_valid_algorithm_without_invocation",
                 )
 
         return normalized_decision
@@ -358,4 +402,74 @@ class FinalizationRetryController:
             raise StructuredResponseError("finalization retry budget exhausted")
         self.retries_used += 1
         return self.retries_used
+
+
+# Gate 失败规则到公开修正提示的映射。这里只写契约层面的可执行纠正，
+# 不携带内部标识、结果内容或异常正文，因此可以同时用于模型重试指令和
+# 普通用户可见的公开事件。
+FINALIZATION_RETRY_HINTS: dict[str, str] = {
+    "decision_missing": "必须提交结构化 FinalAnalysisDecision，不能只给文字结论。",
+    "decision_schema_invalid": (
+        "提交对象必须严格符合 FinalAnalysisDecision 的字段类型和取值，"
+        "不要新增、省略或改写字段。"
+    ),
+    "assessment_ref_unknown_result": (
+        "result_assessments 只能引用本次运行返回的算法结果；RAG/Web 证据引用"
+        "只能放在 revision_proposals.evidence_refs。"
+    ),
+    "primary_ref_unknown_result": (
+        "primary_result_ref 只能引用本次运行返回的算法结果。"
+    ),
+    "proposal_ref_unknown_result": (
+        "revision_proposals.result_ref 只能引用本次运行返回的算法结果。"
+    ),
+    "proposal_evidence_ref_unknown": (
+        "revision_proposals.evidence_refs 只能填 rag_evidence_search 或 "
+        "web_evidence_search 返回的证据引用；算法结果之间互相印证请写进 rationale。"
+    ),
+    "conflict_ref_unknown_result": (
+        "conflicts.result_refs 只能引用本次运行返回的算法结果。"
+    ),
+    "valid_result_without_assessment": (
+        "每个有效算法结果都必须恰好有一条 result_assessments 记录。"
+    ),
+    "non_valid_result_not_discarded": (
+        "状态不是有效的算法结果只能标记为 discarded。"
+    ),
+    "primary_result_not_valid": (
+        "primary_result_ref 必须指向状态为有效的算法结果。"
+    ),
+    "evidence_only_with_valid_result": (
+        "outcome=evidence_only 时，所有有效算法结果都必须标记为 discarded。"
+    ),
+    "no_valid_algorithm_with_valid_result": (
+        "outcome=no_valid_algorithm 时不能存在有效算法结果。"
+    ),
+    "no_valid_algorithm_without_invocation": (
+        "outcome=no_valid_algorithm 必须建立在本次真实算法调用之上。"
+    ),
+}
+
+_GENERIC_RETRY_INSTRUCTION = (
+    "上一份结构化最终决策未通过程序事实校验。请保留已有工具结果，重新提交一个"
+    "只引用真实结果、并为每个有效结果提供唯一取舍的 FinalAnalysisDecision；"
+    "不要重新编造工具调用或结果。"
+)
+
+
+def finalization_rule_hint(rule: str | None) -> str | None:
+    """返回可安全公开的修正提示；未知规则返回 ``None``。"""
+
+    if not rule:
+        return None
+    return FINALIZATION_RETRY_HINTS.get(rule)
+
+
+def build_finalization_retry_instruction(error: BaseException) -> str:
+    """把 Gate 失败规则转成一条脱敏、可执行的修正指令。"""
+
+    hint = finalization_rule_hint(getattr(error, "rule", None))
+    if hint is None:
+        return _GENERIC_RETRY_INSTRUCTION
+    return f"{_GENERIC_RETRY_INSTRUCTION}具体规则：{hint}"
 

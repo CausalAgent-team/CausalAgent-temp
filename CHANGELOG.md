@@ -1369,3 +1369,8 @@
   - 【并行展示修复】：同一阶段同时到达的公开决策继续各自保留，但渐进动画改为按事件到达顺序串行执行，避免多行文字同时流式出现；历史回放和减少动态效果偏好保持即时展示。
 - 【文档：Deep Agent 文档核对】
   - 【Agent：运行事实与历史材料收束】：以生产 worker、父/子图、AlgorithmSpec allowlist、MCP execute/control lane、公共事件和部署配置为准重写 Agent 运行时及系统总览；将冗长实施计划收束为长期维护记录，并把产品规划与技术设计标为历史决策材料。修正公共工具状态、实际配置入口、父子 checkpoint 身份和 raw 文件归属；明确当前 cleanup outbox 尚未删除 Deep Agent child thread，以及 recursion/finalization retry 两项配置尚未接入生产调用路径。
+- 【FinalizationGate：终态引用契约与修正链路】
+  - 【引用契约】：`FinalAnalysisDecision` 明确两套引用命名空间：`result_assessments`、`primary_result_ref`、`conflicts.result_refs` 与 `revision_proposals.result_ref` 只接受本次运行返回的算法结果引用，RAG/Web 证据引用只能出现在 `revision_proposals.evidence_refs`；该分工写入结构化字段描述与系统提示，使模型在提交时就能区分“算法结果取舍”和“检索证据引用”。
+  - 【规则化修正指令】：Gate 校验失败改为携带稳定规则码，并把规则翻译成脱敏的中文修正要求写进重试指令，使模型知道具体违反了哪条引用规则，而不是只收到泛泛的重新提交要求；身份、账本与状态一致性失败不带规则码，继续使用通用指令，不把内部完整性问题包装成模型可修正的指令。
+  - 【阶段公开说明】：Gate 拒绝时发布 `progress` 阶段说明，可修正时挂在 `finalization_gate` 阶段并给出修正要求，降级时说明本次仅基于已验证输入生成报告；第二次 Deep Agent 启动修正时，新阶段同样收到一条 `progress` 说明，指出该阶段沿用已有工具结果、不重复调用工具。事件适配器按登记节点名绑定活跃阶段，并拒绝未登记节点名与空文本。
+  - 【事故回归】：新增复现真实事故的用例，把证据引用写进 `result_assessments` 时先以 `assessment_ref_unknown_result` 拒绝，只修该处后继续以 `proposal_evidence_ref_unknown` 拒绝，两处都修正后才通过，锁定两处违规与修正路径。

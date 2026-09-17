@@ -35,6 +35,8 @@ from typing import Any
 from Agent.deep_agent.finalization import (
     FinalizationGate,
     StructuredResponseError,
+    build_finalization_retry_instruction,
+    finalization_rule_hint,
 )
 from Agent.deep_agent.memory import MEMORY_PATHS, MEMORY_TEMPLATES, trusted_memory_namespace
 from Agent.deep_agent.state import (
@@ -523,6 +525,11 @@ async def _deep_agent_parent_node(
     if checkpoint_matches:
         assert_checkpoint_state_safe(checkpoint_values)
         if isinstance(retry_instruction, str) and retry_instruction.strip():
+            _emit_deep_agent_retry_notice(
+                runtime=runtime,
+                attempt_count=int(trusted_identity.attempt_count),
+                step_id=getattr(child_context, "deep_agent_step_id", None),
+            )
             child_input = retry_deep_agent_from_checkpoint(
                 checkpoint_values,
                 retry_instruction=retry_instruction,
@@ -610,6 +617,88 @@ async def _ensure_official_memory_files(
                 await result
 
 
+def _emit_public_progress_note(
+    runtime: Any,
+    *,
+    node_name: str,
+    summary: str,
+    event_key: str,
+    step_id: str | None = None,
+) -> None:
+    """按父图阶段发布一条脱敏说明；缺省 step_id 由事件适配器补齐。"""
+
+    if not summary or len(summary) > 1200:
+        return
+    payload: dict[str, Any] = {
+        "type": "progress",
+        "node_name": node_name,
+        "summary": summary,
+        "_event_key": event_key,
+    }
+    if step_id:
+        payload["step_id"] = step_id
+    writer = getattr(runtime, "stream_writer", None)
+    if callable(writer):
+        writer(payload)
+
+
+def _finalization_notice_summary(*, error: BaseException, retry: bool) -> str:
+    """把 Gate 失败规则转成普通用户可见的说明文本。"""
+
+    if retry:
+        summary = "结构化最终决策未通过程序事实校验，已发起一次修正。"
+    else:
+        summary = (
+            "结构化最终决策仍未通过程序事实校验，本次降级为仅基于已验证输入的报告。"
+        )
+    hint = finalization_rule_hint(getattr(error, "rule", None))
+    if hint:
+        summary = f"{summary}修正要求：{hint}"
+    return summary
+
+
+def _emit_finalization_progress_notice(
+    *,
+    runtime: Any,
+    identity: Any,
+    retry_ordinal: int | None,
+    error: BaseException,
+) -> None:
+    """发布 Gate 失败说明；重试与降级使用互不覆盖的稳定事件键。"""
+
+    attempt_count = int(getattr(identity, "attempt_count", 0))
+    if retry_ordinal is None:
+        event_key = f"finalization-gate-degraded:{attempt_count}"
+    else:
+        event_key = f"finalization-gate-retry:{attempt_count}:{retry_ordinal}"
+    _emit_public_progress_note(
+        runtime,
+        node_name="finalization_gate",
+        summary=_finalization_notice_summary(
+            error=error,
+            retry=retry_ordinal is not None,
+        ),
+        event_key=event_key,
+    )
+
+
+def _emit_deep_agent_retry_notice(
+    *,
+    runtime: Any,
+    attempt_count: int,
+    step_id: str | None,
+) -> None:
+    """在修正重试开始时说明第二次 Deep Agent 阶段的目的。"""
+
+    _emit_public_progress_note(
+        runtime,
+        node_name="deep_agent",
+        step_id=step_id,
+        summary="正在按校验要求修正最终决策：沿用已有工具结果，不重复调用工具。",
+        event_key=f"deep-agent-retry:{attempt_count}:{step_id or ''}",
+    )
+
+
 async def _finalization_gate_node(
     state,
     *,
@@ -633,17 +722,27 @@ async def _finalization_gate_node(
             rag_evidence=state.get("deep_agent_rag_evidence"),
             web_evidence=state.get("deep_agent_web_evidence"),
         )
-    except StructuredResponseError:
+    except StructuredResponseError as exc:
         retry_count = int(state.get("finalization_retry_count") or 0)
         if retry_count < 1:
+            _emit_finalization_progress_notice(
+                runtime=runtime,
+                identity=identity,
+                retry_ordinal=retry_count + 1,
+                error=exc,
+            )
             return {
                 "finalization_retry_count": retry_count + 1,
-                "deep_agent_retry_instruction": (
-                    "上一份结构化最终决策未通过程序事实校验。请保留已有工具结果，"
-                    "重新提交一个只引用真实结果、并为每个有效结果提供唯一取舍的"
-                    "FinalAnalysisDecision；不要重新编造工具调用或结果。"
+                "deep_agent_retry_instruction": build_finalization_retry_instruction(
+                    exc
                 ),
             }
+        _emit_finalization_progress_notice(
+            runtime=runtime,
+            identity=identity,
+            retry_ordinal=None,
+            error=exc,
+        )
         safe_error = "FINALIZATION_CONTRACT_INVALID"
         return {
             "finalization_status": "degraded",

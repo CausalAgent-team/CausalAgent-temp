@@ -1063,8 +1063,10 @@
       "$defs": {
         "ResultAssessment": {
           "additionalProperties": false,
+          "description": "对单个算法结果的取舍记录；只能引用算法结果。",
           "properties": {
             "result_ref": {
+              "description": "被取舍的算法结果 result_ref；只能引用本次运行返回的算法结果，检索证据不要写进这个字段。",
               "title": "Result Ref",
               "type": "string"
             },
@@ -1092,8 +1094,10 @@
         },
         "RevisionProposal": {
           "additionalProperties": false,
+          "description": "针对单个算法结果的修订建议；只作报告说明，不替换算法主图。",
           "properties": {
             "result_ref": {
+              "description": "被建议修订的算法结果 result_ref；只能引用本次运行返回的算法结果。",
               "title": "Result Ref",
               "type": "string"
             },
@@ -1114,6 +1118,7 @@
             },
             "evidence_refs": {
               "default": [],
+              "description": "支撑该建议的检索证据引用；只能填 rag_evidence_search 或 web_evidence_search 返回的 evidence_ref。算法结果之间互相印证请写进 rationale，不要填在这里。",
               "items": {
                 "type": "string"
               },
@@ -1138,6 +1143,7 @@
             },
             "result_refs": {
               "default": [],
+              "description": "冲突涉及的算法结果 result_ref；只能引用本次运行返回的算法结果，不要写入检索证据引用。",
               "items": {
                 "type": "string"
               },
@@ -1191,9 +1197,11 @@
             }
           ],
           "default": null,
+          "description": "主结果 result_ref；必须是本次运行返回且状态有效的算法结果。",
           "title": "Primary Result Ref"
         },
         "result_assessments": {
+          "description": "逐算法结果的唯一取舍；每个有效算法结果恰好一条。检索证据引用不属于这里，只能出现在 revision_proposals.evidence_refs。",
           "items": {
             "$ref": "#/$defs/ResultAssessment"
           },
@@ -1674,8 +1682,10 @@
     },
     "ResultAssessment": {
       "additionalProperties": false,
+      "description": "对单个算法结果的取舍记录；只能引用算法结果。",
       "properties": {
         "result_ref": {
+          "description": "被取舍的算法结果 result_ref；只能引用本次运行返回的算法结果，检索证据不要写进这个字段。",
           "title": "Result Ref",
           "type": "string"
         },
@@ -1703,8 +1713,10 @@
     },
     "RevisionProposal": {
       "additionalProperties": false,
+      "description": "针对单个算法结果的修订建议；只作报告说明，不替换算法主图。",
       "properties": {
         "result_ref": {
+          "description": "被建议修订的算法结果 result_ref；只能引用本次运行返回的算法结果。",
           "title": "Result Ref",
           "type": "string"
         },
@@ -1725,6 +1737,7 @@
         },
         "evidence_refs": {
           "default": [],
+          "description": "支撑该建议的检索证据引用；只能填 rag_evidence_search 或 web_evidence_search 返回的 evidence_ref。算法结果之间互相印证请写进 rationale，不要填在这里。",
           "items": {
             "type": "string"
           },
@@ -1804,6 +1817,7 @@
         },
         "result_refs": {
           "default": [],
+          "description": "冲突涉及的算法结果 result_ref；只能引用本次运行返回的算法结果，不要写入检索证据引用。",
           "items": {
             "type": "string"
           },
