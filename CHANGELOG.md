@@ -1353,6 +1353,12 @@
 - 【部署与验收】：同步开发、预发、生产 Compose 与 `.env.example`，补充 lane/容量/事件目录契约测试及真实 HTTP 饱和并发验收场景；Docker 定向回归 `62 passed`、完整单元测试 `575 passed`，MCP spike 与真实 HTTP 饱和/双取消验收通过。
 - 【Deep Agent 公开决策与刷新恢复】：算法 Tool Call 新增可选 `public_decision.summary` 公开说明 envelope，dependency middleware 在调度和执行前剥离该字段并将有效说明持久化为幂等 `decision` 事件；FinalizationGate 通过后再把内部结果引用映射为公开算法名和最终选择说明，degraded 路径不公开未验证决策。
 - 【前端历史回放】：确认现有 Deep Agent lifecycle 已完整落入 `analysis_job_events` 并能由 `/api/load_session` 重建；前端增加明细先于父阶段到达时的 `step_id` 暂存补绘，并为相关静态脚本增加版本参数，避免缓存旧恢复代码。
+- 【Agent worker：graph 终态失败日志保真】
+  - 【异常传递】：`graph_runner` 不再把 LangGraph 抛出的异常压缩成一句脱敏文案后丢弃；公开 `message` 保持 `sanitize_public_error()` 原有文案不变，真实异常改由 `_diagnostic` 内部字段携带 `error_category`、真实 `reason_code` 和 `exc_info` 继续传递。
+  - 【内部通道】：`OrderedEventWriter` 只把 `message` 交给 `fail_job`，诊断与 `terminal_type == "error"` 同步挂在只读的 `terminal_diagnostic` 上；`_diagnostic` 不进入 `analysis_job_events`、SSE、聊天投影或管理员接口。
+  - 【稳定分类】：`worker.job.failed` 新增 `error_category` 字段，取值为 `provider_error/protocol_error/checkpoint_error/runtime_contract_error/internal_error`，只按异常类名（含基类）判定、不读取异常文本；`reason_code` 由固定 `node_error` 改为按异常映射到既有 `REASON_CODES`，未识别异常仍保留 `node_error`。
+  - 【日志产出】：`worker.job.failed` 现在带上非 null 的 `exception_type` 与清理后的 `stack`，可定位到具体堆栈帧。
+  - 【同步更新】：`Document/development/observability.md` 的事件表与关联链路补充 `error_category` 取值和内部诊断边界。
 
 ---
 2026.9.17

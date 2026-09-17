@@ -6,6 +6,7 @@ import asyncio
 from typing import Any
 
 from app.agent import job_service
+from app.agent.worker.event_adapter import FailureDiagnostic
 from app.agent.worker.execution_guard import JobExecutionGuard, JobExecutionRevoked
 
 
@@ -62,6 +63,9 @@ class OrderedEventWriter:
         self.persisted_sequences: dict[str, int] = {}
         self.terminal_seen = False
         self.terminal_type: str | None = None
+        # 与 terminal_type == "error" 同步置位的内部诊断；只提供只读日志用途，
+        # 其中的原始异常不会进入 fail_job 或 analysis_job_events。
+        self.terminal_diagnostic: FailureDiagnostic | None = None
         self.error: BaseException | None = None
         self.aborted = False
         self.abort_error: BaseException | None = None
@@ -142,6 +146,8 @@ class OrderedEventWriter:
             self.terminal_type = event_type
             return
         if event_type == "error":
+            # fail_job 只接受脱敏文案，内部诊断既不落库也不出前端。
+            diagnostic = payload.get("_diagnostic")
             outcome = await asyncio.to_thread(
                 job_service.fail_job,
                 self.job["job_id"],
@@ -161,6 +167,8 @@ class OrderedEventWriter:
                 raise JobExecutionRevoked(f"error event fenced: {reason}")
             self.terminal_seen = True
             self.terminal_type = "error"
+            if isinstance(diagnostic, FailureDiagnostic):
+                self.terminal_diagnostic = diagnostic
             return
         event_id = await asyncio.to_thread(
             job_service.write_event,

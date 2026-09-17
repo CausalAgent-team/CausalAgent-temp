@@ -4,7 +4,18 @@ from __future__ import annotations
 
 import logging
 
-from observability.event_catalog import EVENT_SPECS, validate_event_details
+from app.agent.worker.event_adapter import (
+    ERROR_CATEGORY_CHECKPOINT,
+    ERROR_CATEGORY_INTERNAL,
+    ERROR_CATEGORY_PROTOCOL,
+    ERROR_CATEGORY_PROVIDER,
+    ERROR_CATEGORY_RUNTIME_CONTRACT,
+)
+from observability.event_catalog import (
+    ERROR_CATEGORY,
+    EVENT_SPECS,
+    validate_event_details,
+)
 
 
 EXPECTED_CODES = {
@@ -199,6 +210,51 @@ def test_last_login_update_failure_has_stable_message_and_reason_contract():
     assert violation is None
 
 
+def test_worker_job_failed_accepts_stable_error_category_and_drops_absent_one():
+    """失败事件接受稳定故障域；未分类时省略该键而不是写入非法值。"""
+    event_code = "worker.job.failed"
+    spec = EVENT_SPECS[event_code]
+    assert "error_category" in spec.details
+
+    resolved, safe, violation = validate_event_details(
+        event_code,
+        {
+            "failure_phase": "graph_terminal",
+            "reason_code": "rate_limited",
+            "error_category": "provider_error",
+            "attempt": 1,
+            "duration_ms": 12,
+        },
+    )
+    assert resolved is spec
+    assert violation is None
+    assert safe["error_category"] == "provider_error"
+
+    _resolved, safe, violation = validate_event_details(
+        event_code,
+        {"reason_code": "node_error", "error_category": None},
+    )
+    assert violation is None
+    assert safe == {"reason_code": "node_error"}
+
+    _resolved, _safe, violation = validate_event_details(
+        event_code,
+        {"reason_code": "node_error", "error_category": "RuntimeError"},
+    )
+    assert violation == "invalid_detail_value"
+
+
+def test_error_category_vocabulary_matches_the_worker_classifier():
+    """目录白名单与 worker 分类常量是两处声明，必须逐值一致。"""
+    assert ERROR_CATEGORY.choices == frozenset(
+        {
+            ERROR_CATEGORY_PROVIDER,
+            ERROR_CATEGORY_PROTOCOL,
+            ERROR_CATEGORY_CHECKPOINT,
+            ERROR_CATEGORY_RUNTIME_CONTRACT,
+            ERROR_CATEGORY_INTERNAL,
+        }
+    )
 def test_mcp_cancel_failure_reasons_and_reconnect_lane_are_catalogued():
     for reason_code in (
         "control_capacity_timeout",

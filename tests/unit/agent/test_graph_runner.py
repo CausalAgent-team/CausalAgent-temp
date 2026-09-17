@@ -7,11 +7,37 @@ from langgraph.errors import NodeCancelledError
 from langgraph.types import Command
 
 from app.agent.checkpoint_recovery import checkpoint_identity
+from app.agent.worker.event_adapter import sanitize_public_error
+from app.agent.worker.graph_runner import ai_call_stream
 from app.agent.worker.graph_runner import (
     _raise_wrapped_cancellation,
     ai_call_stream,
 )
 from app.agent.worker.execution_guard import JobExecutionRevoked
+
+
+class APIStatusError(Exception):
+    """模拟 provider SDK 的基类，用于锁定分类判定顺序。"""
+
+
+class RateLimitError(APIStatusError):
+    """模拟 provider 限流异常。"""
+
+
+class AuthenticationError(APIStatusError):
+    """模拟 provider 鉴权异常。"""
+
+
+class CheckpointPostgresUnavailable(RuntimeError):
+    """模拟 checkpoint 依赖不可用。"""
+
+
+class RunnerContractError(ValueError):
+    """模拟 runner 输出合同错误。"""
+
+
+class ToolMessageProtocolError(Exception):
+    """模拟 ToolMessage 协议错误。"""
 
 
 class FakeGraph:
@@ -32,6 +58,19 @@ class FakeGraph:
         self.inputs.append((input_data, config))
         if False:
             yield {}
+
+
+class FailingGraph(FakeGraph):
+    """在流式执行中抛出指定异常，用于验证失败诊断。"""
+
+    def __init__(self, error):
+        super().__init__([_snapshot()])
+        self.error = error
+
+    async def astream(self, input_data, config, **_kwargs):
+        """复现 LangGraph 把节点异常抛给调用方的行为。"""
+        raise self.error
+        yield {}  # pragma: no cover
 
 
 def _snapshot(*, interrupts=(), public_interrupts=None, values=None):
@@ -316,3 +355,43 @@ class GraphRunnerTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(RuntimeError, "checkpoint unavailable"):
             await _collect(BrokenGraph([]))
+
+    async def test_graph_failure_keeps_public_message_and_carries_diagnostic(self):
+        """公开文案保持脱敏，真实异常改由内部诊断字段继续传递。"""
+        cases = (
+            (RateLimitError("slow down"), "provider_error", "rate_limited"),
+            (AuthenticationError("bad key"), "provider_error", "auth_failed"),
+            (
+                CheckpointPostgresUnavailable("db down"),
+                "checkpoint_error",
+                "checkpoint_unavailable",
+            ),
+            (
+                RunnerContractError("bad runner output"),
+                "runtime_contract_error",
+                "invalid_runtime_context",
+            ),
+            (ToolMessageProtocolError("bad json"), "protocol_error", "protocol_error"),
+            (RuntimeError("boom"), "internal_error", "node_error"),
+        )
+        for error, expected_kind, expected_reason in cases:
+            with self.subTest(error=type(error).__name__):
+                events = await _collect(FailingGraph(error))
+
+                self.assertEqual([event["type"] for event in events], ["error"])
+                event = events[0]
+                self.assertEqual(event["message"], sanitize_public_error(error))
+                self.assertEqual(event["attempt"], 1)
+
+                diagnostic = event["_diagnostic"]
+                self.assertEqual(diagnostic.error_category, expected_kind)
+                self.assertEqual(diagnostic.reason_code, expected_reason)
+                self.assertIs(diagnostic.exc_info[0], type(error))
+                self.assertIs(diagnostic.exc_info[1], error)
+                self.assertIsNotNone(diagnostic.exc_info[2])
+
+    async def test_rate_limit_subclass_is_not_misclassified_as_server_error(self):
+        """provider 子类的 MRO 含 APIStatusError，判定顺序不能让它退化成服务端错误。"""
+        events = await _collect(FailingGraph(RateLimitError("slow down")))
+
+        self.assertEqual(events[0]["_diagnostic"].reason_code, "rate_limited")

@@ -13,6 +13,7 @@ from app.agent.checkpoint_recovery import checkpoint_identity
 from app.chat.services import get_job_chat_history
 from app.agent.worker.event_adapter import (
     LangGraphEventAdapter,
+    classify_graph_failure,
     sanitize_public_error,
 )
 from app.agent.worker.execution_guard import JobExecutionGuard, JobExecutionRevoked
@@ -311,8 +312,11 @@ async def ai_call_stream(
         _raise_wrapped_cancellation(exc)
         if execution_guard is not None:
             await execution_guard.check_after_call()
+        # 公开事件只保留脱敏文案；真实异常通过下划线前缀的内部字段传给
+        # OrderedEventWriter，后者只把 message 落库，诊断只用于 worker 日志。
         yield {
             "type": "error",
             "message": sanitize_public_error(exc),
             "attempt": job_attempt,
+            "_diagnostic": classify_graph_failure(exc),
         }

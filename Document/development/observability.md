@@ -171,7 +171,7 @@ Grafana 继续使用独立账号和 `127.0.0.1:3000` 本地入口，不复用 Ca
 | `worker.job.finished` | `info/lifecycle` | 分析任务执行完成 | `attempt`, `duration_ms`, `outcome` |
 | `worker.job.interrupted` | `info/lifecycle` | 分析任务已暂停并等待输入 | `attempt`, `duration_ms`, `reason_code` |
 | `worker.job.revoked` | `info/lifecycle` | 分析任务执行资格已撤销 | `reason_code`, `status`, `execution_state` |
-| `worker.job.failed` | `error/lifecycle` | 分析任务执行失败 | `failure_phase`, `reason_code`, `attempt`, `duration_ms` |
+| `worker.job.failed` | `error/lifecycle` | 分析任务执行失败 | `failure_phase`, `reason_code`, `error_category`, `attempt`, `duration_ms` |
 | `worker.job.cleanup_failed` | `error/dependency` | 分析任务执行资源清理失败 | `failure_count`, `phases` |
 | `worker.lease.refresh_failed` | `warning/dependency` | Worker lease 刷新失败 | `consecutive_failures`, `suppressed_count` |
 | `worker.lease.recovered` | `info/dependency` | Worker lease 刷新已恢复 | `failure_count`, `downtime_ms` |
@@ -223,10 +223,9 @@ X-Request-ID
   -> MCP 子进程 JSON stderr
 ```
 
-- Flask 使用最小 `CausalFlask.log_exception()` 替换默认未处理异常日志，仍由 Flask 返回默认 500；已捕获 5xx 在最外层路由记录。普通 4xx 不升级为异常日志，只有确认禁用账号、已登录用户跨归属、CSRF 拒绝、重认证失败和安全会话撤销进入 `security`。
-- Job 首次创建与幂等重放分别记录 accepted/replayed；重放使用当前请求 ID，worker 使用 Job 首次落库的原始请求 ID，并通过同一 `job_id` 下钻。
-- `OrderedEventWriter.terminal_type` 只读区分 `final_result/interrupt/error/None`。waiting input、fencing、取消和 shutdown 保留原控制流并记录 INFO；Job 最终失败每次执行最多一个事件，cleanup 多 phase 先聚合再记录。
+- graph 终态失败时，`graph_runner` 把 `sanitize_public_error()` 的脱敏文案作为公开 `message`，另以 `_diagnostic` 内部字段携带 `error_category`、真实 `reason_code` 和 `exc_info`；`OrderedEventWriter` 只把 `message` 交给 `fail_job`，诊断仅与 `terminal_type == "error"` 同步挂在 `terminal_diagnostic` 上供运行日志使用，不进入 `analysis_job_events`、SSE 或管理员接口。`error_category` 取值为 `provider_error/protocol_error/checkpoint_error/runtime_contract_error/internal_error`，只按异常类名（含基类）判定，不读取异常文本；未识别的异常保持 `node_error`。该字段与 `Agent/causal_agent/graph_utils.py` 自定义流里的 `error_kind`（原始异常类名）是不同命名空间的两个概念，不要混用。`exception_type` 与 `stack` 是 v1 顶层字段，由 `exc_info` 派生，不进入 `details` 白名单。
 - node 包装器统一绑定 `node`；兼容子图 ToolNode 只从已校验的第一个 tool call 绑定 `tool`，新 Deep Agent 则由父节点 update 聚合静态算法结果并只输出稳定工具名/状态/安全错误码。单次重试失败不写运行异常，只有重试耗尽后的 timeout/degraded 才记录；运行日志不写入 `analysis_job_events`。
+- 兼容 MCP 路径的父进程先删除模型给出的可信参数和 `csv_data`，再从 State 注入 `user_id/session_id/job_id/input_user_file_id/input_object_id`，从当前日志上下文注入 `request_id/worker_slot`。必填可信参数缺少权威值时在 transport 前失败关闭；子进程固定绑定 `node=mcp_tool_node` 和真实工具名。
 - 新 MCP 路径由 worker 在调用前写 `mcp.client.call.started`，MCP 服务只在 HMAC 验证后绑定 `user_id/session_id/job_id/invocation_id/worker_slot/node/tool`；签名、CSV、参数正文和原始结果不进入日志。服务端收到、拒绝、接受、60 秒慢调用、终态及取消回执均使用相同 invocation 上下文，可在 Grafana 时间线中跨 `worker|mcp` 服务关联。
 - 数据库只记录 `primary/replica` 逻辑别名和稳定 reason code。慢 SQL 只记录操作类型、耗时、规范化 SQL 的完整 SHA-256 digest 和抑制数；monitor 正常锁竞争、轮询和成功快照静默。
 - checkpoint cleanup 每个 outbox attempt 最终边界只记录一个成功或失败事件，claim、heartbeat 和快照发布等循环级异常使用 runtime degraded/recovered；业务数据库中的 fencing、幂等和 outbox 状态机保持原样。
