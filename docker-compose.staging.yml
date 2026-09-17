@@ -220,9 +220,9 @@ services:
       db-bootstrap: {condition: service_completed_successfully}
     logging: *bounded_logging
 
-  checkpoint-cleanup:
+  agent-persistence-cleanup:
     image: ${STAGING_APP_IMAGE:?STAGING_APP_IMAGE must be an immutable image digest}
-    command: ["sh", "-c", "python scripts/staging_environment_guard.py && exec python -m Database.checkpoint_cleanup_worker"]
+    command: ["sh", "-c", "python scripts/staging_environment_guard.py && exec python -m Database.agent_persistence_cleanup_worker"]
     environment: *app_environment
     networks: [rag_eval_staging]
     depends_on:

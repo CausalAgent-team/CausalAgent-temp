@@ -302,9 +302,9 @@ h1 { margin: 0; font-size: clamp(26px, 3vw, 34px); letter-spacing: -.03em; }
   grid-template-columns: repeat(4, minmax(140px, 1fr)) auto;
 }
 .table-panel { padding-bottom: 14px; }
-.checkpoint-cleanup-result { border-color: #bfdbfe; background: #f8fbff; }
-.checkpoint-cleanup-link { display: inline-flex; margin-top: 6px; color: #175cd3; font-size: 13px; font-weight: 600; text-decoration: none; }
-.checkpoint-cleanup-link:hover { text-decoration: underline; }
+.persistence-cleanup-result { border-color: #bfdbfe; background: #f8fbff; }
+.persistence-cleanup-link { display: inline-flex; margin-top: 6px; color: #175cd3; font-size: 13px; font-weight: 600; text-decoration: none; }
+.persistence-cleanup-link:hover { text-decoration: underline; }
 .break-anywhere { overflow-wrap: anywhere; }
 .session-title-cell {
   display: block;

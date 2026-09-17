@@ -686,34 +686,37 @@ _events: dict[str, EventSpec] = {
         downtime_ms=DURATION,
         failure_count=POSITIVE_COUNT,
     ),
-    "checkpoint.cleanup.succeeded": _spec(
+    "agent.persistence.cleanup.succeeded": _spec(
         logging.INFO,
         "lifecycle",
-        "Checkpoint cleanup 已完成",
+        "Agent 持久化清理已完成",
+        task_type=TOKEN,
         outbox_id=POSITIVE_COUNT,
         attempt=POSITIVE_COUNT,
         duration_ms=DURATION,
+        deleted_count=COUNT,
     ),
-    "checkpoint.cleanup.failed": _spec(
+    "agent.persistence.cleanup.failed": _spec(
         logging.ERROR,
         "dependency",
-        "Checkpoint cleanup 执行失败",
+        "Agent 持久化清理执行失败",
+        task_type=TOKEN,
         outbox_id=POSITIVE_COUNT,
         attempt=POSITIVE_COUNT,
         duration_ms=DURATION,
         reason_code=REASON,
     ),
-    "checkpoint.cleanup.runtime.degraded": _spec(
+    "agent.persistence.cleanup.runtime.degraded": _spec(
         logging.WARNING,
         "dependency",
-        "Checkpoint cleanup 运行循环已降级",
+        "Agent 持久化清理运行循环已降级",
         reason_code=REASON,
         suppressed_count=COUNT,
     ),
-    "checkpoint.cleanup.runtime.recovered": _spec(
+    "agent.persistence.cleanup.runtime.recovered": _spec(
         logging.INFO,
         "dependency",
-        "Checkpoint cleanup 运行循环已恢复",
+        "Agent 持久化清理运行循环已恢复",
         downtime_ms=DURATION,
         failure_count=POSITIVE_COUNT,
     ),

@@ -60,7 +60,7 @@ def test_only_intended_development_containers_are_labelled_for_collection():
         "worker",
         "causal-mcp",
         "db-bootstrap",
-        "checkpoint-cleanup",
+        "agent-persistence-cleanup",
         "monitor",
     }
 

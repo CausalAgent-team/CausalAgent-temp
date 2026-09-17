@@ -334,5 +334,113 @@ class DevelopAndRagMergeMigrationTests(unittest.TestCase):
             )
 
 
+class UserMemoryCleanupOutboxMigrationTests(unittest.TestCase):
+    """静态验证用户长期记忆清理 outbox migration 与启动就绪检查。"""
+
+    MIGRATION_PATH = Path(
+        "Database/migrations/versions/"
+        "t5e6f7a8b9c0_add_user_memory_cleanup_outbox.py"
+    )
+
+    def test_migration_extends_current_head(self):
+        """新 revision 直接承接当前唯一 head。"""
+        text = self.MIGRATION_PATH.read_text(encoding="utf-8")
+        self.assertIn('revision: str = "t5e6f7a8b9c0"', text)
+        self.assertIn(
+            'down_revision: Union[str, Sequence[str], None] = "s4d5e6f7a8b9"',
+            text,
+        )
+
+    def test_migration_creates_lease_and_aggregate_columns(self):
+        """表结构包含状态、重试、租约、脱敏错误结论和完成时间。"""
+        text = self.MIGRATION_PATH.read_text(encoding="utf-8")
+        self.assertIn("CREATE TABLE user_memory_cleanup_outbox", text)
+        for column in (
+            "user_id INT NOT NULL",
+            "operation_id CHAR(36) DEFAULT NULL",
+            "status VARCHAR(16) NOT NULL DEFAULT 'pending'",
+            "attempts TINYINT UNSIGNED NOT NULL DEFAULT 0",
+            "available_at DATETIME(6)",
+            "lease_expires_at DATETIME(6) DEFAULT NULL",
+            "completed_at DATETIME(6) DEFAULT NULL",
+        ):
+            self.assertIn(column, text)
+        self.assertIn("UNIQUE KEY uq_user_memory_cleanup_outbox_user (user_id)", text)
+        self.assertIn(
+            "INDEX idx_user_memory_cleanup_outbox_claim",
+            text,
+        )
+
+    def test_migration_keeps_no_user_foreign_key(self):
+        """用户删除后任务必须保留，因此 user_id 不关联 users 外键。"""
+        text = self.MIGRATION_PATH.read_text(encoding="utf-8")
+        self.assertNotIn("REFERENCES users", text)
+        self.assertIn(
+            "FOREIGN KEY (operation_id) REFERENCES admin_operations(operation_id)",
+            text,
+        )
+
+    def test_downgrade_only_drops_the_new_outbox(self):
+        """回滚只删除本次新增账本，不触碰其他结构。"""
+        text = self.MIGRATION_PATH.read_text(encoding="utf-8")
+        downgrade = text.split("def downgrade()")[1]
+        self.assertIn("DROP TABLE IF EXISTS user_memory_cleanup_outbox", downgrade)
+        self.assertNotIn("DROP TABLE", downgrade.replace(
+            "DROP TABLE IF EXISTS user_memory_cleanup_outbox", ""
+        ))
+
+    def test_readiness_requires_outbox_table_and_claim_index(self):
+        """应用启动检查必须同时覆盖新表和新领取索引。"""
+        text = Path("app/db.py").read_text(encoding="utf-8")
+        self.assertIn('"user_memory_cleanup_outbox"', text)
+        self.assertIn("idx_user_memory_cleanup_outbox_claim", text)
+
+
+class MonitorSnapshotKeyWidthMigrationTests(unittest.TestCase):
+    """静态验证快照键长度扩展 migration 与清理快照命名。"""
+
+    MIGRATION_PATH = Path(
+        "Database/migrations/versions/u7a8b9c0d1e2_widen_monitor_snapshot_key.py"
+    )
+
+    def test_migration_extends_memory_cleanup_head(self):
+        """新 revision 直接承接记忆清理 outbox revision。"""
+        text = self.MIGRATION_PATH.read_text(encoding="utf-8")
+        self.assertIn('revision: str = "u7a8b9c0d1e2"', text)
+        self.assertIn(
+            'down_revision: Union[str, Sequence[str], None] = "t5e6f7a8b9c0"',
+            text,
+        )
+
+    def test_migration_widens_snapshot_key_without_truncating(self):
+        """upgrade 放宽到 64 字符，downgrade 只恢复上限而不改写快照内容。"""
+        text = self.MIGRATION_PATH.read_text(encoding="utf-8")
+        self.assertIn("MODIFY snapshot_key VARCHAR(64) NOT NULL", text)
+        self.assertIn("MODIFY snapshot_key VARCHAR(32) NOT NULL", text)
+        self.assertNotIn("UPDATE database_monitor_snapshots", text)
+        self.assertNotIn("DELETE FROM", text)
+
+    def test_cleanup_snapshot_keys_fit_the_widened_column(self):
+        """清理快照键必须落在放宽后的上限内，且至少一个键依赖这次放宽。"""
+        from Database.monitoring import (
+            CLEANUP_OUTBOX_SNAPSHOT_KEY,
+            CLEANUP_RUNTIME_SNAPSHOT_KEY,
+        )
+
+        lengths = {
+            snapshot_key: len(snapshot_key)
+            for snapshot_key in (
+                CLEANUP_RUNTIME_SNAPSHOT_KEY,
+                CLEANUP_OUTBOX_SNAPSHOT_KEY,
+            )
+        }
+        for snapshot_key, length in lengths.items():
+            self.assertLessEqual(length, 64, snapshot_key)
+        self.assertTrue(
+            any(length > 32 for length in lengths.values()),
+            lengths,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

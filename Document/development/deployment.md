@@ -27,13 +27,13 @@
 | `worker` | Agent Job worker |
 | `causal-mcp` | 私有 Streamable HTTP 因果算法服务；只加入内部网络，不映射宿主端口 |
 | `monitor` | 数据库共享快照采集 |
-| `checkpoint-cleanup` | 跨库 checkpoint 删除 |
+| `agent-persistence-cleanup` | 跨库删除 Job 父子图 checkpoint 和用户长期记忆 Store |
 | `rag-eval-worker` | 独立领取 RAG 摄取、候选、评测和治理队列任务 |
 | `searxng-init` | 一次性 init，首次启动时在配置目录内生成临时文件，完成 secret_key 注入和校验后原子发布 `settings.yml`，已存在则跳过 |
 | `searxng` / `valkey` | 固定版本的 SearXNG 联网学术搜索及其缓存/队列依赖 |
 | `loki` / `alloy` / `grafana` | 开发环境运行日志采集、存储和查看；只加入独立的 observability network |
 
-`app`、Agent worker、`causal-mcp`、monitor、RAG evaluation worker 和 cleanup 依赖 `db-bootstrap` 成功退出；`causal-mcp` 另外等待 `mysql-primary` 健康，并以 `/health`/`/ready` 提供进程、MySQL strong read 和执行器就绪边界。`causal-mcp` 不映射宿主端口，算法在有界容量内按 invocation 使用独立子进程，因此控制面取消只终止目标算法，不回收并行 sibling；`CAUSAL_MCP_SLOW_LOG_SECONDS` 在开发、预发和生产 Compose 中默认 60 秒。服务通过 `config/database_settings.py` 读取 MySQL 配置，只注入自身 Bearer/HMAC 密钥和算法参数，不注入应用的 `API_KEY`、`BASE_URL`、`MODEL` 或 `SECRET_KEY`；Bearer/HMAC 密钥只通过环境变量或部署 secret 注入。当前 worker 新路径还依赖 `causal-mcp` healthy，启动时按“PostgreSQL checkpoint pool/schema → AsyncPostgresStore setup → 静态 Registry → 进程级 MCP Client pool handshake → RAG readiness → Deep Agent/父图编译”的顺序完成 fail-fast 初始化；slot 不再创建 stdio MCP session。`searxng` 依赖 Valkey 健康和 `searxng-init` 成功退出。联网搜索是 Job 级可选能力，worker readiness 不等待 SearXNG，运行期不可用时新 `web_evidence_search` 返回受控 unavailable/disabled 结果；非搜索 Job 不会因此阻止启动。开发拓扑当前不提供自动故障切换。启动命令见 [`setup.md`](setup.md)。
+`app`、Agent worker、`causal-mcp`、monitor、RAG evaluation worker 和 agent-persistence-cleanup 依赖 `db-bootstrap` 成功退出；`causal-mcp` 另外等待 `mysql-primary` 健康，并以 `/health`/`/ready` 提供进程、MySQL strong read 和执行器就绪边界。`causal-mcp` 不映射宿主端口，算法在有界容量内按 invocation 使用独立子进程，因此控制面取消只终止目标算法，不回收并行 sibling；`CAUSAL_MCP_SLOW_LOG_SECONDS` 在开发、预发和生产 Compose 中默认 60 秒。服务通过 `config/database_settings.py` 读取 MySQL 配置，只注入自身 Bearer/HMAC 密钥和算法参数，不注入应用的 `API_KEY`、`BASE_URL`、`MODEL` 或 `SECRET_KEY`；Bearer/HMAC 密钥只通过环境变量或部署 secret 注入。当前 worker 新路径还依赖 `causal-mcp` healthy，启动时按“PostgreSQL checkpoint pool/schema → AsyncPostgresStore setup → 静态 Registry → 进程级 MCP Client pool handshake → RAG readiness → Deep Agent/父图编译”的顺序完成 fail-fast 初始化；slot 不再创建 stdio MCP session。`searxng` 依赖 Valkey 健康和 `searxng-init` 成功退出。联网搜索是 Job 级可选能力，worker readiness 不等待 SearXNG，运行期不可用时新 `web_evidence_search` 返回受控 unavailable/disabled 结果；非搜索 Job 不会因此阻止启动。开发拓扑当前不提供自动故障切换。启动命令见 [`setup.md`](setup.md)。
 
 ## 联网搜索（SearXNG）
 
@@ -109,4 +109,4 @@ powershell -ExecutionPolicy Bypass -File .\windows-client\build.ps1 `
 
 ## 数据库发布顺序
 
-开发/预发空库或数据库环境重建时先启动依赖数据库，再运行 `Database.bootstrap` 完成 Alembic 和 checkpoint setup，确认成功后才启动 app/worker/monitor/cleanup/rag-eval-worker。当前唯一 Alembic head 是 `s4d5e6f7a8b9`；具有破坏性的 checkpoint/file migration 不会自动回填旧数据，执行 downgrade 必须选择明确 revision，并在隔离环境先验证往返。迁移风险和 preflight 规则见 [`../database/migrations-checkpoints.md`](../database/migrations-checkpoints.md)。
+开发/预发空库或数据库环境重建时先启动依赖数据库，再运行 `Database.bootstrap` 完成 Alembic 和 checkpoint setup，确认成功后才启动 app/worker/monitor/agent-persistence-cleanup/rag-eval-worker。当前唯一 Alembic head 是 `u7a8b9c0d1e2`；清理 worker 还要求 Agent worker 至少完成一次启动以初始化官方 Store schema。具有破坏性的 checkpoint/file migration 不会自动回填旧数据，执行 downgrade 必须选择明确 revision，并在隔离环境先验证往返。迁移风险和 preflight 规则见 [`../database/migrations-checkpoints.md`](../database/migrations-checkpoints.md)。

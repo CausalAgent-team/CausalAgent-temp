@@ -459,15 +459,28 @@ class DatabaseInspectionTests(unittest.TestCase):
         self.assertTrue(removed_keys.isdisjoint(keys))
         self.assertIn("checkpoint_cleanup_failed", keys)
         self.assertIn("checkpoint_cleanup_outbox", sql_by_key["checkpoint_cleanup_failed"])
+        self.assertIn("user_memory_cleanup_failed", keys)
+        self.assertIn(
+            "user_memory_cleanup_outbox",
+            sql_by_key["user_memory_cleanup_failed"],
+        )
+        self.assertIn(
+            "idx_user_memory_cleanup_outbox_claim",
+            sql_by_key["constraint_user_memory_cleanup_outbox_claim"],
+        )
         self.assertTrue(any("information_schema" in sql for sql in sql_by_key.values()))
         checkpoint_fk_sql = sql_by_key["constraint_fk_checkpoint_cleanup_outbox_operation"]
         self.assertIn("information_schema.key_column_usage", checkpoint_fk_sql)
         self.assertIn("ordinal_position = 1", checkpoint_fk_sql)
         self.assertIn("column_name = 'operation_id'", checkpoint_fk_sql)
         self.assertIn("referenced_column_name = 'operation_id'", checkpoint_fk_sql)
+        memory_fk_sql = sql_by_key["constraint_fk_user_memory_cleanup_outbox_operation"]
+        self.assertIn("information_schema.key_column_usage", memory_fk_sql)
+        self.assertIn("ordinal_position = 1", memory_fk_sql)
         descriptions = {definition["key"]: definition["description"] for definition in definitions}
         self.assertIn("visualization", descriptions["constraint_chat_attachment_type_enum"])
         self.assertIn("数量为 0 时健康", descriptions["checkpoint_cleanup_failed"])
+        self.assertIn("长期记忆", descriptions["user_memory_cleanup_failed"])
 
     def test_migration_preflight_skips_tables_not_present_in_current_schema(self):
         """新库或较早 schema 尚无未来表时，预检标为不适用而不是失败。"""

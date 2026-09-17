@@ -1,4 +1,9 @@
-"""PostgreSQL LangGraph checkpoint cleanup outbox worker。"""
+"""PostgreSQL Agent 持久化数据清理 outbox worker。
+
+一个进程消费两张 MySQL outbox 表：Job 父子图 checkpoint 和用户长期记忆
+Store namespace。两类任务共享同一个 PostgreSQL 连接池，以及由其构造的
+`AsyncPostgresSaver` 和 `AsyncPostgresStore`。
+"""
 
 from __future__ import annotations
 
@@ -25,13 +30,26 @@ LOGGER = logging.getLogger(__name__)
 _RUNTIME_FAILURES = FailureTransitionTracker()
 _STARTUP_READY = False
 
+# Store schema 由业务 worker 首次启动时 setup；清理进程只等待就绪，不负责建表。
+STORE_SCHEMA_WAIT_ATTEMPTS = 20
+STORE_SCHEMA_WAIT_INTERVAL_SECONDS = 3.0
+
 try:
     from Agent.causal_agent.postgres_checkpointer import (
         build_checkpointer,
         open_checkpoint_pool,
         verify_checkpoint_schema,
     )
-    from app.agent.checkpoint_cleanup import (
+    from Agent.deep_agent.memory import memory_namespace_for_user
+    from Agent.deep_agent.postgres_store import (
+        build_async_postgres_store,
+        purge_store_namespace,
+        verify_postgres_store_schema,
+    )
+    from Agent.deep_agent_tools.identity import build_deep_agent_run_id
+    from app.agent.persistence_cleanup import (
+        CHECKPOINT_TASK,
+        USER_MEMORY_TASK,
         claim_cleanup_item,
         mark_cleanup_failed,
         mark_cleanup_succeeded,
@@ -74,7 +92,7 @@ def _record_runtime_failure(key: str, reason_code: str, exc: BaseException) -> N
     if decision.emit:
         log_event(
             LOGGER,
-            "checkpoint.cleanup.runtime.degraded",
+            "agent.persistence.cleanup.runtime.degraded",
             details={
                 "reason_code": reason_code,
                 "suppressed_count": decision.suppressed_count,
@@ -88,7 +106,7 @@ def _record_runtime_success(key: str) -> None:
     if recovery is not None:
         log_event(
             LOGGER,
-            "checkpoint.cleanup.runtime.recovered",
+            "agent.persistence.cleanup.runtime.recovered",
             details={
                 "downtime_ms": recovery.downtime_ms,
                 "failure_count": recovery.failure_count,
@@ -96,8 +114,36 @@ def _record_runtime_success(key: str) -> None:
         )
 
 
+async def _wait_for_store_schema(store) -> None:
+    """等待业务 worker 完成官方 Store setup，超过上限则明确启动失败。"""
+    last_error: Exception | None = None
+    for _ in range(STORE_SCHEMA_WAIT_ATTEMPTS):
+        try:
+            await verify_postgres_store_schema(store)
+            return
+        except Exception as exc:
+            last_error = exc
+            await asyncio.sleep(STORE_SCHEMA_WAIT_INTERVAL_SECONDS)
+    raise RuntimeError("PostgreSQL Store schema 未就绪") from last_error
+
+
+async def _cleanup_checkpoint_task(saver, item: dict) -> None:
+    """删除父图 thread 和 Deep Agent 子图 thread，两者都成功才算完成。"""
+    job_id = item["job_id"]
+    await saver.adelete_thread(job_id)
+    await saver.adelete_thread(build_deep_agent_run_id(job_id=job_id))
+
+
+async def _cleanup_user_memory_task(store, item: dict) -> int:
+    """清空用户长期记忆 namespace，并返回删除的条目数量。"""
+    return await purge_store_namespace(
+        store,
+        memory_namespace_for_user(item["user_id"]),
+    )
+
+
 async def _run_async() -> None:
-    """连接两侧数据库并持续消费 cleanup outbox。"""
+    """连接两侧数据库并持续消费两张 cleanup outbox。"""
     global _STARTUP_READY
     _STARTUP_READY = False
     startup_phase = "database_readiness"
@@ -106,18 +152,19 @@ async def _run_async() -> None:
         check_database_readiness()
         startup_phase = "runtime_configuration"
         startup_dependency = "environment"
-        poll_interval = _float_env("CHECKPOINT_CLEANUP_POLL_INTERVAL_SECONDS", 1.0)
+        poll_interval = _float_env("AGENT_PERSISTENCE_CLEANUP_POLL_INTERVAL_SECONDS", 1.0)
         heartbeat_interval = _float_env(
-            "CHECKPOINT_CLEANUP_HEARTBEAT_INTERVAL_SECONDS", 10.0
+            "AGENT_PERSISTENCE_CLEANUP_HEARTBEAT_INTERVAL_SECONDS", 10.0
         )
         lease_seconds = int(
-            _float_env("CHECKPOINT_CLEANUP_LEASE_SECONDS", 300.0)
+            _float_env("AGENT_PERSISTENCE_CLEANUP_LEASE_SECONDS", 300.0)
         )
         worker_id = f"{socket.gethostname()}:{os.getpid()}"
         started_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
         state: dict[str, object] = {
-            "worker_alias": "checkpoint-cleanup",
+            "worker_alias": "agent-persistence-cleanup",
             "worker_status": "idle",
+            "current_task_type": None,
             "started_at": started_at,
             "heartbeat_at": started_at,
             "current_outbox_id": None,
@@ -170,6 +217,9 @@ async def _run_async() -> None:
             startup_phase = "checkpoint_schema"
             await verify_checkpoint_schema(checkpoint_pool)
             saver = build_checkpointer(checkpoint_pool)
+            startup_phase = "store_schema"
+            store = build_async_postgres_store(pool=checkpoint_pool)
+            await _wait_for_store_schema(store)
             await asyncio.to_thread(publish_runtime, force=True)
             log_event(
                 LOGGER,
@@ -196,9 +246,11 @@ async def _run_async() -> None:
                         await asyncio.sleep(poll_interval)
                         continue
 
+                    task_type = str(item["task_type"])
                     outbox_id = int(item["id"])
                     attempt = int(item["attempts"])
                     state["worker_status"] = "processing"
+                    state["current_task_type"] = task_type
                     state["current_outbox_id"] = outbox_id
                     state["_processing_monotonic"] = time.monotonic()
                     processing_started_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -206,9 +258,18 @@ async def _run_async() -> None:
                     state["current_processing_started_at"] = processing_started_at
                     await asyncio.to_thread(publish_runtime, force=True)
                     attempt_started = time.perf_counter()
-                    with log_context(job_id=item.get("job_id")):
+                    context = (
+                        {"job_id": item["job_id"]}
+                        if task_type == CHECKPOINT_TASK
+                        else {"user_id": item["user_id"]}
+                    )
+                    with log_context(**context):
+                        deleted_count: int | None = None
                         try:
-                            await saver.adelete_thread(item["job_id"])
+                            if task_type == CHECKPOINT_TASK:
+                                await _cleanup_checkpoint_task(saver, item)
+                            else:
+                                deleted_count = await _cleanup_user_memory_task(store, item)
                         except asyncio.CancelledError:
                             raise
                         except Exception as cleanup_exc:
@@ -217,6 +278,7 @@ async def _run_async() -> None:
                             try:
                                 await asyncio.to_thread(
                                     mark_cleanup_failed,
+                                    task_type,
                                     outbox_id,
                                     str(cleanup_exc),
                                 )
@@ -227,8 +289,9 @@ async def _run_async() -> None:
                                 reason_code = "persist_failed"
                             log_event(
                                 LOGGER,
-                                "checkpoint.cleanup.failed",
+                                "agent.persistence.cleanup.failed",
                                 details={
+                                    "task_type": task_type,
                                     "outbox_id": outbox_id,
                                     "attempt": attempt,
                                     "duration_ms": int((time.perf_counter() - attempt_started) * 1000),
@@ -242,14 +305,19 @@ async def _run_async() -> None:
                             state["last_error_present"] = True
                         else:
                             try:
-                                await asyncio.to_thread(mark_cleanup_succeeded, outbox_id)
+                                await asyncio.to_thread(
+                                    mark_cleanup_succeeded,
+                                    task_type,
+                                    outbox_id,
+                                )
                             except asyncio.CancelledError:
                                 raise
                             except Exception as persist_exc:
                                 log_event(
                                     LOGGER,
-                                    "checkpoint.cleanup.failed",
+                                    "agent.persistence.cleanup.failed",
                                     details={
+                                        "task_type": task_type,
                                         "outbox_id": outbox_id,
                                         "attempt": attempt,
                                         "duration_ms": int((time.perf_counter() - attempt_started) * 1000),
@@ -264,11 +332,13 @@ async def _run_async() -> None:
                             else:
                                 log_event(
                                     LOGGER,
-                                    "checkpoint.cleanup.succeeded",
+                                    "agent.persistence.cleanup.succeeded",
                                     details={
+                                        "task_type": task_type,
                                         "outbox_id": outbox_id,
                                         "attempt": attempt,
                                         "duration_ms": int((time.perf_counter() - attempt_started) * 1000),
+                                        "deleted_count": deleted_count,
                                     },
                                 )
                                 state["run_success_count"] = int(state["run_success_count"]) + 1
@@ -276,6 +346,7 @@ async def _run_async() -> None:
                                 state["last_error_present"] = False
                         finally:
                             state["worker_status"] = "idle"
+                            state["current_task_type"] = None
                             state["current_outbox_id"] = None
                             state["processing_started_at"] = None
                             state["processing_duration_seconds"] = None
@@ -306,7 +377,7 @@ async def _run_async() -> None:
 
 
 def main() -> None:
-    """命令行入口：python -m Database.checkpoint_cleanup_worker。"""
+    """命令行入口：python -m Database.agent_persistence_cleanup_worker。"""
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     configure_logging("maintenance", current_environment(), logging.INFO)

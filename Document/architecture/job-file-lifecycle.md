@@ -17,7 +17,8 @@
 | 父图 checkpoint | PostgreSQL 官方 LangGraph 表 | Job 的外层恢复状态；`thread_id` 是 `analysis_jobs.job_id` |
 | Deep Agent checkpoint | PostgreSQL 官方 LangGraph 表 | 内层消息、工具状态和 raw 文件；使用稳定的 `deep-agent:<uuid5(job_id)>` thread 与 `deep_agent_v1` namespace |
 | 长期记忆 Store | PostgreSQL 官方 `AsyncPostgresStore` 表 | 按可信 `user_id` namespace 保存 Deep Agent 两份 memory 文件；不属于 Job checkpoint |
-| cleanup outbox | MySQL `checkpoint_cleanup_outbox` | 跨库删除请求的可靠账本，按 `thread_id` 唯一 |
+| checkpoint cleanup outbox | MySQL `checkpoint_cleanup_outbox` | Job 父子图 checkpoint 删除请求的可靠账本，按 `thread_id` 唯一 |
+| 用户记忆 cleanup outbox | MySQL `user_memory_cleanup_outbox` | 用户长期记忆 Store 删除请求的可靠账本，按 `user_id` 唯一，不关联 `users` 外键 |
 
 新建会话时，`POST /api/new_chat` 先在 MySQL 主库插入 `sessions` 记录再返回 ID。创建 Job、保存聊天、修改标题和上传文件都要求会话或用户文件真实存在且属于当前用户，不会根据未知 ID 自动重建对象。Job 创建时保存入口确定的原始 `X-Request-ID` 到 `analysis_jobs.request_id`；历史行可为 `NULL`，幂等重放不覆盖首次值。
 
@@ -70,15 +71,22 @@ create-if-absent 初始化，不覆盖已有内容；运行时对象与 MCP sess
 子图 checkpoint 只保存由 Job、attempt、lease 和输入身份计算出的不可逆
 `execution_scope` 摘要，不保存 execution guard、executor、数据库连接或签名材料。
 
-删除 Session 或用户时，MySQL 事务先锁定并删除业务数据，同时为相关 Job 写入 `checkpoint_cleanup_outbox`。cleanup worker 用租约领取并调用 PostgreSQL `adelete_thread(job_id)`；租约过期可以恢复，失败按有限次数和退避重试。两个数据库之间没有伪造的分布式事务，后台清理状态必须可查询。
+删除 Session 或用户时，MySQL 事务先锁定并删除业务数据，同时为相关 Job 写入
+`checkpoint_cleanup_outbox`；物理删除用户时还会为同一 `user_id` 登记一条
+`user_memory_cleanup_outbox`。两类登记与业务删除在同一 MySQL 事务提交，任一登记失败就
+回滚整个删除。单独删除 Session 或 Job 只登记 checkpoint 清理，不删除用户长期记忆。
 
-当前 outbox 只保存父图 `job_id`，cleanup worker 也只删除该 thread；它没有计算并删除
-`deep-agent:<uuid5(job_id)>` 子图 thread。因此删除 Job/Session 后，Deep Agent 子图
-checkpoint 及其中的短期 raw 文件可能继续保留。这是当前实现缺口，修复前不能把
-checkpoint cleanup 描述为已覆盖完整父子图生命周期。
+同一个 cleanup worker（`python -m Database.agent_persistence_cleanup_worker`）用租约轮转领取
+两张表，避免任何一类任务长期排在后面。checkpoint 任务在一次 attempt 内删除父图
+`thread_id=job_id` 和子图 `thread_id=deep-agent:<uuid5(job_id)>`，两者都成功才标记完成，
+部分成功则整项重试并依赖官方删除接口的幂等性。记忆任务按
+`("causalagent", "memory", str(user_id))` 构造 namespace，用官方 Store API 逐条删除该
+namespace 下的全部条目，并在删除后重新查询确认 namespace 为空；checkpoint 任务不触碰
+`store` 或 `store_migrations` 表。租约过期可以恢复，失败按有限次数和退避重试。两个数据库
+之间没有伪造的分布式事务，后台清理状态必须可查询。
 
-checkpoint cleanup 当前不删除 `store` 或 `store_migrations` 中的长期记忆。父子
-checkpoint cleanup 应在同一 outbox attempt 内按可重试、幂等方式收敛；用户/合规删除长期
-记忆仍需独立的 Store 删除流程，不能借用 Job cleanup 的表名过滤或顺手扩大清理范围。
+管理员用户删除操作通过 `operation_id` 同时聚合两张 outbox，只有 checkpoint 清理和用户记忆
+清理全部成功才进入 `succeeded`，任一任务最终失败则进入 `failed`；被归类为终态失败或租约
+过期的任务由维护入口 `Database/lifecycle_repair.py` 重置后重新领取。
 
 删除逻辑文件时，如果仍有活动 Job 使用该 `user_file_id`，请求必须被阻断；删除 `user_files` 后只有在没有其他逻辑引用时才删除 `file_objects` BLOB，不提供回收站。

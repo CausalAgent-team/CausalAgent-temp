@@ -71,7 +71,7 @@ def test_default_compose_keeps_agent_and_rag_workers_separate():
         "app",
         "worker",
         "monitor",
-        "checkpoint-cleanup",
+        "agent-persistence-cleanup",
         "rag-eval-worker",
         "searxng-init",
         "searxng",

@@ -7,7 +7,7 @@ import logging
 import json
 from app.chat.response_storage import render_summary_for_display
 from app.chat.execution_phases import assemble_execution_phases
-from app.agent.checkpoint_cleanup import enqueue_checkpoint_cleanup_many
+from app.agent.persistence_cleanup import enqueue_checkpoint_cleanup_many
 from app.db import record_database_failure
 from app.request_context import (
     bind_request_log_context,
