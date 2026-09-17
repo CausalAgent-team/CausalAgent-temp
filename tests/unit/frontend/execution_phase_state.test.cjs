@@ -33,7 +33,37 @@ test('step details that arrive before their parent are deferred and replayed onc
     const pending = new Map();
     const event = { type: 'decision', step_id: 'deep-step', summary: '选择 PC' };
 
-    assert.equal(phaseState.deferStepEvent(pending, event), true);
-    assert.deepEqual(phaseState.takeDeferredStepEvents(pending, 'deep-step'), [event]);
+    assert.equal(phaseState.deferStepEvent(pending, event, { historyMode: true }), true);
+    assert.deepEqual(phaseState.takeDeferredStepEvents(pending, 'deep-step'), [{
+        eventData: event,
+        renderOptions: { historyMode: true },
+    }]);
     assert.deepEqual(phaseState.takeDeferredStepEvents(pending, 'deep-step'), []);
+});
+
+test('only live decisions animate and reduced motion is respected', () => {
+    assert.equal(phaseState.shouldAnimateDecision(), true);
+    assert.equal(phaseState.shouldAnimateDecision({ historyMode: true }), false);
+    assert.equal(phaseState.shouldAnimateDecision({ reducedMotion: true }), false);
+});
+
+test('parallel decision animations are started serially', () => {
+    const queue = phaseState.createSerialTaskQueue();
+    const started = [];
+    let finishFirst;
+    let finishSecond;
+
+    queue.enqueue(done => {
+        started.push('first');
+        finishFirst = done;
+    });
+    queue.enqueue(done => {
+        started.push('second');
+        finishSecond = done;
+    });
+
+    assert.deepEqual(started, ['first']);
+    finishFirst();
+    assert.deepEqual(started, ['first', 'second']);
+    finishSecond();
 });

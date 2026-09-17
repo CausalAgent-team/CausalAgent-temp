@@ -2109,7 +2109,7 @@
                 }
               ],
               "default": null,
-              "description": "面向当前用户公开的算法选择依据；应在同一次 Tool Call 中提供。该字段不属于算法科学参数。",
+              "description": "面向当前用户公开的工具选择依据；应在同一次 Tool Call 中提供。该字段不属于算法科学参数或检索参数。",
               "title": "Public Decision"
             }
           },
@@ -2158,7 +2158,7 @@
                 }
               ],
               "default": null,
-              "description": "面向当前用户公开的算法选择依据；应在同一次 Tool Call 中提供。该字段不属于算法科学参数。",
+              "description": "面向当前用户公开的工具选择依据；应在同一次 Tool Call 中提供。该字段不属于算法科学参数或检索参数。",
               "title": "Public Decision"
             }
           },

@@ -15,11 +15,14 @@ from Agent.execution_control import JobExecutionRevoked
 from pydantic import BaseModel, ConfigDict, Field
 
 from .models import WebEvidenceResult, canonical_json_bytes
+from .algorithm_specs import build_model_tool_input_schema
 from .runtime_updates import (
     build_terminal_invocation,
     build_tool_command,
+    emit_public_decision_event,
     emit_tool_lifecycle_event,
     resolve_runtime_invocation,
+    scope_evidence_payload,
     with_tool_runtime_schema,
 )
 
@@ -96,16 +99,9 @@ class WebEvidenceTool:
         return {
             "name": self.name,
             "description": self.description,
-            "parameters": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "query": {"type": "string", "minLength": 1},
-                    "query_en": {"type": ["string", "null"]},
-                    "max_results": {"type": "integer", "minimum": 1, "maximum": 9},
-                },
-                "required": ["query"],
-            },
+            "parameters": build_model_tool_input_schema(
+                _WebEvidenceInput
+            ).model_json_schema(),
         }
 
     def _enabled(self) -> bool:
@@ -215,6 +211,7 @@ class WebEvidenceTool:
             runtime: Any,
             query_en: str | None = None,
             max_results: int = 9,
+            public_decision: Any = None,
         ) -> Any:
             identity = resolve_runtime_invocation(runtime)
             await identity.runtime_context.ensure_active()
@@ -224,6 +221,14 @@ class WebEvidenceTool:
                 "web_search_enabled",
                 None,
             )
+            if public_decision is not None:
+                await emit_public_decision_event(
+                    runtime,
+                    identity=identity,
+                    tool_name=self.name,
+                    public_decision=public_decision,
+                    decision_kind="evidence",
+                )
             await emit_tool_lifecycle_event(
                 runtime,
                 event_type="tool_call_start",
@@ -278,10 +283,6 @@ class WebEvidenceTool:
                 status=attempt_status,
                 safe_error_code=safe_error_code,
             )
-            evidence_by_ref = {
-                str(ref): WebEvidenceResult.model_validate(value)
-                for ref, value in dict(payload.get("evidence_by_ref") or {}).items()
-            }
             terminal = build_terminal_invocation(
                 identity=identity,
                 tool_name=self.name,
@@ -289,6 +290,14 @@ class WebEvidenceTool:
                 started_at=started_at,
                 safe_error_code=safe_error_code,
             )
+            payload = scope_evidence_payload(
+                payload,
+                invocation_id=terminal.invocation_id,
+            )
+            evidence_by_ref = {
+                str(ref): WebEvidenceResult.model_validate(value)
+                for ref, value in dict(payload.get("evidence_by_ref") or {}).items()
+            }
             return build_tool_command(
                 identity=identity,
                 tool_name=self.name,
@@ -299,7 +308,7 @@ class WebEvidenceTool:
 
         call.__annotations__["runtime"] = ToolRuntime
         runtime_args_schema = with_tool_runtime_schema(
-            _WebEvidenceInput,
+            build_model_tool_input_schema(_WebEvidenceInput),
             tool_name=self.name,
             tool_runtime_type=ToolRuntime,
         )

@@ -180,13 +180,13 @@ class LangGraphEventAdapter:
         if event_type == "decision":
             decision_kind = data.get("decision_kind")
             summary = data.get("summary")
-            if decision_kind not in {"algorithm", "final"}:
+            if decision_kind not in {"algorithm", "evidence", "final"}:
                 return []
             if not isinstance(summary, str) or not summary or len(summary) > 1200:
                 return []
             step = (
                 self._active_step("deep_agent")
-                if decision_kind == "algorithm"
+                if decision_kind in {"algorithm", "evidence"}
                 else self._active_step("finalization_gate")
             )
             if step is None:
@@ -194,7 +194,7 @@ class LangGraphEventAdapter:
             event = self._base("decision", step)
             event["decision_kind"] = decision_kind
             event["summary"] = summary
-            if decision_kind == "algorithm":
+            if decision_kind in {"algorithm", "evidence"}:
                 event["tool_name"] = self._safe_public_tool_name(
                     data.get("tool_name")
                 )

@@ -367,13 +367,13 @@
   "tools": [
     {
       "capability_id": "causal.direct_lingam",
-      "schema_sha256": "80dbc7da012e4f57b1b1c203d7131feb9e3cb1598b66f4b5052914111ede3c8b",
+      "schema_sha256": "723945a1c464701111fa0c2b5399ef06264230e540a19f3ecde58e50c07ea59c",
       "spec_digest": "718ac64c3efe7790b5bda8a2b700e850cfa554500ad11a095d8fba9450898915",
       "tool_name": "causal_direct_lingam"
     },
     {
       "capability_id": "causal.pc",
-      "schema_sha256": "37d03c700d9b6d96ca64a89a08ed7a6650ad2df1a9c6f4cec391c58d31c48073",
+      "schema_sha256": "1ae6f556853dc118755e124cee3f282572a3a6dc267a63e9d1ea5cc3e0dde118",
       "spec_digest": "2be84a02ec63d244fbc0533f130fdf5c3f7ea1f43364414d9a3bb8d4c56036db",
       "tool_name": "causal_pc"
     }

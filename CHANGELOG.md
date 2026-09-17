@@ -1353,3 +1353,13 @@
 - 【部署与验收】：同步开发、预发、生产 Compose 与 `.env.example`，补充 lane/容量/事件目录契约测试及真实 HTTP 饱和并发验收场景；Docker 定向回归 `62 passed`、完整单元测试 `575 passed`，MCP spike 与真实 HTTP 饱和/双取消验收通过。
 - 【Deep Agent 公开决策与刷新恢复】：算法 Tool Call 新增可选 `public_decision.summary` 公开说明 envelope，dependency middleware 在调度和执行前剥离该字段并将有效说明持久化为幂等 `decision` 事件；FinalizationGate 通过后再把内部结果引用映射为公开算法名和最终选择说明，degraded 路径不公开未验证决策。
 - 【前端历史回放】：确认现有 Deep Agent lifecycle 已完整落入 `analysis_job_events` 并能由 `/api/load_session` 重建；前端增加明细先于父阶段到达时的 `step_id` 暂存补绘，并为相关静态脚本增加版本参数，避免缓存旧恢复代码。
+
+---
+2026.9.17
+- 【工具公开决策扩展与渐进展示】
+  - 【检索决策】：`rag_evidence_search` 与 `web_evidence_search` 复用 `public_decision.summary` envelope，在外部检索前剥离该字段并写入 `decision_kind=evidence` 幂等事件；检索器、Adapter 和 MCP 入参不含该字段，缺失或格式无效不阻断工具。
+  - 【渐进展示】：`decision` 事件仍以完整校验文本单条落库；实时页面按字符渐进显示，历史回放与 `prefers-reduced-motion` 环境直接展示完整文本，展示速度不阻塞算法执行。聊天页脚本与样式缓存版本更新为 `20260917-tool-decisions-2`。
+  - 【并行 evidence 修复】：RAG/Web evidence reference 在进入 Deep Agent State 和 ToolMessage 前增加稳定 invocation 作用域，修复不同并行查询复用 `E1` 或重叠来源时触发不可变 reducer 冲突；同一调用恢复仍复用相同 reference。
+  - 【并行展示修复】：同一阶段同时到达的公开决策继续各自保留，但渐进动画改为按事件到达顺序串行执行，避免多行文字同时流式出现；历史回放和减少动态效果偏好保持即时展示。
+- 【文档：Deep Agent 文档核对】
+  - 【Agent：运行事实与历史材料收束】：以生产 worker、父/子图、AlgorithmSpec allowlist、MCP execute/control lane、公共事件和部署配置为准重写 Agent 运行时及系统总览；将冗长实施计划收束为长期维护记录，并把产品规划与技术设计标为历史决策材料。修正公共工具状态、实际配置入口、父子 checkpoint 身份和 raw 文件归属；明确当前 cleanup outbox 尚未删除 Deep Agent child thread，以及 recursion/finalization retry 两项配置尚未接入生产调用路径。

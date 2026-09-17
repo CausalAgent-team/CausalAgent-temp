@@ -268,8 +268,11 @@ def test_rag_and_web_tools_write_evidence_and_terminal_ledgers() -> None:
             query="causal inference",
         )
     )
-    assert set(rag_command.update["rag_evidence"]) == {"rag:1"}
     rag_ledger = next(iter(rag_command.update["action_ledger"].values()))
+    expected_rag_ref = f"rag:1:invocation:{rag_ledger.invocation_id}"
+    assert set(rag_command.update["rag_evidence"]) == {expected_rag_ref}
+    rag_payload = json.loads(rag_command.update["messages"][0].content)
+    assert rag_payload["evidence"][0]["evidence_ref"] == expected_rag_ref
     assert rag_ledger.final_status == "succeeded"
 
     def search(query, *, max_results):
@@ -293,7 +296,204 @@ def test_rag_and_web_tools_write_evidence_and_terminal_ledgers() -> None:
     )
     assert len(web_command.update["web_evidence"]) == 1
     web_ledger = next(iter(web_command.update["action_ledger"].values()))
+    web_ref = next(iter(web_command.update["web_evidence"]))
+    assert web_ref.endswith(f":invocation:{web_ledger.invocation_id}")
     assert web_ledger.final_status == "succeeded"
+
+
+def test_parallel_rag_calls_scope_rank_refs_to_each_invocation() -> None:
+    context = _context()
+
+    class Retriever:
+        def get_evidence(self, query, *, max_contexts=None):
+            return {
+                "status": "available",
+                "release_id": "release-1",
+                "evidence": [
+                    {
+                        "evidence_ref": "rag:release-1:E1",
+                        "evidence_id": "E1",
+                        "snippet": f"evidence for {query}",
+                    }
+                ],
+            }
+
+    tool = RagEvidenceTool(Retriever()).to_langchain_tool()
+    builder = StateGraph(ProjectDeepAgentState, context_schema=AgentRunContext)
+    builder.add_node("tools", ToolNode([tool], handle_tool_errors=False))
+    builder.add_edge(START, "tools")
+    builder.add_edge("tools", END)
+    graph = builder.compile()
+
+    state = asyncio.run(
+        graph.ainvoke(
+            {
+                "messages": [
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "name": "rag_evidence_search",
+                                "args": {"query": "first query"},
+                                "id": "rag-parallel-1",
+                                "type": "tool_call",
+                            },
+                            {
+                                "name": "rag_evidence_search",
+                                "args": {"query": "second query"},
+                                "id": "rag-parallel-2",
+                                "type": "tool_call",
+                            },
+                        ],
+                    )
+                ],
+                "message_execution_id": "message-execution-1",
+                "algorithm_results": {},
+                "action_ledger": {},
+                "rag_evidence": {},
+                "web_evidence": {},
+            },
+            context=context,
+        )
+    )
+
+    ledgers = list(state["action_ledger"].values())
+    expected_refs = {
+        f"rag:release-1:E1:invocation:{record.invocation_id}"
+        for record in ledgers
+    }
+    assert set(state["rag_evidence"]) == expected_refs
+    assert {item.snippet for item in state["rag_evidence"].values()} == {
+        "evidence for first query",
+        "evidence for second query",
+    }
+    tool_payload_refs = {
+        json.loads(message.content)["evidence"][0]["evidence_ref"]
+        for message in state["messages"]
+        if getattr(message, "name", None) == "rag_evidence_search"
+    }
+    assert tool_payload_refs == expected_refs
+
+
+def test_parallel_web_calls_scope_overlapping_sources_to_each_invocation() -> None:
+    context = _context()
+
+    def search(query, *, max_results):
+        return {
+            "results": [
+                {
+                    "source": "arxiv",
+                    "title": "Shared paper",
+                    "url": "https://example.invalid/shared-paper",
+                    "snippet": "Shared evidence",
+                }
+            ]
+        }
+
+    tool = WebEvidenceTool(search).to_langchain_tool()
+    builder = StateGraph(ProjectDeepAgentState, context_schema=AgentRunContext)
+    builder.add_node("tools", ToolNode([tool], handle_tool_errors=False))
+    builder.add_edge(START, "tools")
+    builder.add_edge("tools", END)
+    graph = builder.compile()
+
+    state = asyncio.run(
+        graph.ainvoke(
+            {
+                "messages": [
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "name": "web_evidence_search",
+                                "args": {"query": "first query"},
+                                "id": "web-parallel-1",
+                                "type": "tool_call",
+                            },
+                            {
+                                "name": "web_evidence_search",
+                                "args": {"query": "second query"},
+                                "id": "web-parallel-2",
+                                "type": "tool_call",
+                            },
+                        ],
+                    )
+                ],
+                "message_execution_id": "message-execution-1",
+                "algorithm_results": {},
+                "action_ledger": {},
+                "rag_evidence": {},
+                "web_evidence": {},
+            },
+            context=context,
+        )
+    )
+
+    assert len(state["web_evidence"]) == 2
+    invocation_ids = {
+        record.invocation_id for record in state["action_ledger"].values()
+    }
+    assert {
+        ref.rsplit(":invocation:", 1)[1]
+        for ref in state["web_evidence"]
+    } == invocation_ids
+
+
+def test_rag_and_web_public_decisions_precede_tool_lifecycle() -> None:
+    events = []
+    context = replace(
+        _context(),
+        event_sink=lambda payload: events.append(dict(payload)),
+    )
+
+    class Retriever:
+        def get_evidence(self, query, *, max_contexts=None):
+            return {"status": "no_relevant_evidence", "evidence": []}
+
+    rag_tool = RagEvidenceTool(Retriever()).to_langchain_tool()
+    rag_public_schema = rag_tool.tool_call_schema.model_json_schema()
+    assert "public_decision" in rag_public_schema["properties"]
+    assert "runtime" not in rag_public_schema["properties"]
+    asyncio.run(
+        rag_tool.coroutine(
+            runtime=_runtime(context, call_id="rag-public-decision"),
+            query="causal inference",
+            public_decision={"summary": "检索知识库以核对方法假设。"},
+        )
+    )
+
+    def search(query, *, max_results):
+        return {"results": []}
+
+    web_tool = WebEvidenceTool(search).to_langchain_tool()
+    web_public_schema = web_tool.tool_call_schema.model_json_schema()
+    assert "public_decision" in web_public_schema["properties"]
+    assert "runtime" not in web_public_schema["properties"]
+    asyncio.run(
+        web_tool.coroutine(
+            runtime=_runtime(context, call_id="web-public-decision"),
+            query="causal inference",
+            public_decision={"summary": "检索外部文献以比较近期证据。"},
+        )
+    )
+
+    assert [event["type"] for event in events] == [
+        "decision",
+        "tool_call_start",
+        "tool_call_result",
+        "decision",
+        "tool_call_start",
+        "tool_call_result",
+    ]
+    decisions = [event for event in events if event["type"] == "decision"]
+    assert [event["decision_kind"] for event in decisions] == [
+        "evidence",
+        "evidence",
+    ]
+    assert [event["tool_name"] for event in decisions] == [
+        "rag_evidence_search",
+        "web_evidence_search",
+    ]
 
 
 def test_tool_lifecycle_sink_is_awaited_around_real_retrieval() -> None:

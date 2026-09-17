@@ -256,6 +256,16 @@ class StreamEventAdapterTests(unittest.TestCase):
                 "summary": "连续数据适合使用 PC。",
             },
         })[0]
+        evidence = self.adapter.convert({
+            "type": "custom",
+            "ns": (),
+            "data": {
+                "type": "decision",
+                "decision_kind": "evidence",
+                "tool_name": "rag_evidence_search",
+                "summary": "检索知识库以核对方法假设。",
+            },
+        })[0]
         gate_step = self.adapter.convert(task_start("task-gate", "finalization_gate"))[0]
         final = self.adapter.convert({
             "type": "custom",
@@ -271,6 +281,9 @@ class StreamEventAdapterTests(unittest.TestCase):
         self.assertEqual(algorithm["step_id"], deep_step["step_id"])
         self.assertEqual(algorithm["decision_kind"], "algorithm")
         self.assertEqual(algorithm["tool_name"], "causal_pc")
+        self.assertEqual(evidence["step_id"], deep_step["step_id"])
+        self.assertEqual(evidence["decision_kind"], "evidence")
+        self.assertEqual(evidence["tool_name"], "rag_evidence_search")
         self.assertEqual(final["step_id"], gate_step["step_id"])
         self.assertEqual(final["decision_kind"], "final")
         self.assertEqual(final["confidence"], "medium")

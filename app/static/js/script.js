@@ -1742,13 +1742,13 @@ function handleStreamEvent(eventData, thinkingElements, jobId = null, historyMod
     
     switch (eventType) {
         case 'node_start':
-            handleNodeStart(eventData, thinkingElements);
+            handleNodeStart(eventData, thinkingElements, historyMode);
             break;
         case 'progress':
         case 'decision':
         case 'tool_call_start':
         case 'tool_call_result':
-            handleStepDetail(eventData, thinkingElements);
+            handleStepDetail(eventData, thinkingElements, { historyMode });
             break;
         case 'node_retry':
             handleNodeRetry(eventData, thinkingElements);
@@ -1785,7 +1785,7 @@ function handleStreamEvent(eventData, thinkingElements, jobId = null, historyMod
 /**
  * 处理节点开始事件
  */
-function handleNodeStart(eventData, thinkingElements) {
+function handleNodeStart(eventData, thinkingElements, historyMode = false) {
     const { step_id, title, node_name } = eventData;
     if (!step_id || thinkingElements.steps.has(step_id)) {
         return;
@@ -1831,7 +1831,9 @@ function handleNodeStart(eventData, thinkingElements) {
     ExecutionPhaseState.takeDeferredStepEvents(
         thinkingElements.pendingStepEvents,
         step_id,
-    ).forEach(pendingEvent => handleStepDetail(pendingEvent, thinkingElements));
+    ).forEach(({ eventData: pendingEvent, renderOptions }) => {
+        handleStepDetail(pendingEvent, thinkingElements, renderOptions);
+    });
     
     keepLatestChatContentVisible();
 }
@@ -1928,28 +1930,77 @@ function markThinkingCanceled(thinkingElements, message = getText('jobCanceled')
     });
 }
 
-function appendStepDetail(container, text, className = '') {
+const decisionAnimationQueues = new WeakMap();
+
+function appendStepDetail(container, text, className = '', { animate = false } = {}) {
     // 以纯文本添加脱敏阶段详情，避免把协议内容当作 HTML。
     if (!container || !text) return;
     const row = document.createElement('div');
     row.className = `step-detail ${className}`.trim();
-    row.textContent = text;
+    row.textContent = animate ? '' : text;
     container.appendChild(row);
+    if (animate) enqueueStepDetailAnimation(container, row, text);
+    return row;
 }
 
-function handleStepDetail(eventData, thinkingElements) {
+function enqueueStepDetailAnimation(container, row, text) {
+    let queue = decisionAnimationQueues.get(container);
+    if (!queue) {
+        queue = ExecutionPhaseState.createSerialTaskQueue();
+        decisionAnimationQueues.set(container, queue);
+    }
+    row.hidden = true;
+    queue.enqueue(complete => {
+        row.hidden = false;
+        animateStepDetailText(row, text, complete);
+    });
+}
+
+function animateStepDetailText(row, text, complete = () => {}) {
+    const characters = Array.from(text);
+    // 单条说明最多 400 字；按长度调速，保证整段展示控制在约 2.4 秒内。
+    const charactersPerTick = Math.max(2, Math.ceil(characters.length / 100));
+    let index = 0;
+    row.classList.add('streaming-decision');
+    row.setAttribute('aria-label', text);
+    if (!row.isConnected) {
+        complete();
+        return;
+    }
+    const timer = window.setInterval(() => {
+        if (!row.isConnected) {
+            window.clearInterval(timer);
+            complete();
+            return;
+        }
+        index = Math.min(index + charactersPerTick, characters.length);
+        row.textContent = characters.slice(0, index).join('');
+        if (index >= characters.length) {
+            window.clearInterval(timer);
+            row.classList.remove('streaming-decision');
+            row.removeAttribute('aria-label');
+            complete();
+        }
+        keepLatestChatContentVisible();
+    }, 24);
+}
+
+function handleStepDetail(eventData, thinkingElements, { historyMode = false } = {}) {
     // 将进度、决策和工具摘要嵌套到对应父阶段。
     const step = thinkingElements.steps.get(eventData.step_id);
     if (!step) {
         ExecutionPhaseState.deferStepEvent(
             thinkingElements.pendingStepEvents,
             eventData,
+            { historyMode },
         );
         return;
     }
     let text = eventData.summary || '';
     if (eventData.type === 'decision' && eventData.decision_kind === 'algorithm') {
         text = `算法决策：${text}`;
+    } else if (eventData.type === 'decision' && eventData.decision_kind === 'evidence') {
+        text = `检索决策：${text}`;
     } else if (eventData.type === 'decision' && eventData.decision_kind === 'final') {
         text = `最终决策：${text}`;
     } else if (eventData.type === 'tool_call_start') {
@@ -1958,7 +2009,12 @@ function handleStepDetail(eventData, thinkingElements) {
     } else if (eventData.type === 'tool_call_result') {
         text = `${eventData.tool_name}：${eventData.summary}`;
     }
-    appendStepDetail(step.details, text);
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || false;
+    const animate = eventData.type === 'decision' && ExecutionPhaseState.shouldAnimateDecision({
+        historyMode,
+        reducedMotion,
+    });
+    appendStepDetail(step.details, text, '', { animate });
 }
 
 function handleNodeRetry(eventData, thinkingElements) {

@@ -14,10 +14,13 @@ from Agent.execution_control import JobExecutionRevoked
 from pydantic import BaseModel, ConfigDict, Field
 
 from .models import EvidenceResult
+from .algorithm_specs import build_model_tool_input_schema
 from .runtime_updates import (
     build_terminal_invocation,
     build_tool_command,
+    emit_public_decision_event,
     resolve_runtime_invocation,
+    scope_evidence_payload,
     with_tool_runtime_schema,
     emit_tool_lifecycle_event,
 )
@@ -112,15 +115,9 @@ class RagEvidenceTool:
         return {
             "name": self.name,
             "description": self.description,
-            "parameters": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "query": {"type": "string", "minLength": 1},
-                    "max_contexts": {"type": ["integer", "null"], "minimum": 1},
-                },
-                "required": ["query"],
-            },
+            "parameters": build_model_tool_input_schema(
+                _RagEvidenceInput
+            ).model_json_schema(),
         }
 
     async def get_evidence(self, query: str, *, max_contexts: int | None = None) -> dict[str, Any]:
@@ -256,10 +253,19 @@ class RagEvidenceTool:
             query: str,
             runtime: Any,
             max_contexts: int | None = None,
+            public_decision: Any = None,
         ) -> Any:
             identity = resolve_runtime_invocation(runtime)
             await identity.runtime_context.ensure_active()
             started_at = datetime.now(timezone.utc)
+            if public_decision is not None:
+                await emit_public_decision_event(
+                    runtime,
+                    identity=identity,
+                    tool_name=self.name,
+                    public_decision=public_decision,
+                    decision_kind="evidence",
+                )
             await emit_tool_lifecycle_event(
                 runtime,
                 event_type="tool_call_start",
@@ -306,10 +312,6 @@ class RagEvidenceTool:
                 status=("succeeded" if attempt_status == "succeeded" else "failed"),
                 safe_error_code=safe_error_code,
             )
-            evidence_by_ref = {
-                str(ref): EvidenceResult.model_validate(value)
-                for ref, value in dict(payload.get("evidence_by_ref") or {}).items()
-            }
             terminal = build_terminal_invocation(
                 identity=identity,
                 tool_name=self.name,
@@ -317,6 +319,14 @@ class RagEvidenceTool:
                 started_at=started_at,
                 safe_error_code=safe_error_code,
             )
+            payload = scope_evidence_payload(
+                payload,
+                invocation_id=terminal.invocation_id,
+            )
+            evidence_by_ref = {
+                str(ref): EvidenceResult.model_validate(value)
+                for ref, value in dict(payload.get("evidence_by_ref") or {}).items()
+            }
             return build_tool_command(
                 identity=identity,
                 tool_name=self.name,
@@ -327,7 +337,7 @@ class RagEvidenceTool:
 
         call.__annotations__["runtime"] = ToolRuntime
         runtime_args_schema = with_tool_runtime_schema(
-            _RagEvidenceInput,
+            build_model_tool_input_schema(_RagEvidenceInput),
             tool_name=self.name,
             tool_runtime_type=ToolRuntime,
         )

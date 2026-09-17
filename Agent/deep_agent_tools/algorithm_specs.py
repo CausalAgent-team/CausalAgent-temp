@@ -24,7 +24,7 @@ Availability = Literal["available", "unavailable", "unknown"]
 
 @lru_cache(maxsize=None)
 def build_model_tool_input_schema(base_schema: type[BaseModel]) -> type[BaseModel]:
-    """给模型工具 envelope 增加公开说明，不改变算法科学参数契约。"""
+    """给模型工具 envelope 增加公开说明，不改变底层业务参数契约。"""
 
     decision_schema = PublicDecision.model_json_schema()
     tolerant_decision_type = Annotated[Any, WithJsonSchema(decision_schema)]
@@ -37,8 +37,8 @@ def build_model_tool_input_schema(base_schema: type[BaseModel]) -> type[BaseMode
             "public_decision": Field(
                 default=None,
                 description=(
-                    "面向当前用户公开的算法选择依据；应在同一次 Tool Call 中提供。"
-                    "该字段不属于算法科学参数。"
+                    "面向当前用户公开的工具选择依据；应在同一次 Tool Call 中提供。"
+                    "该字段不属于算法科学参数或检索参数。"
                 ),
             ),
         },

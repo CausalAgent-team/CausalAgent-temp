@@ -36,6 +36,42 @@ def _tool_result_summary(status: str | None, safe_error_code: str | None) -> str
     return "调用失败"
 
 
+def scope_evidence_payload(
+    payload: Mapping[str, Any],
+    *,
+    invocation_id: str,
+) -> dict[str, Any]:
+    """把查询相关 evidence ref 限定到稳定 Tool invocation。
+
+    RAG 的 ``E1`` 等编号只在一次检索结果内唯一，Web 结果的相关性分数和
+    ``fetched_at`` 也属于单次检索。并行调用若直接复用来源级 reference，会让
+    reducer 把两个不同查询的结果误判为同一条不可变 evidence。
+    """
+
+    scoped_payload = dict(payload)
+    raw_evidence = payload.get("evidence", [])
+    if not isinstance(raw_evidence, list):
+        raise ValueError("evidence payload must contain a list")
+
+    scoped_evidence: list[dict[str, Any]] = []
+    scoped_by_ref: dict[str, dict[str, Any]] = {}
+    for raw_item in raw_evidence:
+        if not isinstance(raw_item, Mapping):
+            raise ValueError("evidence payload item must be a mapping")
+        base_ref = str(raw_item.get("evidence_ref") or "").strip()
+        if not base_ref:
+            raise ValueError("evidence payload item is missing evidence_ref")
+        scoped_ref = f"{base_ref}:invocation:{invocation_id}"
+        item = dict(raw_item)
+        item["evidence_ref"] = scoped_ref
+        scoped_evidence.append(item)
+        scoped_by_ref[scoped_ref] = item
+
+    scoped_payload["evidence"] = scoped_evidence
+    scoped_payload["evidence_by_ref"] = scoped_by_ref
+    return scoped_payload
+
+
 async def emit_tool_lifecycle_event(
     runtime: Any,
     *,
@@ -105,8 +141,9 @@ async def emit_public_decision_event(
     identity: RuntimeInvocationIdentity,
     tool_name: str,
     public_decision: Any,
+    decision_kind: Literal["algorithm", "evidence"] = "algorithm",
 ) -> bool:
-    """校验并发布同一 Tool Call 携带的公开算法选择说明。"""
+    """校验并发布同一 Tool Call 携带的公开工具选择说明。"""
 
     try:
         decision = PublicDecision.model_validate(public_decision)
@@ -127,7 +164,7 @@ async def emit_public_decision_event(
         )
     payload = {
         "type": "decision",
-        "decision_kind": "algorithm",
+        "decision_kind": decision_kind,
         "step_id": step_id,
         "node_name": "deep_agent",
         "title": "执行 Deep Agent 分析",
