@@ -1,59 +1,92 @@
 # Agent 运行时
 
-文档职责：记录 Agent worker、LangGraph、MCP、RAG、联网搜索、结构化输出和执行事件的当前协作方式。
+文档职责：记录 Agent worker、Deep Agent、LangGraph、MCP、RAG、联网搜索、结构化输出和公共执行事件的当前协作方式。
 
-适用范围：修改 `Agent/`、`app/agent/worker/`、MCP server、RAG 初始化、联网搜索或用户可见事件协议时使用；Job 的持久化生命周期见 [`job-file-lifecycle.md`](job-file-lifecycle.md)，执行约束见 [`../../Agent/AGENTS.md`](../../Agent/AGENTS.md)。
+适用范围：修改 `Agent/`、`app/agent/worker/`、`Agent/CausalAgentMCP/`、RAG 初始化、联网搜索或用户可见事件协议时使用；Job、checkpoint 与文件生命周期见 [`job-file-lifecycle.md`](job-file-lifecycle.md)，执行约束见 [`../../Agent/AGENTS.md`](../../Agent/AGENTS.md)。
 
-## Worker 启动与 slot
+## Worker 启动与运行时边界
 
-`python -m app.agent.worker` 进入 `app/agent/worker/__main__.py`，再调用 bootstrap。启动顺序是数据库就绪检查、PostgreSQL checkpoint 检查、创建显式进程 runtime，然后按 `JOB_WORKERS` 启动 slot。每个 slot 持有一组独立运行依赖：
+`python -m app.agent.worker` 进入 worker bootstrap。生产路径在领取 Job 前按以下顺序初始化：
 
-1. MCP server process 与一个通过 `MultiServerMCPClient.session("causal")` 建立的持久 `ClientSession`。
-2. 由该 session 加载的 LangChain tools。
-3. 当前配置下的 LLM、RAG 可用性和编译后的 Agent graph。
+```text
+MySQL readiness
+  → PostgreSQL checkpoint pool/schema
+  → AsyncPostgresStore setup
+  → MCP Client pool connect/handshake
+  → 静态 Algorithm Registry 与领域工具
+  → RAG active release readiness
+  → Deep Agent 与父图编译
+  → worker ready
+  → slots claim Job
+```
 
-`runtime.py` 通过 `ProcessRuntime` 和 `SlotRuntime` 显式传递这些对象；执行函数不能从 `app.agent.core` 读取全局 graph 或 LLM。这样可以把真实并发单元限定为 slot，并让 MCP session 与 graph 的生命周期一致。
+`ProcessRuntime` 持有进程级 MCP Client pool、`McpAlgorithmExecutor`、静态 Registry、PostgreSQL Store/checkpointer、RAG readiness、领域工具和编译后的父图。`SlotRuntime` 只引用这些共享对象，不为每个 slot 重建 graph 或创建 stdio MCP session。每次 Job invocation 再创建 `AgentRunContext`，绑定可信 Job、attempt、lease、输入身份、execution guard、executor、filesystem backend、RAG 状态、联网搜索开关和事件 sink；这些运行时对象不进入 State 或 checkpoint。
 
-## 父图与工具阶段
+进程级 MCP Client pool 与 worker slot 数量相互独立。默认 execute lane 为 `2 × 1`，control lane 为 `1 × 2`；控制 lane 只负责取消，不增加服务端算法并发。启动任一步失败都会在 `worker.startup.ready` 前终止进程，不领取 Job。
 
-父图当前暴露 `mcp`、`rag` 和 `web_search` 三个工具阶段。MCP 子图的正常路径为 `mcp_planner -> mcp_tool_node -> mcp_result_parser`；RAG 子图内部对应 `rag_question_planner -> rag_tool_node -> rag_result_parser -> rag_finalize`。父图通过适配节点只向 RAG 子图传入 `messages`、`analysis_parameters`、`preprocess_summary` 和 `causal_analysis_result`，子图只投影 `rag_output` 为父图的 `knowledge_base_result`；RAG route、问题列表、ToolMessage 和解析中间结果不会进入父 State。
+`runtime.py` 仍保留 `ProcessRuntime.graph is None` 时的旧 stdio 构造分支，供兼容测试使用。`main_async()` 的生产初始化会装配父图，因此不会进入该分支。
 
-#### RAG具体实现与异常处理
+## 父图、子图与持久化
 
-RAG Planner 在调用 LLM 前检查进程级 `rag_available` 和已注册的 `rag_tools`。知识库目录未初始化、active release readiness 失败或工具列表为空时，Planner 写入私有 `rag_route=finish`、`rag_status=unavailable` 和统一降级中间结果，跳过 ToolNode，仍经 `rag_finalize` 回到父图的 Agent；进程 Runtime 同时保留内部 `rag_status=rag_unavailable`、安全错误码和可用时的 release id。正常 ToolNode 返回（包括 `success=False`）继续进入 Parser；ToolNode 或 Planner 的未捕获普通异常在重试结束后由 error handler 跳到 Finalize，Parser 异常标记为 `protocol_error` 后也进入 Finalize。
+数据分析主路径为：
 
-RAG 查询任务捕获普通查询、连接和目录异常时返回 `success=False`、`status=unavailable` 及 `error_type=RAGQueryError`，这表示知识库不可用，不表示 ToolMessage 协议错误。`parse_tool_message_json()` 遇到非法 JSON 时返回 `error_type=ToolMessageProtocolError`，RAG Parser 将其归类为 `protocol_error`；正常业务失败的 `success=False` 仍归类为 `unavailable`。所有路径最终由 Finalize 生成稳定的 `rag_output`，报告继续使用 `format_rag_summary_for_prompt()` 读取父图统一字段。
+```text
+agent → fold → preprocess → deep_agent → finalization_gate → report
+```
 
-结构化输出统一通过 `Agent/llm_structured_output.py` 的同步/异步入口调用，固定使用普通 `function_calling`。结构化请求会关闭 thinking；MCP planner 仍使用原生 Tool Calls，并对关闭 thinking 的 LLM 副本设置 `tool_choice="required"`，确保 planner 必须选择一个已加载工具。`agent` 和 `fold` 的条件路由只读取显式 State 字段 `route_decision`、`fold_decision`，不使用展示消息猜测控制流。
+普通聊天和报告追问仍由 `normal_chat`、`inquiry_answer` 路径结束。父图只把问题、数据画像、分析参数和必要输入消息投影到 Deep Agent；子图返回时只接收算法结果、Action Ledger、RAG/Web evidence、结构化决策和 Gate/report 所需摘要。完整消息、Deep Agents 内部字段和中间计划不会回投影到父 State。
 
-RAG readiness 在 worker 启动时复用 `RagRuntimeConfig.from_environment()`，轻量校验 active pointer、相对路径、manifest 哈希、冻结正式来源身份、manifest 中的 embedding 配置、版本/collection、Chroma 内容摘要和必要索引产物；来源身份校验只读取受版本控制的 production defaults 和 manifest，不回读或解析原始 PDF。正式 embedding 当前由 API key 配置提供，本地 production embedding 开关关闭；embedding endpoint/凭据缺失仍只标记不可用。release 完整性或正式策略失败时尝试把唯一 fallback 提升为 active 并隔离失败 release；embedding API 请求故障不触发 pointer 回退。构建、evaluate、gate-check 和 publish 仍在受控目录内严格校验实际来源。readiness 不加载 embedding、Chroma、BM25 或回答模型。失败时 worker 继续运行并标记 `rag_unavailable`，对外仍使用 `status=unavailable`；缺失或非法 retrieval policy 仍按代码默认值回退并记录来源。完整 RagRuntime 继续按进程内 lazy singleton 在首次 RAG 查询时创建，active pointer 变化需通过 worker drain 与重启生效，不支持热切换或零停机切换。
+父图 checkpoint 使用 `thread_id=analysis_jobs.job_id` 和空 namespace。Deep Agent 子图使用同一个 PostgreSQL saver，但使用稳定的 `thread_id=deep-agent:<uuid5(job_id)>` 与 `checkpoint_ns=deep_agent_v1`。子图 State 另外保存由 Job、attempt、lease 和冻结输入身份构成的 execution scope；scope 不匹配时从父图的最小输入重新开始，不复用旧执行产物。Gate 要求修正时，从同一子图 checkpoint 追加受控指令。
 
-worker 收到 SIGTERM/SIGINT 后停止领取新 Job，按 `JOB_DRAIN_TIMEOUT_SECONDS`（默认 60 秒）等待现有 slot。超时只取消本地执行任务并关闭资源，不把运行中的 Job 标记为 failed/cancelled；未完成 lease 由既有 stale recovery 接管。worker Compose 的 `stop_grace_period` 至少为 75 秒。DirectLiNGAM 作为 `causal_direct_lingam` MCP 工具提供连续数值 CSV 分析，输出的系数矩阵约定为 `target_to_source`，报告需要保留线性、非高斯、误差独立、DAG 和无潜在混杂等假设。
+长期记忆由 `AsyncPostgresStore` 单独保存，不属于 Job checkpoint。模型只注册 `read_file` 和 `edit_file`，并且只允许写 `/memories/preferences.md` 与 `/memories/research_background.md`；其他写入由兜底 deny 拒绝。namespace 从可信 `AgentRunContext` 的 `user_id` 生成，首次使用时仅做 create-if-absent 初始化。Deep Agent 不启用 subagent、`task`、代码执行或宿主文件系统。
 
-#### web_search具体实现与异常处理
+当前 cleanup outbox 只按 `job_id` 删除父图 thread，尚未删除独立的 Deep Agent child thread；这一实现缺口及其影响见 [`job-file-lifecycle.md`](job-file-lifecycle.md)。
 
-`web_search` 子图内部路径为 `web_search_planner -> academic_search_node -> web_search_result_parser_node`。父图通过适配节点只向子图传入 `messages`、`analysis_parameters`、`causal_analysis_result` 和 `knowledge_base_result`，子图只投影 `web_search_result` 回父图；中间的 `planner`、`search` 私有字段不会进入父 State。
+## 算法工具与 causal-mcp
 
-`web_search_planner` 与 RAG 不同，不在调用 LLM 前做进程级可用性检查，而是始终执行两步结构化输出：先 `generate_research_question` 提炼最需论证的具体问题，再 `get_web_search_query` 生成中英双语检索 query（`query` 面向报告展示、`query_en` 面向学术检索）。planner 捕获 `StructuredOutputError` 时写 `planner.success=False`，`academic_search_node` 据此短路、不再调用底层检索。
+模型看到的是由本地 `AlgorithmSpec` 生成的 LangChain function tools。当前默认 allowlist 只包含 PC 和 DirectLiNGAM；OLC 的 Spec、Adapter、runner 和算法代码仍保留，但不进入 worker Registry、MCP runner registry 或旧兼容 MCP 工具面。运行时不会调用远端 `list_tools()` 来动态扩展模型工具。
 
-`academic_search_node` 单节点统一走 SearXNG 的 arxiv/crossref/openalex 三引擎，按引擎分组各取 top-3 后按 rank 轮转交错。`WEB_SEARCH_MAX_RESULTS` 的当前值为 9，搜索结果合并、报告/追问 prompt 注入和最终引用投影共用该上限，避免报告使用的资料超出公开引用范围。底层 `web_search()` 网络异常直接抛出，交 `tool_retry` 重试，重试耗尽后由 error handler 写 `search.success=False`。`web_search_result_parser_node` 是纯 snippet 出口（无 BM25、抓正文或 LLM 总结），把 `search.results` 投影为 `content`，产出稳定的 `web_search_result`。
+`AlgorithmDependencyDispatchMiddleware` 在 ToolNode 边界收集同一模型响应中的算法调用，按 `requires/produces` 分层：无依赖调用可并行，有依赖调用按层执行，并受单 Job 并发和工具总预算约束。Adapter 负责模型参数校验、确定性预处理、标准结果、raw result 完整性和 Ledger 更新；`McpAlgorithmExecutor` 只负责签名传输、远端执行结果校验和安全错误映射。可信 Job、文件、lease、HMAC 与数据库身份不会进入模型参数。
 
-三个节点都挂 error handler：planner 降级写 `planner.success=False`、academic_search 降级写 `search.success=False`，二者都让后续 `result_parser` 正常投影出 `success=False` 的结果；result_parser 注册 `degrade_web_search_parser_failure`，解析异常写入 `status=protocol_error` 的统一 `web_search_result`；父图 `web_search` 节点注册 `degrade_web_search_adapter_result`，子图整体失败时写入统一结果并 `goto="agent"`。统一结果由 `build_web_search_degradation_result` 构造，`WebSearchStatus` 只有 `available`、`unavailable`、`protocol_error` 三种值；异常对象经 `sanitize_error()` 归类，`asyncio.CancelledError` 和 `JobExecutionRevoked` 不会被错误转成普通搜索降级。是否进入子图由父图 `rag` 之后的 `web_search_router` 读 `context.web_search_enabled` 决定，关闭时直接回 `agent`——这是用户级事前短路，与 RAG 的进程级 `rag_available` 事前短路（在子图 planner 内）位置不同。
+`causal-mcp` 是私网 Streamable HTTP/HTTP/1.1 服务。服务端以 MySQL primary strong read 校验 Job、attempt、lease 和 worker 身份，再使用有界队列及独立算法子进程运行 capability。MCP session 不保存 Job、checkpoint 或 Action Ledger。
 
-## 事件流与脱敏
+当 heartbeat 或取消使 `JobExecutionGuard` 撤销时，worker 中断本地等待，并通过独立 control lane 发送签名 `cancel_algorithm`。服务端按完整 invocation 身份取消排队任务或终止目标算法进程，不影响并行 sibling。重复取消返回稳定状态；客户端无法确认最终状态时使用 `unknown`，该值不能解释为远端一定未取消。取消属于控制流，不生成普通失败的 `AlgorithmResult`，也不进入算法重试或 FinalizationGate。
 
-worker 使用 LangGraph v2 的 `updates`、`messages`、`custom` 和 `tasks` 流，将内部执行事件转换为 `analysis_job_events`。根图 `tasks` 构成用户时间线，子图工具事件折叠为 `mcp` 或 `rag` 阶段。普通用户 SSE 只允许 `normal_chat` 和 `inquiry_answer` 的公开文字进入 `text_delta`；原始 prompt、ToolMessage、完整工具结果、图状态、内部 attempt 和隐藏推理都不能进入普通用户协议。
+客户端池、服务端执行池、容量、重连和取消状态机的详细说明见 [`mcp-runtime.md`](mcp-runtime.md)。
 
-事件写入由 Job 的 `lease_epoch`、worker、attempt、`execution_state=leased` 和稳定 `event_key` 共同保护。终态事件与 assistant 消息、Job 状态在同一个 MySQL 事务中落盘；旧 worker 失去 lease 或收到取消撤销后不能覆盖新执行结果。`JobExecutionGuard` 通过 LangGraph invocation runtime context 传递到父图、子图、ToolNode 包装器和 parser；节点开始、调用返回、异常处理、路由和事件持久化前均检查执行资格。`JobExecutionRevoked` 和 `asyncio.CancelledError` 是内部控制流，不进入 RetryPolicy、RAG 降级或公开 error 事件，必须继续向 worker 传播；普通 RAG 故障则在子图内收口并回到 Agent。前端断线恢复使用 Event ID 读取 MySQL 事件，不依赖 worker 内存。
+## RAG 与 Web evidence
 
-普通异常的失败收敛会先在 Job 行锁内确认 worker、attempt、lease epoch 和 `leased` 状态；若锁住时发现业务取消，返回 `CANCELED_FENCED`，不再补写普通 `error` 事件。`OrderedEventWriter.abort()` 会丢弃未刷新的文字、结束排队 Future，并向调用方暴露消费协程的非预期异常；只有终态写入被接受后才设置 `terminal_seen`。worker 只有在 graph stream、EventWriter 和 heartbeat monitor 都完成 cleanup 后，才可以把 canceled/draining 执行占用标记为 `worker_confirmed`；cleanup 失败时保留 draining，交由租约回收路径处理。
+`rag_evidence_search` 调用 `RagService.get_evidence()`，不调用旧 RAG answer model。worker 启动只校验 active release，不加载 Chroma、BM25 或 embedding；第一次真实查询时才在进程内初始化 RAG runtime。结果以受控 evidence reference、snippet、来源定位、分数、release 和状态写入子图 State，再投影为 report formatter 使用的引用摘要。RAG 的排名编号和 Web 的相关性分数都属于单次查询，因此写入 State 和 ToolMessage 前会用稳定 invocation id 限定 evidence reference；同一调用重放保持幂等，不同并行查询即使都返回 `E1` 或同一来源也不会占用同一个 reducer key。
 
-普通用户历史与实时 SSE 共用字段白名单。历史阶段排除 `text_delta` 和所有边界事件，只重放节点、进度、决策、工具摘要、重试与节点结束；边界事件只在服务端用于阶段切分。页面刷新活动 Job 时，`load_session` 先重放已持久化节点事件并记录实际处理到的 `rendered_event_id`，随后活动 Job API 只补充状态，不能用数据库最新事件 ID 推进该游标；SSE 从 `rendered_event_id` 之后补发，避免加载与订阅之间的事件被跳过。
+`web_evidence_search` 返回 SearXNG 学术结果的 snippet 与来源元数据，不抓取网页正文。每次调用读取 `AgentRunContext.web_search_enabled`；关闭时返回 `WEB_SEARCH_DISABLED` 且不触网。RAG/Web 的异常只转换为受控状态和安全错误码，不把异常正文、查询参数或 provider 数据带入公共事件。
 
-## 修改时的验证边界
+旧 `build_graph()` 的固定 `mcp → rag → web_search` 子图只作为兼容路径保留，不是 worker 当前生产入口。
 
-- 修改图节点或路由时，必须核对显式 State 字段和失败路径，不能只验证成功样例。
-- 修改事件适配器、结果展示或 SSE 时，必须确认公共 payload 没有内部字段和原始工具数据。
-- 修改 worker 初始化时，必须同时检查 `runtime.py`、`bootstrap.py`、Docker Compose 的 worker 入口和 slot 资源占用。
-- 修改结构化输出或 MCP planner 时，必须分别验证普通 function calling、thinking 配置和原生 Tool Calls。
-- 修改 RAG 或因果工具时，必须分别验证“知识库缺失可启动”和工具输入/输出契约。
+## 结构化终态与报告
+
+Deep Agent 使用 `ToolStrategy(FinalAnalysisDecision)` 生成 `structured_response`。`FinalizationGate` 不调用 LLM，只校验：
+
+- 决策引用存在于当前可用结果或 evidence 集合中；
+- AlgorithmResult 与 Action Ledger 的 invocation、终态和结果引用一致；
+- provenance 属于当前 Job、attempt、lease、worker 与冻结输入；
+- 每个有效算法结果都有唯一取舍，主结果满足 outcome 约束。
+
+第一次校验失败时，父图回到同一个 Deep Agent 子图要求重新提交结构化决策；第二次仍失败则设置 `finalization_status=degraded` 并生成安全报告。`degraded` 不公开未经验证的主图或最终选择，但报告成功时 Job 仍以 `succeeded` 收敛。校验通过时设置 `finalization_status=valid`，并把内部结果引用转换为公开算法名称后发布最终决策说明。
+
+算法 Tool 的模型可见参数允许附带 `public_decision.summary`。middleware 在科学参数校验和执行前剥离该字段；有效说明写入 `decision_kind=algorithm` 的公共事件，缺失或格式无效不会阻止算法执行。`rag_evidence_search` 与 `web_evidence_search` 使用同一 envelope，并在外部检索前剥离该字段，写入 `decision_kind=evidence` 的公共事件。两类工具说明都不进入 Adapter、MCP、检索器入参。普通 assistant content、ToolMessage、工具参数、完整工具结果、provider ID、result reference 和隐藏推理都不会因此公开。
+
+## 公共事件与恢复
+
+worker 使用 LangGraph v2 的 `updates`、`messages`、`custom` 和 `tasks` 流。算法、RAG、Web 工具在外部调用前后通过 `OrderedEventWriter` sink 写入 `tool_call_start`/`tool_call_result`；父 `deep_agent` update 只作为聚合结果的兼容去重兜底。内层 ToolMessage 不进入普通用户事件。
+
+公共 payload 由 `event_adapter.py` 与 `public_events.py` 的白名单共同约束。`tool_call_result.status` 只允许受控状态；`safe_error_code` 必须符合固定格式。`finalization_status` 只出现在最终报告数据。事件写入由 Job、attempt、lease、worker 和稳定 `event_key` 保护；失去 lease 或收到取消的 worker 不能提交迟到结果。
+
+SSE 与会话历史都从 MySQL `analysis_job_events` 恢复。页面刷新先重放持久化事件并记录实际处理到的 Event ID，再从该位置续传；前端可以暂存早于父 `node_start` 到达的工具明细，并在相同 `step_id` 出现后补绘。`decision` 事件始终以完整校验文本一条落库；实时页面在收到该事件后按字符渐进显示，同一阶段的并行决策按事件到达顺序串行展示，历史回放和 `prefers-reduced-motion` 环境直接展示完整文本。展示速度不影响工具执行，也不产生逐字符数据库事件。
+
+## 修改与验证边界
+
+- 修改父图或 Deep Agent 时，必须核对显式 State 投影、child execution scope、Gate 修正和 degraded 路径。
+- 修改算法工具时，必须同步检查默认 Spec allowlist、Registry、Adapter、MCP runner registry、schema 快照和公共名称映射。
+- 修改 worker 初始化时，必须同时检查 PostgreSQL Store/checkpointer、MCP execute/control lane、RAG readiness、Compose 环境和 slot 资源占用。
+- 修改事件或结果展示时，必须验证实时 SSE 与历史回放使用同一白名单，且 payload 不含内部标识或原始工具数据。
+- 单元测试和 graph 构造只证明代码合同；真实 DeepSeek、MCP HTTP、PostgreSQL、RAG/SearXNG 与完整 Job 的验证入口和证据边界见 [`../development/testing.md`](../development/testing.md)。

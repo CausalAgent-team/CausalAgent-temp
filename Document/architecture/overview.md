@@ -15,12 +15,16 @@ CausalAgent 的 Web 入口是 `CausalAgent.py`，它调用 `app/__init__.py` 的
 | 组件 | 当前入口 | 主要职责 | 持久化边界 |
 | --- | --- | --- | --- |
 | Web | `python CausalAgent.py` 或 Gunicorn `CausalAgent:app` | 认证、会话/文件短请求、Job 入队、普通用户 SSE、管理员 API | MySQL 业务表；读取 PostgreSQL 安全摘要 |
-| Agent worker | `python -m app.agent.worker` | 领取 Job、运行 LangGraph/MCP/RAG、写事件和终态结果 | MySQL Job/Event；PostgreSQL LangGraph checkpoint |
+| Agent worker | `python -m app.agent.worker` | 领取 Job、运行父图/Deep Agent/RAG/Web、通过私网 MCP 调用算法、写事件和终态结果 | MySQL Job/Event；PostgreSQL 父子 checkpoint 与长期记忆 Store |
+| causal-mcp | `python -m Agent.CausalAgentMCP.app` | 校验签名与 Job lease，以有界独立进程执行因果算法和精确取消 | MySQL primary strong read；不持有业务状态 |
 | monitor | `python -m Database.monitor_worker` | 采集 MySQL/PostgreSQL 运行事实并写共享快照 | MySQL monitor 快照和在线配置 |
-| checkpoint cleanup | `python -m Database.checkpoint_cleanup_worker` | 消费 MySQL outbox 并删除 PostgreSQL Job checkpoint | MySQL outbox；PostgreSQL checkpoint |
+| checkpoint cleanup | `python -m Database.checkpoint_cleanup_worker` | 消费 MySQL outbox 并删除 PostgreSQL 父图 checkpoint；当前尚未删除 Deep Agent child thread | MySQL outbox；PostgreSQL checkpoint |
 | db-bootstrap | `python -m Database.bootstrap` | 建库、Alembic migration、PostgreSQL checkpoint schema setup | 修改初始化目标数据库 |
 
-worker 的实际执行单元是 slot。一个 worker 进程可以启动多个 slot；每个 slot 独占自己的 MCP server process、持久 MCP `ClientSession`、已加载工具和编译后的 Agent graph。具体运行时约束见 [`agent-runtime.md`](agent-runtime.md)。
+worker 的 Job 并发单元是 slot。一个 worker 进程可以启动多个 slot；所有 slot 共享进程级
+MCP execute/control Client pool、静态 Registry、PostgreSQL Store/checkpointer 和编译后的
+父图，每次 Job 只创建独立的可信 runtime context。具体约束见
+[`agent-runtime.md`](agent-runtime.md) 与 [`mcp-runtime.md`](mcp-runtime.md)。
 
 ## 主要数据流
 
@@ -30,23 +34,36 @@ flowchart LR
     Web -->|strong write/read| MySQL[(MySQL 主库)]
     Web -->|SSE 轮询| Events[(analysis_job_events)]
     Worker[Agent worker slots] -->|领取 Job / 写 Event| MySQL
-    Worker -->|checkpoint| PostgreSQL[(PostgreSQL checkpoint)]
+    Worker -->|父图/Deep Agent checkpoint 与 Store| PostgreSQL[(PostgreSQL)]
+    Worker -->|私网 Streamable HTTP| MCP[causal-mcp]
+    MCP -->|lease strong read| MySQL
     Web -->|只读安全摘要| PostgreSQL
     MySQL -->|checkpoint_cleanup_outbox| Cleanup[cleanup worker]
-    Cleanup -->|adelete_thread(job_id)| PostgreSQL
+    Cleanup -->|adelete_thread(job_id)，当前仅父图| PostgreSQL
     Monitor[monitor worker] -->|采集| MySQL
     Monitor -->|quick/deep 只读检查| PostgreSQL
     MySQL --> Snapshots[(database_monitor_snapshots)]
     Snapshots --> Web
 ```
 
-跨库删除不使用分布式事务。MySQL 业务删除和 cleanup outbox 在同一 MySQL 事务提交，cleanup worker 之后异步删除 PostgreSQL checkpoint；用户接口和管理员操作查询接口分别暴露后台清理状态。
+跨库删除不使用分布式事务。MySQL 业务删除和 cleanup outbox 在同一 MySQL 事务提交，
+cleanup worker 之后异步删除 PostgreSQL 父图 checkpoint；当前 outbox 未覆盖 Deep Agent
+child thread，详见 [`job-file-lifecycle.md`](job-file-lifecycle.md)。用户接口和管理员操作
+查询接口分别暴露后台清理状态。
 
 ## Docker 拓扑
 
-默认开发 Compose `docker-compose.yml` 当前包含 15 个服务：`mysql-primary`、`mysql-replica`、`postgres-checkpoint`、`db-bootstrap`、`app`、`worker`、`monitor`、`checkpoint-cleanup`、`rag-eval-worker`、`searxng-init`、`searxng`、`valkey`、`loki`、`alloy` 和 `grafana`。`db-bootstrap` 成功后，依赖它的运行服务才启动；开发拓扑没有自动故障切换。
+默认开发 Compose `docker-compose.yml` 当前包含 16 个服务：`mysql-primary`、
+`mysql-replica`、`postgres-checkpoint`、`db-bootstrap`、`app`、`worker`、
+`causal-mcp`、`monitor`、`checkpoint-cleanup`、`rag-eval-worker`、
+`searxng-init`、`searxng`、`valkey`、`loki`、`alloy` 和 `grafana`。
+`db-bootstrap` 成功后，依赖它的运行服务才启动；开发拓扑没有自动故障切换。
 
-当前生产 Compose `docker-compose.prod.yml` 实际包含生产 MySQL、PostgreSQL checkpoint、`db-bootstrap`、`app`、Agent `worker`、`checkpoint-cleanup`、`monitor` 和独立 `rag-eval-worker` 服务；它不提供开发拓扑的 MySQL replica、SearXNG/Valkey、Loki/Alloy/Grafana 或自动故障切换。部署入口见 [`../development/deployment.md`](../development/deployment.md)。
+当前生产 Compose `docker-compose.prod.yml` 实际包含生产 MySQL、PostgreSQL checkpoint、
+`db-bootstrap`、`app`、Agent `worker`、私网 `causal-mcp`、
+`checkpoint-cleanup`、`monitor` 和独立 `rag-eval-worker` 服务；它不提供开发拓扑的
+MySQL replica、SearXNG/Valkey、Loki/Alloy/Grafana 或自动故障切换。部署入口见
+[`../development/deployment.md`](../development/deployment.md)。
 
 ## 组件边界
 

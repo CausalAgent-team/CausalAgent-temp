@@ -16,6 +16,7 @@
 
 - [`architecture/overview.md`](architecture/overview.md)：进程边界、主要数据流、运行拓扑和组件职责。
 - [`architecture/agent-runtime.md`](architecture/agent-runtime.md)：Web、Job worker、LangGraph、MCP、RAG、Web Search、结构化输出和用户事件流。
+- [`architecture/mcp-runtime.md`](architecture/mcp-runtime.md)：MCP 客户端池、服务端算法执行池、Worker 通信、HTTP/TCP 与精确取消机制。
 - [`architecture/job-file-lifecycle.md`](architecture/job-file-lifecycle.md)：Session、Job、输入账本、文件库、checkpoint 与跨库清理生命周期。
 - [`architecture/rag-evaluation.md`](architecture/rag-evaluation.md)：隔离评测、来源、staged index、active release、评测 worker 与生产切换边界。
 
@@ -37,7 +38,7 @@
 
 - [`development/setup.md`](development/setup.md)：本地、Docker 和管理员前端开发入口。
 - [`development/testing.md`](development/testing.md)：后端、前端、迁移、Web Search/Observability、RAG 多模态与隔离评测的验证矩阵。
-- [`development/deployment.md`](development/deployment.md)：镜像构建、15 服务开发 Compose、staging gateway/guard 边界、生产现有拓扑和 release 发布边界。
+- [`development/deployment.md`](development/deployment.md)：镜像构建、16 服务开发 Compose、staging gateway/guard 边界、生产现有拓扑和 release 发布边界。
 - [`../windows-client/README.md`](../windows-client/README.md)：Windows WebView2 桌面壳的独立依赖、配置、打包和 smoke 验收入口。
 - [`development/observability.md`](development/observability.md)：日志字段、事件目录、上下文关联、降噪、敏感信息边界和验收状态。
 - [`documentation.md`](documentation.md)：文档归属、维护、链接和日志规则。

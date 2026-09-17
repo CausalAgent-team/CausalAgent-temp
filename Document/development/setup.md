@@ -6,7 +6,7 @@
 
 ## 配置前提
 
-配置统一由 `config/settings.py` 从系统环境变量读取；仓库根目录存在 `.env` 时会先加载它。至少需要应用密钥、模型配置、MySQL 写/读账号、业务数据库名和非空 `CHECKPOINT_POSTGRES_PASSWORD`。正式多模态 embedding 还需要 `EMBEDDING_API_KEY` 与 `EMBEDDING_BASE_URL`；本地 production embedding 开关当前关闭。不要把 `.env`、密码、API key 或数据库连接串提交到 Git、日志或文档。
+应用和 Worker 的完整配置由 `config/settings.py` 从系统环境变量读取；仓库根目录存在 `.env` 时会先加载它。`app.db` 使用独立的 `config/database_settings.py`，只加载 MySQL 连接、连接池和副本读策略，不触发模型配置校验。`causal-mcp` 只需要该数据库配置、自己的 Bearer/HMAC 鉴权材料和算法运行参数，不应注入 `API_KEY`、`BASE_URL`、`MODEL` 或 `SECRET_KEY`。`CAUSAL_MCP_SLOW_LOG_SECONDS` 控制单次 invocation 的慢日志阈值，默认 60 秒；它不改变算法的 deadline。应用/Worker 仍至少需要应用密钥、父图模型配置、Deep Agent 的 model/base URL/API key/context window、MCP service token/signing key、MySQL 写/读账号、业务数据库名和非空 `CHECKPOINT_POSTGRES_PASSWORD`。开发 Compose 可让 Deep Agent base URL/API key 回退父图模型配置并提供本地 MCP 默认值；预发和生产要求显式配置。正式多模态 embedding 还需要 `EMBEDDING_API_KEY` 与 `EMBEDDING_BASE_URL`；本地 production embedding 开关当前关闭。不要把 `.env`、密码、API key 或数据库连接串提交到 Git、日志或文档。
 
 主从开发使用职责分离账号：写主库、业务读、复制状态观测和复制通道账号各自配置。没有专用复制状态账号时，eventual read 会安全回退主库。
 
@@ -45,7 +45,7 @@ docker compose -f docker-compose.yml ps searxng searxng-init valkey
 
 需要验证 Compose 合并后的部署契约时，使用 `docker compose config`；不要使用 `down -v` 清理共享数据库或搜索数据卷。
 
-开发 Compose 使用 `mysql-primary`、`mysql-replica`、`postgres-checkpoint`、`app`、`worker`、`monitor`、`checkpoint-cleanup`、`rag-eval-worker`、`searxng-init`、`searxng`、`valkey`、`loki`、`alloy` 和 `grafana`；固定端口和数据卷属于共享 Docker daemon 资源，多个 worktree 同时运行时必须采用独立 project/端口策略，不能误用 `down -v`。
+开发 Compose 使用 `mysql-primary`、`mysql-replica`、`postgres-checkpoint`、`app`、`worker`、`causal-mcp`、`monitor`、`checkpoint-cleanup`、`rag-eval-worker`、`searxng-init`、`searxng`、`valkey`、`loki`、`alloy` 和 `grafana`；固定端口和数据卷属于共享 Docker daemon 资源，多个 worktree 同时运行时必须采用独立 project/端口策略，不能误用 `down -v`。
 
 ## 本地 Python
 
@@ -54,6 +54,7 @@ docker compose -f docker-compose.yml ps searxng searxng-init valkey
 ```bash
 python -m Database.bootstrap
 python CausalAgent.py
+python -m Agent.CausalAgentMCP.app
 python -m app.agent.worker
 python -m Database.monitor_worker
 python -m Database.checkpoint_cleanup_worker
