@@ -24,6 +24,7 @@ MEMORY_PATHS: tuple[str, ...] = (
     "/memories/preferences.md",
     "/memories/research_background.md",
 )
+MEMORY_NAMESPACE_ROOT: tuple[str, ...] = ("causalagent", "memory")
 MEMORY_TEMPLATES: dict[str, bytes] = {
     "/memories/preferences.md": "# Preferences\n\n".encode("utf-8"),
     "/memories/research_background.md": "# Research background\n\n".encode("utf-8"),
@@ -180,6 +181,14 @@ class CompositeBackend:
         return metadata
 
 
+def memory_namespace_for_user(user_id: int) -> tuple[str, ...]:
+    """按可信 user_id 构造长期记忆 Store namespace。"""
+
+    if isinstance(user_id, bool) or not isinstance(user_id, int) or user_id <= 0:
+        raise ValueError("user_id must be a positive integer")
+    return (*MEMORY_NAMESPACE_ROOT, str(user_id))
+
+
 def trusted_memory_namespace(value: Any) -> tuple[str, ...]:
     """从可信 runtime 身份提取 user namespace，不读取模型参数。"""
 
@@ -206,7 +215,7 @@ def trusted_memory_namespace(value: Any) -> tuple[str, ...]:
         user_id = int(user_id)
     if not isinstance(user_id, int) or user_id <= 0:
         raise ValueError("trusted runtime user identity is unavailable")
-    return ("causalagent", "memory", str(user_id))
+    return memory_namespace_for_user(user_id)
 
 
 def initialize_memory_files(backend: CompositeBackend) -> tuple[str, ...]:
@@ -227,7 +236,7 @@ def build_in_memory_backend(
 ) -> CompositeBackend:
     """构造隔离测试用 backend。传入 ``store`` 可模拟跨 Job/重启保留。"""
 
-    namespace = ("causalagent", "memory", str(user_id))
+    namespace = memory_namespace_for_user(user_id)
     backend = CompositeBackend(
         default=StateBackend(files=state_files if state_files is not None else {}),
         store_backend=StoreBackend(

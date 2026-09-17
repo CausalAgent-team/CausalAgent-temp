@@ -54,6 +54,11 @@ EXPECTED_COLUMNS = {
         "available_at", "lease_expires_at", "last_error", "created_at",
         "completed_at",
     },
+    "user_memory_cleanup_outbox": {
+        "id", "user_id", "operation_id", "status", "attempts",
+        "available_at", "lease_expires_at", "last_error", "created_at",
+        "completed_at",
+    },
     "analysis_jobs": {
         "id", "job_id", "user_id", "session_id", "status", "worker_id",
         "lease_epoch", "execution_state", "locked_at", "heartbeat_at",
@@ -124,6 +129,11 @@ EXPECTED_INDEXES = {
         "uq_checkpoint_cleanup_outbox_thread",
         "idx_checkpoint_cleanup_outbox_claim",
     },
+    "user_memory_cleanup_outbox": {
+        "PRIMARY",
+        "uq_user_memory_cleanup_outbox_user",
+        "idx_user_memory_cleanup_outbox_claim",
+    },
     "admin_operations": {
         "PRIMARY",
         "uq_admin_operations_operation_id",
@@ -147,6 +157,7 @@ EXPECTED_FOREIGN_KEYS = {
     "fk_analysis_job_events_job",
     "fk_analysis_job_inputs_job",
     "fk_checkpoint_cleanup_outbox_operation",
+    "fk_user_memory_cleanup_outbox_operation",
     "fk_admin_operations_actor",
     "fk_admin_operation_items_operation",
 }
@@ -404,6 +415,22 @@ def _relationship_check() -> dict[str, Any]:
         "checkpoint_cleanup_expired_lease": """
             SELECT id AS sample_id
             FROM checkpoint_cleanup_outbox
+            WHERE status = 'processing'
+              AND lease_expires_at IS NOT NULL
+              AND lease_expires_at < UTC_TIMESTAMP(6)
+            ORDER BY id
+            LIMIT %s
+        """,
+        "user_memory_cleanup_failed": """
+            SELECT id AS sample_id
+            FROM user_memory_cleanup_outbox
+            WHERE status = 'failed'
+            ORDER BY id
+            LIMIT %s
+        """,
+        "user_memory_cleanup_expired_lease": """
+            SELECT id AS sample_id
+            FROM user_memory_cleanup_outbox
             WHERE status = 'processing'
               AND lease_expires_at IS NOT NULL
               AND lease_expires_at < UTC_TIMESTAMP(6)

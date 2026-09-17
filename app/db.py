@@ -498,6 +498,7 @@ def check_database_readiness():
                 "user_files",
                 "archived_sessions",
                 "checkpoint_cleanup_outbox",
+                "user_memory_cleanup_outbox",
                 "analysis_jobs",
                 "analysis_job_events",
                 "analysis_job_inputs",
@@ -644,6 +645,10 @@ def check_database_readiness():
                       AND index_name = 'idx_checkpoint_cleanup_outbox_claim'
                     )
                     OR (
+                      table_name = 'user_memory_cleanup_outbox'
+                      AND index_name = 'idx_user_memory_cleanup_outbox_claim'
+                    )
+                    OR (
                       table_name = 'admin_operations'
                       AND index_name = 'uq_admin_operations_actor_idempotency'
                       AND non_unique = 0
@@ -710,6 +715,10 @@ def check_database_readiness():
             critical_indexes = {(row[0], row[1]) for row in cursor.fetchall()}
             required_indexes = {
                 ("checkpoint_cleanup_outbox", "idx_checkpoint_cleanup_outbox_claim"),
+                (
+                    "user_memory_cleanup_outbox",
+                    "idx_user_memory_cleanup_outbox_claim",
+                ),
                 (
                     "admin_operations",
                     "uq_admin_operations_actor_idempotency",

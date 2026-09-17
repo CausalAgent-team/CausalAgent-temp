@@ -78,10 +78,10 @@ EXPECTED_CODES = {
     "monitor.config.recovered",
     "monitor.lock.failed",
     "monitor.lock.recovered",
-    "checkpoint.cleanup.succeeded",
-    "checkpoint.cleanup.failed",
-    "checkpoint.cleanup.runtime.degraded",
-    "checkpoint.cleanup.runtime.recovered",
+    "agent.persistence.cleanup.succeeded",
+    "agent.persistence.cleanup.failed",
+    "agent.persistence.cleanup.runtime.degraded",
+    "agent.persistence.cleanup.runtime.recovered",
 }
 EXPECTED_CODES.update(
     f"{service}.startup.{outcome}"

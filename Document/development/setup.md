@@ -45,7 +45,7 @@ docker compose -f docker-compose.yml ps searxng searxng-init valkey
 
 需要验证 Compose 合并后的部署契约时，使用 `docker compose config`；不要使用 `down -v` 清理共享数据库或搜索数据卷。
 
-开发 Compose 使用 `mysql-primary`、`mysql-replica`、`postgres-checkpoint`、`app`、`worker`、`causal-mcp`、`monitor`、`checkpoint-cleanup`、`rag-eval-worker`、`searxng-init`、`searxng`、`valkey`、`loki`、`alloy` 和 `grafana`；固定端口和数据卷属于共享 Docker daemon 资源，多个 worktree 同时运行时必须采用独立 project/端口策略，不能误用 `down -v`。
+开发 Compose 使用 `mysql-primary`、`mysql-replica`、`postgres-checkpoint`、`app`、`worker`、`causal-mcp`、`monitor`、`agent-persistence-cleanup`、`rag-eval-worker`、`searxng-init`、`searxng`、`valkey`、`loki`、`alloy` 和 `grafana`；固定端口和数据卷属于共享 Docker daemon 资源，多个 worktree 同时运行时必须采用独立 project/端口策略，不能误用 `down -v`。
 
 ## 本地 Python
 
@@ -57,10 +57,10 @@ python CausalAgent.py
 python -m Agent.CausalAgentMCP.app
 python -m app.agent.worker
 python -m Database.monitor_worker
-python -m Database.checkpoint_cleanup_worker
+python -m Database.agent_persistence_cleanup_worker
 ```
 
-`Database/database_init.py` 只确保 MySQL 数据库存在并检查连接；完整业务表和 PostgreSQL checkpoint schema 仍由 `Database.bootstrap` 负责。新空库不要先运行旧库 preflight。
+`Database/database_init.py` 只确保 MySQL 数据库存在并检查连接；完整业务表和 PostgreSQL checkpoint schema 仍由 `Database.bootstrap` 负责，官方 Store schema 由 Agent worker 启动时 setup。清理 worker 要求这两类 schema 都已就绪，因此本地手工启动顺序是先 `app.agent.worker`（或至少让它完成一次启动）再启动清理 worker。新空库不要先运行旧库 preflight。
 
 ## Windows 桌面客户端开发
 

@@ -397,10 +397,10 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  checkpoint-cleanup:
+  agent-persistence-cleanup:
     image: causalagent:latest
-    container_name: causalagent_checkpoint_cleanup_prod
-    command: python -m Database.checkpoint_cleanup_worker
+    container_name: causalagent_agent_persistence_cleanup_prod
+    command: python -m Database.agent_persistence_cleanup_worker
     environment:
       - MYSQL_HOST=mysql
       - MYSQL_WRITE_HOST=mysql
@@ -426,9 +426,9 @@ services:
       - CHECKPOINT_POSTGRES_CONNECT_TIMEOUT_SECONDS=${CHECKPOINT_POSTGRES_CONNECT_TIMEOUT_SECONDS:-5}
       - CHECKPOINT_POSTGRES_POOL_MIN_SIZE=1
       - CHECKPOINT_POSTGRES_POOL_MAX_SIZE=2
-      - CHECKPOINT_CLEANUP_POLL_INTERVAL_SECONDS=${CHECKPOINT_CLEANUP_POLL_INTERVAL_SECONDS:-1}
-      - CHECKPOINT_CLEANUP_HEARTBEAT_INTERVAL_SECONDS=${CHECKPOINT_CLEANUP_HEARTBEAT_INTERVAL_SECONDS:-10}
-      - CHECKPOINT_CLEANUP_LEASE_SECONDS=${CHECKPOINT_CLEANUP_LEASE_SECONDS:-300}
+      - AGENT_PERSISTENCE_CLEANUP_POLL_INTERVAL_SECONDS=${AGENT_PERSISTENCE_CLEANUP_POLL_INTERVAL_SECONDS:-1}
+      - AGENT_PERSISTENCE_CLEANUP_HEARTBEAT_INTERVAL_SECONDS=${AGENT_PERSISTENCE_CLEANUP_HEARTBEAT_INTERVAL_SECONDS:-10}
+      - AGENT_PERSISTENCE_CLEANUP_LEASE_SECONDS=${AGENT_PERSISTENCE_CLEANUP_LEASE_SECONDS:-300}
       - API_KEY=${API_KEY}
       - BASE_URL=${BASE_URL}
       - MODEL=${MODEL}
@@ -652,7 +652,7 @@ volumes:
 # ==========================================
 # 部署说明
 # ==========================================
-# 注意：当前 app、worker、monitor、checkpoint-cleanup、rag-eval-worker 和
+# 注意：当前 app、worker、monitor、agent-persistence-cleanup、rag-eval-worker 和
 # db-bootstrap 的 image 字段仍兼容旧的 `causalagent:latest` 本地演练。
 # 稳定发布前必须将它们
 # 统一替换为已经测试、扫描并记录摘要的 registry tag 或 digest；生产机不从
@@ -689,11 +689,11 @@ volumes:
 #   
 #   2. 由 CI 构建、测试、扫描并推送新版本镜像；在本文件中更新所有应用服务的
 #      image 到新的不可变 tag/digest，然后只拉取该镜像
-#      docker compose -f docker-compose.prod.yml pull app worker monitor checkpoint-cleanup rag-eval-worker db-bootstrap
+#      docker compose -f docker-compose.prod.yml pull app worker monitor agent-persistence-cleanup rag-eval-worker db-bootstrap
 #   
 #   3. 更新服务（不在生产机重新构建）
 #      docker compose -f docker-compose.prod.yml up -d db-bootstrap
-#      docker compose -f docker-compose.prod.yml up -d --no-deps app worker monitor checkpoint-cleanup rag-eval-worker
+#      docker compose -f docker-compose.prod.yml up -d --no-deps app worker monitor agent-persistence-cleanup rag-eval-worker
 #      # --no-deps: 不重启依赖的数据库服务；迁移仍须按发布窗口单独确认
 #   
 #   4. 验证
@@ -702,9 +702,9 @@ volumes:
 #
 # 回滚：
 #   将所有应用服务的 image 恢复为上一版本 tag/digest，然后执行：
-#   docker compose -f docker-compose.prod.yml pull app worker monitor checkpoint-cleanup rag-eval-worker db-bootstrap
+#   docker compose -f docker-compose.prod.yml pull app worker monitor agent-persistence-cleanup rag-eval-worker db-bootstrap
 #   docker compose -f docker-compose.prod.yml up -d db-bootstrap
-#   docker compose -f docker-compose.prod.yml up -d --no-deps app worker monitor checkpoint-cleanup rag-eval-worker
+#   docker compose -f docker-compose.prod.yml up -d --no-deps app worker monitor agent-persistence-cleanup rag-eval-worker
 #
 # 备份数据：
 #   docker run --rm \

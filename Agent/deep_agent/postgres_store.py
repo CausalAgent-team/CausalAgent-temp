@@ -151,3 +151,52 @@ def filter_checkpoint_cleanup_tables(table_names: list[str] | tuple[str, ...]) -
     """只返回允许 cleanup 的 checkpoint 表，明确排除 Store 表。"""
 
     return tuple(name for name in table_names if name not in STORE_TABLE_NAMES)
+
+
+STORE_PURGE_PAGE_SIZE = 100
+STORE_PURGE_MAX_PAGES = 1000
+
+
+async def verify_postgres_store_schema(store: Any) -> None:
+    """确认官方 Store schema 已 setup 完成，避免清理过程遇到缺表。"""
+
+    migrations = getattr(store, "MIGRATIONS", None)
+    if not migrations:
+        raise PostgresStoreDependencyError("AsyncPostgresStore MIGRATIONS is unavailable")
+    pool = getattr(store, "conn", None)
+    if pool is None:
+        raise PostgresStoreDependencyError("AsyncPostgresStore connection is unavailable")
+    expected_version = len(migrations) - 1
+    async with pool.connection() as connection:
+        async with connection.cursor() as cursor:
+            await cursor.execute(
+                "SELECT v FROM store_migrations ORDER BY v DESC LIMIT 1"
+            )
+            row = await cursor.fetchone()
+    actual_version = None if row is None else row["v"]
+    if row is None or int(actual_version) < expected_version:
+        raise RuntimeError(
+            "PostgreSQL Store schema 未完成 setup: "
+            f"expected>={expected_version}, actual={actual_version}"
+        )
+
+
+async def purge_store_namespace(store: Any, namespace: tuple[str, ...]) -> int:
+    """用官方 Store API 清空一个 namespace 的全部条目，并复核结果为空。
+
+    删除逐条按条目自身的 namespace 和 key 执行，不使用针对 Store 表的宽泛
+    SQL；循环以一次返回空集的查询作为收敛证据。
+    """
+
+    normalized = tuple(str(part) for part in namespace)
+    if not normalized or any(not part for part in normalized):
+        raise ValueError("store namespace must contain non-empty parts")
+    deleted = 0
+    for _ in range(STORE_PURGE_MAX_PAGES):
+        items = await store.asearch(normalized, limit=STORE_PURGE_PAGE_SIZE)
+        if not items:
+            return deleted
+        for item in items:
+            await store.adelete(tuple(item.namespace), item.key)
+            deleted += 1
+    raise RuntimeError("Store namespace cleanup did not converge")

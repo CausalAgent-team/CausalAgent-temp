@@ -140,7 +140,7 @@ production 层不会摄取资料、调用外部 VLM/模型、运行完整评测�
 
 ## 迁移链验证
 
-空库升级和 migration graph 检查必须确认唯一 head 为 `s4d5e6f7a8b9`：
+空库升级和 migration graph 检查必须确认唯一 head 为 `u7a8b9c0d1e2`：
 
 ```bash
 python -m alembic heads
@@ -150,8 +150,9 @@ python -m alembic heads
 
 生产/预发 Compose 的 `:?` 必需变量应在无凭据占位的临时环境中验证“缺失即 fail closed”，
 再使用合成占位值检查静态展开；不要把占位配置当成可部署或真实服务通过。`AsyncPostgresStore.setup()`
-属于 PostgreSQL 官方 Store schema 初始化，必须与 checkpointer schema/readiness 分开验证，
-checkpoint cleanup 不得清理 Store 表。
+属于 PostgreSQL 官方 Store schema 初始化，必须与 checkpointer schema/readiness 分开验证；
+checkpoint 清理不得触碰 `store`/`store_migrations` 表，用户长期记忆只由
+`user_memory_cleanup_outbox` 通过官方 Store API 删除。
 
 ## SearXNG 部署验证
 

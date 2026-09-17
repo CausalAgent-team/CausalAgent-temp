@@ -2,7 +2,7 @@
 
 文档职责：记录 CausalAgent 当前的进程边界、组件职责、运行拓扑和主要数据流。
 
-适用范围：修改 Flask 应用注册、Web/worker/monitor/cleanup 进程、Compose 服务或跨组件数据流时使用；Job 和文件的细粒度生命周期见 [`job-file-lifecycle.md`](job-file-lifecycle.md)。
+适用范围：修改 Flask 应用注册、Web/worker/monitor/清理进程、Compose 服务或跨组件数据流时使用；Job 和文件的细粒度生命周期见 [`job-file-lifecycle.md`](job-file-lifecycle.md)。
 
 ## 系统边界
 
@@ -18,7 +18,7 @@ CausalAgent 的 Web 入口是 `CausalAgent.py`，它调用 `app/__init__.py` 的
 | Agent worker | `python -m app.agent.worker` | 领取 Job、运行父图/Deep Agent/RAG/Web、通过私网 MCP 调用算法、写事件和终态结果 | MySQL Job/Event；PostgreSQL 父子 checkpoint 与长期记忆 Store |
 | causal-mcp | `python -m Agent.CausalAgentMCP.app` | 校验签名与 Job lease，以有界独立进程执行因果算法和精确取消 | MySQL primary strong read；不持有业务状态 |
 | monitor | `python -m Database.monitor_worker` | 采集 MySQL/PostgreSQL 运行事实并写共享快照 | MySQL monitor 快照和在线配置 |
-| checkpoint cleanup | `python -m Database.checkpoint_cleanup_worker` | 消费 MySQL outbox 并删除 PostgreSQL 父图 checkpoint；当前尚未删除 Deep Agent child thread | MySQL outbox；PostgreSQL checkpoint |
+| Agent 持久化清理 | `python -m Database.agent_persistence_cleanup_worker` | 轮转消费两张 MySQL outbox，删除 PostgreSQL 父子图 checkpoint 和用户长期记忆 Store namespace | MySQL outbox；PostgreSQL checkpoint 与 Store |
 | db-bootstrap | `python -m Database.bootstrap` | 建库、Alembic migration、PostgreSQL checkpoint schema setup | 修改初始化目标数据库 |
 
 worker 的 Job 并发单元是 slot。一个 worker 进程可以启动多个 slot；所有 slot 共享进程级
@@ -38,8 +38,8 @@ flowchart LR
     Worker -->|私网 Streamable HTTP| MCP[causal-mcp]
     MCP -->|lease strong read| MySQL
     Web -->|只读安全摘要| PostgreSQL
-    MySQL -->|checkpoint_cleanup_outbox| Cleanup[cleanup worker]
-    Cleanup -->|adelete_thread(job_id)，当前仅父图| PostgreSQL
+    MySQL -->|checkpoint_cleanup_outbox / user_memory_cleanup_outbox| Cleanup[Agent 持久化清理 worker]
+    Cleanup -->|adelete_thread(父图与子图) / Store namespace purge| PostgreSQL
     Monitor[monitor worker] -->|采集| MySQL
     Monitor -->|quick/deep 只读检查| PostgreSQL
     MySQL --> Snapshots[(database_monitor_snapshots)]
@@ -47,21 +47,21 @@ flowchart LR
 ```
 
 跨库删除不使用分布式事务。MySQL 业务删除和 cleanup outbox 在同一 MySQL 事务提交，
-cleanup worker 之后异步删除 PostgreSQL 父图 checkpoint；当前 outbox 未覆盖 Deep Agent
-child thread，详见 [`job-file-lifecycle.md`](job-file-lifecycle.md)。用户接口和管理员操作
-查询接口分别暴露后台清理状态。
+cleanup worker 之后异步删除 PostgreSQL 父图 checkpoint、Deep Agent 子图 checkpoint 和
+被删除用户的长期记忆 namespace，详见 [`job-file-lifecycle.md`](job-file-lifecycle.md)。
+用户接口和管理员操作查询接口分别暴露后台清理状态。
 
 ## Docker 拓扑
 
 默认开发 Compose `docker-compose.yml` 当前包含 16 个服务：`mysql-primary`、
 `mysql-replica`、`postgres-checkpoint`、`db-bootstrap`、`app`、`worker`、
-`causal-mcp`、`monitor`、`checkpoint-cleanup`、`rag-eval-worker`、
+`causal-mcp`、`monitor`、`agent-persistence-cleanup`、`rag-eval-worker`、
 `searxng-init`、`searxng`、`valkey`、`loki`、`alloy` 和 `grafana`。
 `db-bootstrap` 成功后，依赖它的运行服务才启动；开发拓扑没有自动故障切换。
 
 当前生产 Compose `docker-compose.prod.yml` 实际包含生产 MySQL、PostgreSQL checkpoint、
 `db-bootstrap`、`app`、Agent `worker`、私网 `causal-mcp`、
-`checkpoint-cleanup`、`monitor` 和独立 `rag-eval-worker` 服务；它不提供开发拓扑的
+`agent-persistence-cleanup`、`monitor` 和独立 `rag-eval-worker` 服务；它不提供开发拓扑的
 MySQL replica、SearXNG/Valkey、Loki/Alloy/Grafana 或自动故障切换。部署入口见
 [`../development/deployment.md`](../development/deployment.md)。
 
@@ -69,7 +69,7 @@ MySQL replica、SearXNG/Valkey、Loki/Alloy/Grafana 或自动故障切换。部�
 
 - `app/` 负责 HTTP、认证、持久化服务编排和 Job worker 外壳，不承载因果算法实现。
 - `Agent/` 负责 LangGraph 图、结构化输出、MCP/RAG 工具节点和因果工具。
-- `Database/` 负责连接、迁移、bootstrap、monitor、checkpoint setup 和 cleanup worker。
+- `Database/` 负责连接、迁移、bootstrap、monitor、checkpoint setup 和 Agent 持久化清理 worker。
 - `admin-frontend/` 只负责管理员页面与 API 消费，不替代 Flask 后端，也不直接连接数据库。
 - `Document/admin/` 只描述管理员如何消费系统能力；数据库内部机制归 `Document/database/`。
 

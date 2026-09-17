@@ -1374,3 +1374,19 @@
   - 【规则化修正指令】：Gate 校验失败改为携带稳定规则码，并把规则翻译成脱敏的中文修正要求写进重试指令，使模型知道具体违反了哪条引用规则，而不是只收到泛泛的重新提交要求；身份、账本与状态一致性失败不带规则码，继续使用通用指令，不把内部完整性问题包装成模型可修正的指令。
   - 【阶段公开说明】：Gate 拒绝时发布 `progress` 阶段说明，可修正时挂在 `finalization_gate` 阶段并给出修正要求，降级时说明本次仅基于已验证输入生成报告；第二次 Deep Agent 启动修正时，新阶段同样收到一条 `progress` 说明，指出该阶段沿用已有工具结果、不重复调用工具。事件适配器按登记节点名绑定活跃阶段，并拒绝未登记节点名与空文本。
   - 【事故回归】：新增复现真实事故的用例，把证据引用写进 `result_assessments` 时先以 `assessment_ref_unknown_result` 拒绝，只修该处后继续以 `proposal_evidence_ref_unknown` 拒绝，两处都修正后才通过，锁定两处违规与修正路径。
+
+- 【Agent 持久化清理：父子图 checkpoint 与用户长期记忆统一清理】
+  - 【数据库迁移】：新增 `user_memory_cleanup_outbox`（revision `t5e6f7a8b9c0`），按 `user_id` 唯一保存状态、重试次数、可领取时间、租约、脱敏错误结论和完成时间；只与 `admin_operations` 建立外键，不关联 `users`，从而在用户行删除后仍保留任务；迁移不回填也不激活历史数据，downgrade 只删除新表；同时新增 `u7a8b9c0d1e2` 把 `database_monitor_snapshots.snapshot_key` 扩展到 64 字符，容纳按进程命名的清理心跳与队列快照键。
+  - 【删除事务】：用户物理删除在同一个 MySQL 事务中为每个 Job 登记 checkpoint 清理、为同一 `user_id` 登记一条长期记忆清理，并写入管理员操作聚合；任一登记失败回滚整个删除；单独删除 Session 或 Job 仍只清理 checkpoint，保留用户长期记忆。
+  - 【清理 worker】：`Database/checkpoint_cleanup_worker.py` 与 `app/agent/checkpoint_cleanup.py` 改名为 `Database/agent_persistence_cleanup_worker.py` 与 `app/agent/persistence_cleanup.py`；一个进程轮转消费两张 outbox，复用同一个 PostgreSQL 连接池构造 `AsyncPostgresSaver` 和 `AsyncPostgresStore`，不新增第二个容器；Compose 服务名、容器名、启动命令和 `AGENT_PERSISTENCE_CLEANUP_*` 环境变量同步切换。
+  - 【父子图清理】：checkpoint 任务在一次 attempt 内删除父图 `thread_id=job_id` 和子图 `thread_id=deep-agent:<uuid5(job_id)>`，两者都成功才标记成功，部分成功整项重试并依赖官方删除接口的幂等性。
+  - 【长期记忆清理】：记忆任务按可信 `("causalagent", "memory", str(user_id))` namespace 使用官方 Store API 枚举并逐条删除，删除后重新查询确认 namespace 为空，不对 Store 表执行宽泛 SQL；清理 worker 启动时校验 checkpoint 与 Store schema 版本，Store 未 setup 时有界等待，不自行建表。
+  - 【操作聚合与维护入口】：管理员用户删除只有在 checkpoint 清理和记忆清理全部成功后进入 `succeeded`，任一任务最终失败进入 `failed`；`Database/lifecycle_repair.py` 的失败/过期重置扩展到两张 outbox。
+  - 【监控与看板】：worker 心跳快照改为 `agent_persistence_cleanup_runtime` 并新增当前任务类型；队列快照改为 `agent_persistence_cleanup_outbox`，分别汇总两类 outbox 的 pending、due、processing、过期租约和 failed 数量；管理员数据库看板、用户删除结果视图和 SQL 语义映射同步更新字段与名称。
+  - 【日志事件】：cleanup 事件前缀统一为 `agent.persistence.cleanup.*`，成功事件新增 `task_type` 和 `deleted_count`，运行快照不再保留旧的 `checkpoint_cleanup_runtime` 名称。
+  - 【文档同步】：更新系统架构总览、Job/文件生命周期、数据库总览与迁移 checkpoint、监控、部署、可观测性、测试和管理员模块文档，删除已经修复的父子图与长期记忆清理缺口描述。
+
+- 【因果图渲染修复】
+  - 【载荷投影】：`process_final_result` 在展示层把 Agent 内部标准化图（节点名列表与 `source`/`target` 边）投影为前端 vis-network 的 `{id,label}` 节点与 `{from,to}` 边，边类型映射为箭头与虚线，权重按 `.6g` 作为边标签，`graph_semantics` 等内部字段不再进入公开载荷。
+  - 【历史会话】：`/api/load_session` 读取 `causal_graph` 附件时执行同一投影，早期版本按内部格式写入的附件不需要重跑分析即可恢复显示。
+  - 【失败可见】：前端 `renderCausalGraph` 把节点/边建表与网络创建一起纳入异常处理，数据格式不符合 vis-network 要求时在图上直接给出说明文本，同时更新聊天页脚本缓存版本号。

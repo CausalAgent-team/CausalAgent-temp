@@ -2,13 +2,13 @@
 
 文档职责：作为运行日志的唯一权威页面，冻结 v1 JSON 字段、第二阶段事件目录、上下文关联、降噪、隐私边界和验收状态。
 
-适用范围：Web、Job worker、monitor、MCP、数据库 bootstrap、checkpoint cleanup 等进程的运行日志；管理员审计日志、MySQL/PostgreSQL 引擎日志和浏览器开发者控制台不归入本契约。
+适用范围：Web、Job worker、monitor、MCP、数据库 bootstrap、Agent 持久化清理 worker 等进程的运行日志；管理员审计日志、MySQL/PostgreSQL 引擎日志和浏览器开发者控制台不归入本契约。
 
 ## 1. 当前结论与实施边界
 
 共享 JSON stderr 运行时位于 [`observability/logging_runtime.py`](../../observability/logging_runtime.py)，机器可校验的事件目录位于 [`observability/event_catalog.py`](../../observability/event_catalog.py)，进程内转移/恢复和重复事件限频位于 [`observability/noise_control.py`](../../observability/noise_control.py)。Web、worker、monitor、MCP 和 maintenance 的自有运行日志统一通过 `log_event()` 写入标准 `logging`；调用方不能自由传入级别、分类或消息。
 
-共享日志已经把请求、Job、worker slot、LangGraph node 和 MCP tool 的上下文贯通，并收敛 Web、Agent/RAG、数据库、monitor 和 checkpoint cleanup 的运行日志。Deep Agent 复用同一日志目录和 SSE 适配边界：内层 ToolMessage 不直接落入公共事件，工具生命周期只生成受控 `tool_call_result` 状态；`finalization_status` 只进入最终结果数据。该接入没有新增数据库迁移、HTTP API 或管理员前端页面。
+共享日志已经把请求、Job、worker slot、LangGraph node 和 MCP tool 的上下文贯通，并收敛 Web、Agent/RAG、数据库、monitor 和 Agent 持久化清理 worker 的运行日志。Deep Agent 复用同一日志目录和 SSE 适配边界：内层 ToolMessage 不直接落入公共事件，工具生命周期只生成受控 `tool_call_result` 状态；`finalization_status` 只进入最终结果数据。该接入没有新增数据库迁移、HTTP API 或管理员前端页面。
 
 默认开发 Compose 已接入 Alloy、Loki 和 Grafana，生产 Compose 仍不包含这套拓扑。第二阶段代码与静态测试已落地，但真实 Docker、Alloy positions、Loki 检索和受控故障矩阵尚未取得通过证据时，本阶段不得标记完成，也不得把本地静态检查当作端到端验收。
 
@@ -74,7 +74,7 @@ Flask 在确认 `X-Request-ID` 后立即绑定 `request_id`，只有主库确认
 | `web` | `CausalAgent.py`、`app/__init__.py`、Flask 请求上下文 | 启动结果、未处理或受控 5xx、Job 创建结果和真实安全拒绝 |
 | `worker` | `app/agent/worker/__main__.py`、slot/runtime/execution | slot、Job、lease、node 最终降级和 cleanup 聚合结果 |
 | `monitor` | `Database/monitor_worker.py`、`Database/monitoring.py`、`app/db.py` | 快照、配置、锁、主从、连接和慢 SQL 的转移/恢复事件 |
-| `maintenance` | bootstrap、database/checkpoint setup、checkpoint cleanup worker | 启动边界、outbox attempt 结果和循环级转移/恢复 |
+| `maintenance` | bootstrap、database/checkpoint setup、Agent 持久化清理 worker | 启动边界、两类 outbox attempt 结果和循环级转移/恢复 |
 | `mcp` | `Agent/CausalAgentMCP/app.py` 私有容器；兼容路径仍为 `mcp_server.py` stdio 子进程 | 新服务记录收到/拒绝/接受、60 秒慢调用、完成/失败/取消和控制面取消结果；协议输出与应用日志分离，兼容路径日志只写 stderr |
 
 ### 3.1 隐私与去重边界
@@ -95,7 +95,7 @@ MCP 不创建应用文件 handler，MCP transport stdout 只允许协议消息�
 
 默认开发 Compose 在 [`docker-compose.yml`](../../docker-compose.yml) 中增加独立的 `observability_network`，并锁定以下镜像：`grafana/loki:3.7.4`、`grafana/alloy:v1.18.0` 和 `grafana/grafana:13.1.1`。Loki、Alloy 不映射宿主机端口；Grafana 仅映射到 `127.0.0.1:3000`，要求 `GRAFANA_ADMIN_PASSWORD` 非空，并通过 `GF_USERS_DEFAULT_LANGUAGE=zh-Hans` 将未设置个人偏好的账号默认显示为简体中文；账号自己的语言偏好仍具有更高优先级。Loki 数据、Grafana 数据和 Alloy positions 分别使用命名卷，生产 Compose 不复用这些服务或卷。
 
-采集范围由 Compose 静态标签控制：`app`、`worker`、`causal-mcp`、`monitor`、`db-bootstrap` 和 `checkpoint-cleanup` 才带有 `causalagent_observability=true`。数据库容器和可观测组件自身没有该标签，因此 Alloy 不会递归采集它们。`causal-mcp` 是独立私有容器，使用 `service=mcp` 的 JSON stderr；兼容 stdio 子进程仍由 worker stderr 采集，不把两条路径混写成同一服务事实。
+采集范围由 Compose 静态标签控制：`app`、`worker`、`causal-mcp`、`monitor`、`db-bootstrap` 和 `agent-persistence-cleanup` 才带有 `causalagent_observability=true`。数据库容器和可观测组件自身没有该标签，因此 Alloy 不会递归采集它们。`causal-mcp` 是独立私有容器，使用 `service=mcp` 的 JSON stderr；兼容 stdio 子进程仍由 worker stderr 采集，不把两条路径混写成同一服务事实。
 
 Alloy 先用 `stage.docker` 解包 Docker `json-file` 包装层，再用 `stage.json` 提取 `service`、`environment`、`level` 和 `category`。`drop_malformed=false` 保证非法或旧格式行保留原文，未解析字段不被伪造。最终只保留 `service_name`、`environment`、`level`、`category` 四类低基数标签；`request_id`、`job_id`、`invocation_id`、`user_id`、`session_id`、`node`、`tool`、`instance` 等仍只在 JSON 行正文中。positions 位于 Alloy 的 `/var/lib/alloy/data` 命名卷，重启续读由 `loki.source.docker` 管理。
 
@@ -204,10 +204,10 @@ Grafana 继续使用独立账号和 `127.0.0.1:3000` 本地入口，不复用 Ca
 | `monitor.config.recovered` | `info/dependency` | 数据库监控配置已恢复 | `downtime_ms`, `failure_count` |
 | `monitor.lock.failed` | `warning/dependency` | 数据库监控命名锁操作失败 | `snapshot_key`, `reason_code`, `suppressed_count` |
 | `monitor.lock.recovered` | `info/dependency` | 数据库监控命名锁操作已恢复 | `snapshot_key`, `downtime_ms`, `failure_count` |
-| `checkpoint.cleanup.succeeded` | `info/lifecycle` | Checkpoint cleanup 已完成 | `outbox_id`, `attempt`, `duration_ms` |
-| `checkpoint.cleanup.failed` | `error/dependency` | Checkpoint cleanup 执行失败 | `outbox_id`, `attempt`, `duration_ms`, `reason_code` |
-| `checkpoint.cleanup.runtime.degraded` | `warning/dependency` | Checkpoint cleanup 运行循环已降级 | `reason_code`, `suppressed_count` |
-| `checkpoint.cleanup.runtime.recovered` | `info/dependency` | Checkpoint cleanup 运行循环已恢复 | `downtime_ms`, `failure_count` |
+| `agent.persistence.cleanup.succeeded` | `info/lifecycle` | Agent 持久化清理已完成 | `task_type`, `outbox_id`, `attempt`, `duration_ms`, `deleted_count` |
+| `agent.persistence.cleanup.failed` | `error/dependency` | Agent 持久化清理执行失败 | `task_type`, `outbox_id`, `attempt`, `duration_ms`, `reason_code` |
+| `agent.persistence.cleanup.runtime.degraded` | `warning/dependency` | Agent 持久化清理运行循环已降级 | `reason_code`, `suppressed_count` |
+| `agent.persistence.cleanup.runtime.recovered` | `info/dependency` | Agent 持久化清理运行循环已恢复 | `downtime_ms`, `failure_count` |
 
 ## 5. 关联链路与模块边界
 
@@ -228,7 +228,7 @@ X-Request-ID
 - 兼容 MCP 路径的父进程先删除模型给出的可信参数和 `csv_data`，再从 State 注入 `user_id/session_id/job_id/input_user_file_id/input_object_id`，从当前日志上下文注入 `request_id/worker_slot`。必填可信参数缺少权威值时在 transport 前失败关闭；子进程固定绑定 `node=mcp_tool_node` 和真实工具名。
 - 新 MCP 路径由 worker 在调用前写 `mcp.client.call.started`，MCP 服务只在 HMAC 验证后绑定 `user_id/session_id/job_id/invocation_id/worker_slot/node/tool`；签名、CSV、参数正文和原始结果不进入日志。服务端收到、拒绝、接受、60 秒慢调用、终态及取消回执均使用相同 invocation 上下文，可在 Grafana 时间线中跨 `worker|mcp` 服务关联。
 - 数据库只记录 `primary/replica` 逻辑别名和稳定 reason code。慢 SQL 只记录操作类型、耗时、规范化 SQL 的完整 SHA-256 digest 和抑制数；monitor 正常锁竞争、轮询和成功快照静默。
-- checkpoint cleanup 每个 outbox attempt 最终边界只记录一个成功或失败事件，claim、heartbeat 和快照发布等循环级异常使用 runtime degraded/recovered；业务数据库中的 fencing、幂等和 outbox 状态机保持原样。
+- Agent 持久化清理每个 outbox attempt 最终边界只记录一个成功或失败事件，claim、heartbeat 和快照发布等循环级异常使用 runtime degraded/recovered；业务数据库中的 fencing、幂等和 outbox 状态机保持原样。
 
 ## 6. 验收记录和完成边界
 

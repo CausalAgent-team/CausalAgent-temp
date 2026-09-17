@@ -12,7 +12,7 @@
 | `GET` | `/api/sessions` | 读取当前用户未归档会话列表 |
 | `GET` | `/api/load_session?session=<id>` | 读取当前用户会话消息与展示附件 |
 | `POST` | `/api/change_session` | 修改当前用户会话标题 |
-| `POST` | `/api/delete_session` | 删除会话业务数据并登记 checkpoint cleanup |
+| `POST` | `/api/delete_session` | 删除会话业务数据并登记 checkpoint 清理 |
 
 所有会话接口按当前用户过滤。未知或不属于当前用户的 Session 不会被自动重建。新建会话使用主库写入；列表可以使用允许回退的 eventual read；加载、修改、删除和 Job 相关的实时路径使用 strong read 或主库事务。
 
@@ -36,7 +36,7 @@
 
 `thinking_after` 不是数据库实体，而是按 `analysis_job_inputs.sequence`、用户消息的 `analysis_job_input_id`、assistant 消息的 `source_event_id` 和边界事件组装的展示 DTO。阶段只包含 `node_start`、`progress`、`decision`、`tool_call_start`、`tool_call_result`、`node_retry`、`node_end`；`text_delta` 不进入历史，`interrupt`、`final_result`、`error`、`canceled` 只负责切分和计算状态。关联链不能唯一成立时，服务端记录告警并跳过该事件区间，不按时间猜测。
 
-删除会话前，服务端锁定该会话的 Job 和 Session；如果存在 `queued`、`running` 或 `waiting_input` Job，返回 `409`。否则在同一个 MySQL 事务中登记所有 Job 的 checkpoint cleanup outbox、删除附件、删除聊天消息和删除 Session，然后返回后台清理状态。MySQL 业务删除成功不代表 PostgreSQL checkpoint 已同步完成。
+删除会话前，服务端锁定该会话的 Job 和 Session；如果存在 `queued`、`running` 或 `waiting_input` Job，返回 `409`。否则在同一个 MySQL 事务中登记所有 Job 的父子图 checkpoint 清理 outbox、删除附件、删除聊天消息和删除 Session，然后返回后台清理状态。MySQL 业务删除成功不代表 PostgreSQL checkpoint 已同步完成。删除会话只清理 Job checkpoint，不删除该用户长期记忆。
 
 ## 文件接口
 

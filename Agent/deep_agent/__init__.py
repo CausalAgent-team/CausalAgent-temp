@@ -27,6 +27,7 @@ from .memory import (
     StoreBackend,
     build_in_memory_backend,
     initialize_memory_files,
+    memory_namespace_for_user,
     trusted_memory_namespace,
 )
 from .profile import (
@@ -77,6 +78,7 @@ __all__ = [
     "retry_deep_agent_from_checkpoint",
     "initialize_memory_files",
     "is_filesystem_write_allowed",
+    "memory_namespace_for_user",
     "to_deep_agent_input",
     "trusted_memory_namespace",
     "validate_structured_response",
