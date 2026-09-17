@@ -1385,3 +1385,8 @@
   - 【监控与看板】：worker 心跳快照改为 `agent_persistence_cleanup_runtime` 并新增当前任务类型；队列快照改为 `agent_persistence_cleanup_outbox`，分别汇总两类 outbox 的 pending、due、processing、过期租约和 failed 数量；管理员数据库看板、用户删除结果视图和 SQL 语义映射同步更新字段与名称。
   - 【日志事件】：cleanup 事件前缀统一为 `agent.persistence.cleanup.*`，成功事件新增 `task_type` 和 `deleted_count`，运行快照不再保留旧的 `checkpoint_cleanup_runtime` 名称。
   - 【文档同步】：更新系统架构总览、Job/文件生命周期、数据库总览与迁移 checkpoint、监控、部署、可观测性、测试和管理员模块文档，删除已经修复的父子图与长期记忆清理缺口描述。
+
+- 【因果图渲染修复】
+  - 【载荷投影】：`process_final_result` 在展示层把 Agent 内部标准化图（节点名列表与 `source`/`target` 边）投影为前端 vis-network 的 `{id,label}` 节点与 `{from,to}` 边，边类型映射为箭头与虚线，权重按 `.6g` 作为边标签，`graph_semantics` 等内部字段不再进入公开载荷。
+  - 【历史会话】：`/api/load_session` 读取 `causal_graph` 附件时执行同一投影，早期版本按内部格式写入的附件不需要重跑分析即可恢复显示。
+  - 【失败可见】：前端 `renderCausalGraph` 把节点/边建表与网络创建一起纳入异常处理，数据格式不符合 vis-network 要求时在图上直接给出说明文本，同时更新聊天页脚本缓存版本号。

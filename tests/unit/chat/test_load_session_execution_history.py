@@ -143,6 +143,47 @@ class DeniedHistoryConnection(HistoryConnection):
         self.rolled_back = True
 
 
+# 早期版本把 Agent 内部图格式写进了 causal_graph 附件。
+STORED_INTERNAL_GRAPH = {
+    "type": "causal_graph",
+    "layout": "report",
+    "summary": "报告正文",
+    "graph_source": "original",
+    "data": {
+        "graph_semantics": "dag_target_to_source",
+        "nodes": ["A", "B"],
+        "edges": [
+            {"source": "A", "target": "B", "edge_type": "directed", "weight": 2.0}
+        ],
+    },
+}
+
+
+class GraphAttachmentHistoryCursor(HistoryCursor):
+    def fetchall(self):
+        if "FROM chat_messages" in self.current_sql:
+            rows = super().fetchall()
+            for row in rows:
+                if row["id"] == 11:
+                    row["has_attachment"] = True
+            return rows
+        if "FROM chat_attachments" in self.current_sql:
+            return [
+                {
+                    "message_id": 11,
+                    "attachment_type": "causal_graph",
+                    "content": json.dumps(STORED_INTERNAL_GRAPH, ensure_ascii=False),
+                }
+            ]
+        return super().fetchall()
+
+
+class GraphAttachmentHistoryConnection(HistoryConnection):
+    def __init__(self):
+        super().__init__()
+        self.cursor_value = GraphAttachmentHistoryCursor()
+
+
 def _app():
     app = Flask(__name__)
     app.secret_key = "history-test"
@@ -207,3 +248,30 @@ def test_load_session_rejects_unknown_or_unauthorized_session_before_history_que
     assert response.status_code == 404
     assert connection.rolled_back is True
     assert len(connection.cursor_value.statements) == 2
+
+
+def test_load_session_projects_stored_graph_for_frontend():
+    """历史附件里的内部图格式必须在读取时投影成前端可渲染的载荷。"""
+    connection = GraphAttachmentHistoryConnection()
+    with (
+        patch("app.chat.routes.get_current_session_user", return_value={"id": 7, "username": "owner"}),
+        patch("app.db.get_read_connection", return_value=connection),
+        _app().test_client() as client,
+    ):
+        response = client.get("/api/load_session?session=session-1")
+
+    assert response.status_code == 200
+    ai_message = response.get_json()["messages"][1]
+    assert ai_message["text"]["summary"] == "报告正文"
+    graph = ai_message["text"]["data"]
+    assert graph["nodes"] == [{"id": "A", "label": "A"}, {"id": "B", "label": "B"}]
+    assert graph["edges"] == [
+        {
+            "from": "A",
+            "to": "B",
+            "arrows": "to",
+            "dashes": False,
+            "weight": 2.0,
+            "label": "2",
+        }
+    ]

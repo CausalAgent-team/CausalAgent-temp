@@ -84,6 +84,8 @@ FinalizationGate 拒绝时额外发布 `progress` 阶段说明，只含 `summary
 
 引用随 assistant 消息独立持久化；重新加载会话时通过 `message.references` 返回相同的 `title + url` 数组。后端只提供该字段契约，不要求前端展示引用。报告、预处理和后处理节点不发送文字增量；公开 `text_delta` 仍只来自普通问答和报告追问节点。
 
+报告终态包含主因果图时，`final_result.data` 的 `type` 为 `causal_graph`，图本身在 `data` 字段：`nodes` 是 `{id, label}` 节点数组，`edges` 是 `{from, to, arrows, dashes, label}` 边数组，对应前端 vis-network 的节点与边结构。`graph_source` 为 `postprocessed` 时表示该图经过后处理修订，为 `original` 时表示直接采用算法原图，`revision_summary` 给出修订说明。Agent 内部使用的标准化算法图（节点名列表与 `source`/`target` 端点）在结果展示层投影成上述载荷，`graph_semantics` 等内部字段不出现在公开结果中；会话历史和实时 SSE 返回同一份载荷。
+
 ## Resume 与 Cancel
 
 恢复请求示例：

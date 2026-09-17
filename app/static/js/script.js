@@ -2714,9 +2714,18 @@ function renderCausalGraph(containerId, graphData) {
         return;
     }
 
-    // 将 causal-learn 格式的节点和边转换为 vis.js 格式
-    const nodes = new vis.DataSet(graphData.nodes);
-    const edges = new vis.DataSet(graphData.edges);
+    // 将后端给出的节点和边转换为 vis.js 格式；vis.js 要求节点带 id、
+    // 边使用 from/to，格式不符时必须直接说明，否则容器会一直留空。
+    let nodes;
+    let edges;
+    try {
+        nodes = new vis.DataSet(graphData.nodes);
+        edges = new vis.DataSet(graphData.edges);
+    } catch (err) {
+        console.error("解析因果图数据失败:", err, graphData);
+        container.textContent = "因果图数据格式无法解析，暂时无法显示图形。";
+        return;
+    }
 
     const data = {
         nodes: nodes,
