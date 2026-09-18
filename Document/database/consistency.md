@@ -2,7 +2,9 @@
 
 文档职责：记录 MySQL 写库、业务读库、复制状态观测、strong/eventual read 和连接池的当前实现。
 
-适用范围：修改 `app/db.py`、账号权限、读写路由、复制回退或连接容量时使用；管理员看板只描述消费结果，内部采集机制见 [`monitoring.md`](monitoring.md)。
+适用范围：修改 `app/db.py`、`config/database_settings.py`、账号权限、读写路由、复制回退或连接容量时使用；管理员看板只描述消费结果，内部采集机制见 [`monitoring.md`](monitoring.md)。
+
+`config/database_settings.py` 是 MySQL 连接层的独立配置边界。`app.db` 只依赖其中的 `DatabaseConfig`/`database_settings`，因此被 `causal-mcp` 导入时不会初始化 `config.settings`，也不会要求 `API_KEY`、`BASE_URL` 或 `MODEL`。`config.settings.AppConfig` 仍保留同名 `MYSQL_*` 字段供 App、Admin、Worker 和 Monitor 的兼容调用方使用，并继续对应用和模型配置 fail-fast。
 
 ## 连接职责
 

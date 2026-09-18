@@ -17,6 +17,18 @@ const backToSettingsButton = document.getElementById('backToSettingsButton'); //
 const csvUploaderInput = document.getElementById('csvUploader'); // 获取CSV上传器
 const uploadCsvButton = document.getElementById('uploadCsvButton'); // 获取上传按钮
 const chatArea = document.getElementById('chatArea');
+const CHAT_AUTO_SCROLL_THRESHOLD_PX = 80;
+let chatAutoScrollEnabled = true;
+if (chatArea) {
+    chatArea.addEventListener('scroll', () => {
+        chatAutoScrollEnabled = ChatStreamState.isNearBottom(
+            chatArea.scrollTop,
+            chatArea.clientHeight,
+            chatArea.scrollHeight,
+            CHAT_AUTO_SCROLL_THRESHOLD_PX,
+        );
+    }, { passive: true });
+}
 const mainContainer = document.getElementById('mainContainer');
 const inputArea = document.getElementById('inputArea');
 const newChatWelcome = document.getElementById('newChatWelcome');
@@ -699,6 +711,7 @@ async function handleLogout() {
             registerForm.style.display = 'none';
             closeUserInfoPopup(); // 关闭用户信息弹窗
             document.getElementById('chatArea').innerHTML = ''; // 清空聊天区域
+            resetChatAutoScroll();
             setChatLayoutState(ChatLayoutState.NEW_CHAT, { animate: false });
             historyList.innerHTML = ''; // 清空历史列表
             fileList.innerHTML = ''; //  清空文件列表 
@@ -1520,7 +1533,7 @@ function subscribeToJobEvents(jobId, thinkingElements, afterEventId = 0, generat
         };
 
         [
-            'node_start', 'progress', 'decision', 'tool_call_start',
+            'node_start', 'progress', 'decision', 'decision_delta', 'tool_call_start',
             'tool_call_result', 'node_retry', 'node_end', 'text_delta',
             'final_result', 'interrupt', 'error', 'canceled', 'heartbeat'
         ].forEach(bindEvent);
@@ -1605,9 +1618,14 @@ function stopThinkingDuration(thinkingElements) {
 /**
  * 新增聊天内容时保持聊天区域停留在最新内容；展开或收起时间线不会调用此函数。
  */
+function resetChatAutoScroll() {
+    chatAutoScrollEnabled = true;
+}
+
 function keepLatestChatContentVisible() {
-    if (!chatArea) return;
+    if (!chatArea || !chatAutoScrollEnabled) return;
     chatArea.scrollTop = chatArea.scrollHeight;
+    chatAutoScrollEnabled = true;
 }
 
 /**
@@ -1690,6 +1708,9 @@ function addThinkingMessage(options = {}) {
         finishedAt: isActive ? null : performance.now(),
         durationTimer: null,
         steps: new Map(),
+        pendingStepEvents: new Map(),
+        decisionStreams: new Map(),
+        presentationStreams: new Map(),
         streamState: ChatStreamState.createState(),
         draftElement: null,
         draftStreamId: null,
@@ -1741,13 +1762,16 @@ function handleStreamEvent(eventData, thinkingElements, jobId = null, historyMod
     
     switch (eventType) {
         case 'node_start':
-            handleNodeStart(eventData, thinkingElements);
+            handleNodeStart(eventData, thinkingElements, historyMode);
             break;
         case 'progress':
         case 'decision':
         case 'tool_call_start':
         case 'tool_call_result':
-            handleStepDetail(eventData, thinkingElements);
+            handleStepDetail(eventData, thinkingElements, { historyMode });
+            break;
+        case 'decision_delta':
+            handleDecisionDelta(eventData, thinkingElements, { historyMode });
             break;
         case 'node_retry':
             handleNodeRetry(eventData, thinkingElements);
@@ -1784,7 +1808,7 @@ function handleStreamEvent(eventData, thinkingElements, jobId = null, historyMod
 /**
  * 处理节点开始事件
  */
-function handleNodeStart(eventData, thinkingElements) {
+function handleNodeStart(eventData, thinkingElements, historyMode = false) {
     const { step_id, title, node_name } = eventData;
     if (!step_id || thinkingElements.steps.has(step_id)) {
         return;
@@ -1827,6 +1851,12 @@ function handleNodeStart(eventData, thinkingElements) {
     
     detail.appendChild(stepItem);
     thinkingElements.steps.set(step_id, { item: stepItem, details: stepDetails });
+    ExecutionPhaseState.takeDeferredStepEvents(
+        thinkingElements.pendingStepEvents,
+        step_id,
+    ).forEach(({ eventData: pendingEvent, renderOptions }) => {
+        handleStepDetail(pendingEvent, thinkingElements, renderOptions);
+    });
     
     keepLatestChatContentVisible();
 }
@@ -1905,6 +1935,7 @@ function markThinkingCanceled(thinkingElements, message = getText('jobCanceled')
     if (!thinkingElements) return;
 
     stopThinkingDuration(thinkingElements);
+    stopPresentationStreams(thinkingElements);
     setTimelineStatus(thinkingElements, message);
     const dots = thinkingElements.bubble?.querySelector('.thinking-dots');
     if (dots) dots.style.display = 'none';
@@ -1930,14 +1961,242 @@ function appendStepDetail(container, text, className = '') {
     row.className = `step-detail ${className}`.trim();
     row.textContent = text;
     container.appendChild(row);
+    return row;
 }
 
-function handleStepDetail(eventData, thinkingElements) {
+const PRESENTATION_CHARS_PER_SECOND = 40;
+const PRESENTATION_TICK_MS = 25;
+const PRESENTATION_CHARS_PER_TICK = Math.max(
+    1,
+    Math.round(PRESENTATION_CHARS_PER_SECOND * PRESENTATION_TICK_MS / 1000),
+);
+
+function scheduleRenderFrame(callback) {
+    if (typeof window.requestAnimationFrame === 'function') {
+        return window.requestAnimationFrame(callback);
+    }
+    return window.setTimeout(callback, 16);
+}
+
+function cancelRenderFrame(frame) {
+    if (frame === null || frame === undefined) return;
+    window.cancelAnimationFrame?.(frame);
+    window.clearTimeout(frame);
+}
+
+function textLength(text) {
+    return Array.from(text || '').length;
+}
+
+function createPresentationStream({ render = null, onComplete = null } = {}) {
+    return {
+        target: '',
+        visible: '',
+        render,
+        onComplete,
+        pendingValue: null,
+        renderFrame: null,
+        timer: null,
+        complete: false,
+        completionNotified: false,
+        pendingEvents: [],
+    };
+}
+
+function schedulePresentationRender(stream) {
+    if (stream.renderFrame !== null) return;
+    stream.pendingValue = stream.visible;
+    stream.renderFrame = scheduleRenderFrame(() => {
+        stream.renderFrame = null;
+        const value = stream.pendingValue;
+        stream.pendingValue = null;
+        if (value !== null && value !== undefined) stream.render?.(value);
+    });
+}
+
+function maybeCompletePresentationStream(stream) {
+    if (
+        !stream.complete
+        || textLength(stream.visible) < textLength(stream.target)
+        || stream.completionNotified
+    ) {
+        return;
+    }
+    stream.completionNotified = true;
+    if (stream.timer !== null) {
+        window.clearInterval(stream.timer);
+        stream.timer = null;
+    }
+    stream.onComplete?.();
+}
+
+function advancePresentationStream(stream) {
+    if (textLength(stream.visible) < textLength(stream.target)) {
+        stream.visible = ChatStreamState.advancePresentationText(
+            stream.visible,
+            stream.target,
+            PRESENTATION_CHARS_PER_TICK,
+        );
+        schedulePresentationRender(stream);
+    }
+    maybeCompletePresentationStream(stream);
+}
+
+function startPresentationStream(stream) {
+    if (stream.timer !== null) return;
+    stream.timer = window.setInterval(
+        () => advancePresentationStream(stream),
+        PRESENTATION_TICK_MS,
+    );
+}
+
+function stopPresentationStream(stream, { flush = false } = {}) {
+    if (flush) {
+        stream.complete = true;
+        stream.visible = stream.target;
+    }
+    if (stream.timer !== null) {
+        window.clearInterval(stream.timer);
+        stream.timer = null;
+    }
+    cancelRenderFrame(stream.renderFrame);
+    stream.renderFrame = null;
+    stream.pendingValue = null;
+    if (flush) {
+        stream.render?.(stream.visible);
+        maybeCompletePresentationStream(stream);
+    }
+}
+
+function stopPresentationStreams(thinkingElements) {
+    thinkingElements.presentationStreams.forEach(stream => stopPresentationStream(stream));
+}
+
+function cancelDraftRender(thinkingElements) {
+    const streamId = thinkingElements.draftStreamId;
+    const stream = thinkingElements.presentationStreams.get(streamId);
+    if (stream) {
+        stopPresentationStream(stream);
+        thinkingElements.presentationStreams.delete(streamId);
+    }
+}
+
+function releasePendingDecisionEvents(stream, thinkingElements) {
+    const pending = stream.pendingEvents.splice(0);
+    pending.forEach(eventData => {
+        handleStepDetail(eventData, thinkingElements, { bypassDecisionGate: true });
+    });
+}
+
+function decisionStreamKey(eventData) {
+    return `${eventData.step_id}:${eventData.decision_kind}:${eventData.tool_name}`;
+}
+
+function findDecisionStreamForTool(eventData, thinkingElements) {
+    for (const decisionKind of ['algorithm', 'evidence']) {
+        const key = `${eventData.step_id}:${decisionKind}:${eventData.tool_name}`;
+        const stream = thinkingElements.decisionStreams.get(key);
+        if (stream) return stream;
+    }
+    return null;
+}
+
+function flushDecisionStreams(thinkingElements) {
+    thinkingElements.decisionStreams.forEach(stream => {
+        stopPresentationStream(stream, { flush: true });
+    });
+}
+
+function handleDecisionDelta(eventData, thinkingElements, { historyMode = false } = {}) {
+    const step = thinkingElements.steps.get(eventData.step_id);
+    if (!step) {
+        ExecutionPhaseState.deferStepEvent(
+            thinkingElements.pendingStepEvents,
+            eventData,
+            { historyMode },
+        );
+        return;
+    }
+    const { duplicate, buffer } = ChatStreamState.appendTextDelta(
+        thinkingElements.streamState,
+        eventData,
+    );
+    if (duplicate) return;
+    const key = decisionStreamKey(eventData);
+    let stream = thinkingElements.decisionStreams.get(key);
+    if (!stream) {
+        const prefix = eventData.decision_kind === 'evidence' ? '检索决策：' : '算法决策：';
+        const row = appendStepDetail(step.details, prefix, '');
+        stream = {
+            row,
+            prefix,
+            ...createPresentationStream({
+                onComplete: () => releasePendingDecisionEvents(stream, thinkingElements),
+            }),
+        };
+        stream.render = value => {
+            if (!stream.row.isConnected) return;
+            stream.row.textContent = `${stream.prefix}${value}`;
+            stream.row.setAttribute('aria-label', stream.row.textContent);
+            keepLatestChatContentVisible();
+        };
+        thinkingElements.decisionStreams.set(key, stream);
+    }
+    stream.target = buffer;
+    startPresentationStream(stream);
+}
+
+function handleStepDetail(
+    eventData,
+    thinkingElements,
+    { historyMode = false, bypassDecisionGate = false } = {},
+) {
     // 将进度、决策和工具摘要嵌套到对应父阶段。
     const step = thinkingElements.steps.get(eventData.step_id);
-    if (!step) return;
+    if (!step) {
+        ExecutionPhaseState.deferStepEvent(
+            thinkingElements.pendingStepEvents,
+            eventData,
+            { historyMode },
+        );
+        return;
+    }
+    if (
+        !bypassDecisionGate
+        && eventData.type === 'decision'
+        && eventData.decision_kind !== 'final'
+        && eventData.tool_name
+    ) {
+        const stream = thinkingElements.decisionStreams.get(decisionStreamKey(eventData));
+        if (stream) {
+            stream.complete = true;
+            startPresentationStream(stream);
+            maybeCompletePresentationStream(stream);
+            return;
+        }
+    }
+    if (
+        !bypassDecisionGate
+        && (eventData.type === 'tool_call_start' || eventData.type === 'tool_call_result')
+    ) {
+        const stream = findDecisionStreamForTool(eventData, thinkingElements);
+        if (stream && !stream.completionNotified) {
+            stream.pendingEvents.push(eventData);
+            if (eventData.type === 'tool_call_result') {
+                // 异常/旧端点没有完整 decision 结束事件时，不能永久挂起工具结果。
+                stopPresentationStream(stream, { flush: true });
+            }
+            return;
+        }
+    }
     let text = eventData.summary || '';
-    if (eventData.type === 'tool_call_start') {
+    if (eventData.type === 'decision' && eventData.decision_kind === 'algorithm') {
+        text = `算法决策：${text}`;
+    } else if (eventData.type === 'decision' && eventData.decision_kind === 'evidence') {
+        text = `检索决策：${text}`;
+    } else if (eventData.type === 'decision' && eventData.decision_kind === 'final') {
+        text = `最终决策：${text}`;
+    } else if (eventData.type === 'tool_call_start') {
         const fields = (eventData.argument_keys || []).join('、');
         text = `调用工具：${eventData.tool_name}${fields ? `（参数字段：${fields}）` : ''}`;
     } else if (eventData.type === 'tool_call_result') {
@@ -1948,6 +2207,7 @@ function handleStepDetail(eventData, thinkingElements) {
 
 function handleNodeRetry(eventData, thinkingElements) {
     // 展示真实重试，并废弃失败生成实例对应的文字草稿。
+    cancelDraftRender(thinkingElements);
     const step = thinkingElements.steps.get(eventData.step_id);
     if (step) {
         step.item.className = 'step-item in-progress expanded';
@@ -1974,13 +2234,24 @@ function handleTextDelta(eventData, thinkingElements) {
     );
     if (duplicate) return;
     if (!thinkingElements.draftElement || thinkingElements.draftStreamId !== eventData.stream_id) {
+        cancelDraftRender(thinkingElements);
         thinkingElements.draftElement = addMessage('ai', { type: 'text', summary: ' ' });
         thinkingElements.draftElement.classList.add('streaming-draft');
         thinkingElements.draftStreamId = eventData.stream_id;
     }
-    const content = thinkingElements.draftElement.querySelector('.content');
-    if (content) content.innerHTML = marked.parse(buffer);
-    keepLatestChatContentVisible();
+    let stream = thinkingElements.presentationStreams.get(eventData.stream_id);
+    if (!stream) {
+        stream = createPresentationStream();
+        stream.render = value => {
+            if (!thinkingElements.draftElement?.isConnected) return;
+            const content = thinkingElements.draftElement.querySelector('.content');
+            if (content) content.innerHTML = marked.parse(value);
+            keepLatestChatContentVisible();
+        };
+        thinkingElements.presentationStreams.set(eventData.stream_id, stream);
+    }
+    stream.target = buffer;
+    startPresentationStream(stream);
 }
 
 /**
@@ -1989,6 +2260,8 @@ function handleTextDelta(eventData, thinkingElements) {
 function handleFinalResult(eventData, thinkingElements) {
     const { data } = eventData;
     stopThinkingDuration(thinkingElements);
+    flushDecisionStreams(thinkingElements);
+    stopPresentationStreams(thinkingElements);
     setTimelineStatus(thinkingElements, '');
     const dots = thinkingElements.bubble.querySelector('.thinking-dots');
     if (dots) dots.style.display = 'none';
@@ -1999,9 +2272,14 @@ function handleFinalResult(eventData, thinkingElements) {
     );
     if (canCorrectDraft) {
         thinkingElements.draftElement.classList.remove('streaming-draft');
+        cancelDraftRender(thinkingElements);
         const content = thinkingElements.draftElement.querySelector('.content');
         if (content) content.innerHTML = marked.parse(data.summary || '');
     } else {
+        cancelDraftRender(thinkingElements);
+        thinkingElements.draftElement?.remove();
+        thinkingElements.draftElement = null;
+        thinkingElements.draftStreamId = null;
         addMessage('ai', data);
     }
 }
@@ -2116,6 +2394,7 @@ async function handleNewChatRequest() {
             clearSelectedUserFile();
             setWaitingJob(null);
             chatArea.innerHTML = '';
+            resetChatAutoScroll();
             currentSessionId = data.new_session_id;
             console.log(`新会话已创建: ${currentSessionId}`);
             isNewSessionPendingDisplay = true; //  标记这个新会话等待用户输入后在UI显示
@@ -2543,6 +2822,7 @@ async function loadSession(sessionId) {
             clearSelectedUserFile();
             setWaitingJob(null);
             chatArea.innerHTML = '';
+            resetChatAutoScroll();
             messages.forEach(msg => {
                 addMessage(msg.sender, msg.text);
                 if (msg.thinking_after) renderThinkingPhase(msg.thinking_after);
@@ -2643,9 +2923,18 @@ function renderCausalGraph(containerId, graphData) {
         return;
     }
 
-    // 将 causal-learn 格式的节点和边转换为 vis.js 格式
-    const nodes = new vis.DataSet(graphData.nodes);
-    const edges = new vis.DataSet(graphData.edges);
+    // 将后端给出的节点和边转换为 vis.js 格式；vis.js 要求节点带 id、
+    // 边使用 from/to，格式不符时必须直接说明，否则容器会一直留空。
+    let nodes;
+    let edges;
+    try {
+        nodes = new vis.DataSet(graphData.nodes);
+        edges = new vis.DataSet(graphData.edges);
+    } catch (err) {
+        console.error("解析因果图数据失败:", err, graphData);
+        container.textContent = "因果图数据格式无法解析，暂时无法显示图形。";
+        return;
+    }
 
     const data = {
         nodes: nodes,

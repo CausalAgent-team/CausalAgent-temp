@@ -35,13 +35,27 @@
         return streamId ? state.streams.delete(streamId) : false;
     }
 
+    function advancePresentationText(visible, target, maxCharacters) {
+        // 假流式只推进展示游标，不改变已接收的完整缓冲区。
+        const targetCharacters = Array.from(target || '');
+        const visibleLength = Array.from(visible || '').length;
+        const step = Math.max(1, Number(maxCharacters) || 1);
+        return targetCharacters
+            .slice(0, Math.min(targetCharacters.length, visibleLength + step))
+            .join('');
+    }
+
+    function isNearBottom(scrollTop, clientHeight, scrollHeight, threshold = 80) {
+        const distance = Number(scrollHeight) - Number(scrollTop) - Number(clientHeight);
+        return distance <= Math.max(0, Number(threshold) || 0);
+    }
+
     function shouldCorrectDraft(hasDraft, result) {
-        // 普通文字终态校正草稿；报告和因果图仍走一次性渲染。
+        // 公开文字流的终态只校正已有草稿；因果图仍走一次性渲染。
         return Boolean(
             hasDraft
             && result
             && result.type === 'text'
-            && result.layout !== 'report'
         );
     }
 
@@ -50,6 +64,8 @@
         acceptEventId,
         appendTextDelta,
         discardStream,
+        advancePresentationText,
+        isNearBottom,
         shouldCorrectDraft,
     };
     globalScope.ChatStreamState = api;

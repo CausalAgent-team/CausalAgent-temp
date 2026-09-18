@@ -275,12 +275,12 @@ services:
     networks:
       - causalagent_replica_network
 
-  checkpoint-cleanup:
+  agent-persistence-cleanup:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: causalagent_checkpoint_cleanup
-    command: python -m Database.checkpoint_cleanup_worker
+    container_name: causalagent_agent_persistence_cleanup
+    command: python -m Database.agent_persistence_cleanup_worker
     environment:
       - MYSQL_HOST=mysql-primary
       - MYSQL_WRITE_HOST=mysql-primary
@@ -306,8 +306,8 @@ services:
       - CHECKPOINT_POSTGRES_CONNECT_TIMEOUT_SECONDS=${CHECKPOINT_POSTGRES_CONNECT_TIMEOUT_SECONDS:-5}
       - CHECKPOINT_POSTGRES_POOL_MIN_SIZE=1
       - CHECKPOINT_POSTGRES_POOL_MAX_SIZE=2
-      - CHECKPOINT_CLEANUP_POLL_INTERVAL_SECONDS=${CHECKPOINT_CLEANUP_POLL_INTERVAL_SECONDS:-1}
-      - CHECKPOINT_CLEANUP_LEASE_SECONDS=${CHECKPOINT_CLEANUP_LEASE_SECONDS:-300}
+      - AGENT_PERSISTENCE_CLEANUP_POLL_INTERVAL_SECONDS=${AGENT_PERSISTENCE_CLEANUP_POLL_INTERVAL_SECONDS:-1}
+      - AGENT_PERSISTENCE_CLEANUP_LEASE_SECONDS=${AGENT_PERSISTENCE_CLEANUP_LEASE_SECONDS:-300}
       - API_KEY=${API_KEY}
       - BASE_URL=${BASE_URL}
       - MODEL=${MODEL}
