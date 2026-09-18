@@ -11,7 +11,11 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
 from Agent.execution_control import JobExecutionRevoked
-from ..algorithm_executor import AlgorithmExecutorError, validate_executor_result
+from ..algorithm_executor import (
+    AlgorithmExecutionResponse,
+    AlgorithmExecutorError,
+    validate_executor_result,
+)
 from ..algorithm_specs import AlgorithmSpec
 from ..error_codes import SafeErrorCode
 from ..identity import build_invocation_id, build_result_ref
@@ -373,9 +377,16 @@ class BaseAlgorithmAdapter(ABC):
         try:
             active_executor = executor or self.executor
             active_raw_backend = raw_backend or self.raw_backend
-            result = await active_executor.execute(command, context)
-            raw_executor_payload = dict(result) if isinstance(result, Mapping) else None
+            execution_response = await active_executor.execute(command, context)
+            raw_executor_payload = None
+            if isinstance(execution_response, AlgorithmExecutionResponse):
+                result = execution_response.result
+                if execution_response.raw_payload is not None:
+                    raw_executor_payload = dict(execution_response.raw_payload)
+            else:
+                result = execution_response
             if isinstance(result, Mapping):
+                raw_executor_payload = dict(result)
                 result = result_from_runner_payload(
                     result,
                     command=command,
