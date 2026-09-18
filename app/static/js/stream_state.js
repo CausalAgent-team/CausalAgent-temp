@@ -45,6 +45,11 @@
             .join('');
     }
 
+    function isNearBottom(scrollTop, clientHeight, scrollHeight, threshold = 80) {
+        const distance = Number(scrollHeight) - Number(scrollTop) - Number(clientHeight);
+        return distance <= Math.max(0, Number(threshold) || 0);
+    }
+
     function shouldCorrectDraft(hasDraft, result) {
         // 公开文字流的终态只校正已有草稿；因果图仍走一次性渲染。
         return Boolean(
@@ -60,6 +65,7 @@
         appendTextDelta,
         discardStream,
         advancePresentationText,
+        isNearBottom,
         shouldCorrectDraft,
     };
     globalScope.ChatStreamState = api;

@@ -17,6 +17,18 @@ const backToSettingsButton = document.getElementById('backToSettingsButton'); //
 const csvUploaderInput = document.getElementById('csvUploader'); // 获取CSV上传器
 const uploadCsvButton = document.getElementById('uploadCsvButton'); // 获取上传按钮
 const chatArea = document.getElementById('chatArea');
+const CHAT_AUTO_SCROLL_THRESHOLD_PX = 80;
+let chatAutoScrollEnabled = true;
+if (chatArea) {
+    chatArea.addEventListener('scroll', () => {
+        chatAutoScrollEnabled = ChatStreamState.isNearBottom(
+            chatArea.scrollTop,
+            chatArea.clientHeight,
+            chatArea.scrollHeight,
+            CHAT_AUTO_SCROLL_THRESHOLD_PX,
+        );
+    }, { passive: true });
+}
 const mainContainer = document.getElementById('mainContainer');
 const inputArea = document.getElementById('inputArea');
 const newChatWelcome = document.getElementById('newChatWelcome');
@@ -699,6 +711,7 @@ async function handleLogout() {
             registerForm.style.display = 'none';
             closeUserInfoPopup(); // 关闭用户信息弹窗
             document.getElementById('chatArea').innerHTML = ''; // 清空聊天区域
+            resetChatAutoScroll();
             setChatLayoutState(ChatLayoutState.NEW_CHAT, { animate: false });
             historyList.innerHTML = ''; // 清空历史列表
             fileList.innerHTML = ''; //  清空文件列表 
@@ -1605,9 +1618,14 @@ function stopThinkingDuration(thinkingElements) {
 /**
  * 新增聊天内容时保持聊天区域停留在最新内容；展开或收起时间线不会调用此函数。
  */
+function resetChatAutoScroll() {
+    chatAutoScrollEnabled = true;
+}
+
 function keepLatestChatContentVisible() {
-    if (!chatArea) return;
+    if (!chatArea || !chatAutoScrollEnabled) return;
     chatArea.scrollTop = chatArea.scrollHeight;
+    chatAutoScrollEnabled = true;
 }
 
 /**
@@ -2243,6 +2261,7 @@ function handleFinalResult(eventData, thinkingElements) {
     const { data } = eventData;
     stopThinkingDuration(thinkingElements);
     flushDecisionStreams(thinkingElements);
+    stopPresentationStreams(thinkingElements);
     setTimelineStatus(thinkingElements, '');
     const dots = thinkingElements.bubble.querySelector('.thinking-dots');
     if (dots) dots.style.display = 'none';
@@ -2257,6 +2276,10 @@ function handleFinalResult(eventData, thinkingElements) {
         const content = thinkingElements.draftElement.querySelector('.content');
         if (content) content.innerHTML = marked.parse(data.summary || '');
     } else {
+        cancelDraftRender(thinkingElements);
+        thinkingElements.draftElement?.remove();
+        thinkingElements.draftElement = null;
+        thinkingElements.draftStreamId = null;
         addMessage('ai', data);
     }
 }
@@ -2371,6 +2394,7 @@ async function handleNewChatRequest() {
             clearSelectedUserFile();
             setWaitingJob(null);
             chatArea.innerHTML = '';
+            resetChatAutoScroll();
             currentSessionId = data.new_session_id;
             console.log(`新会话已创建: ${currentSessionId}`);
             isNewSessionPendingDisplay = true; //  标记这个新会话等待用户输入后在UI显示
@@ -2798,6 +2822,7 @@ async function loadSession(sessionId) {
             clearSelectedUserFile();
             setWaitingJob(null);
             chatArea.innerHTML = '';
+            resetChatAutoScroll();
             messages.forEach(msg => {
                 addMessage(msg.sender, msg.text);
                 if (msg.thinking_after) renderThinkingPhase(msg.thinking_after);
