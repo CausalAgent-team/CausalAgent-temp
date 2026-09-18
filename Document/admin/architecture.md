@@ -25,7 +25,7 @@ Vue router 的 base 固定为 `/admin/`，当前页面为：
 | `/admin/sessions` | 会话、消息和附件元数据 |
 | `/admin/jobs` | Job、MySQL 事件和 checkpoint 安全摘要 |
 | `/admin/files` | 文件逻辑记录、预览、下载和删除影响 |
-| `/admin/database` | 数据库、monitor、cleanup worker 和 outbox 看板 |
+| `/admin/database` | 数据库、monitor、Agent 持久化清理 worker 和两类 outbox 看板 |
 | `/admin/database/settings` | monitor 在线配置 |
 | `/admin/database/audit` | deep audit 结果 |
 
@@ -35,9 +35,9 @@ Vue router 的 base 固定为 `/admin/`，当前页面为：
 
 | 管理员功能 | 消费的系统能力 | 管理员侧边界 |
 | --- | --- | --- |
-| 数据库看板 | `database_monitor_snapshots`、monitor refresh 请求和 cleanup 心跳 | GET 只读最近快照，不在 Web 请求中运行完整采集 |
+| 数据库看板 | `database_monitor_snapshots`、monitor refresh 请求和清理 worker 心跳 | GET 只读最近快照，不在 Web 请求中运行完整采集 |
 | Job 详情 | MySQL `analysis_job_events` 与 PostgreSQL checkpoint 安全摘要 | 不返回 checkpoint 状态正文、blob 或 pending writes |
-| 用户/文件删除 | MySQL 业务事务和 `checkpoint_cleanup_outbox` | 业务删除先提交，跨库清理异步查询 |
+| 用户/文件删除 | MySQL 业务事务、`checkpoint_cleanup_outbox` 和 `user_memory_cleanup_outbox` | 业务删除先提交，跨库清理异步查询 |
 | 文件预览/下载 | `user_files`/`file_objects` 主库事务访问记录 | 有界读取并记录审计，不返回文件 hash 到列表 |
 | monitor 配置 | `database_monitor_settings` 的版本锁和来源解析 | 只提交覆盖值，`NULL` 表示继承 |
 

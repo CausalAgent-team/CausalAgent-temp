@@ -6,12 +6,14 @@ import asyncio
 from typing import Any, AsyncIterator
 
 from langchain_core.messages import HumanMessage
+from langgraph.errors import NodeCancelledError
 from langgraph.types import Command
 
 from app.agent.checkpoint_recovery import checkpoint_identity
 from app.chat.services import get_job_chat_history
 from app.agent.worker.event_adapter import (
     LangGraphEventAdapter,
+    classify_graph_failure,
     sanitize_public_error,
 )
 from app.agent.worker.execution_guard import JobExecutionGuard, JobExecutionRevoked
@@ -30,6 +32,16 @@ def _snapshot_interrupts(snapshot: Any) -> list[Any]:
         for task in (getattr(snapshot, "tasks", None) or ())
         for item in (getattr(task, "interrupts", None) or ())
     ]
+
+
+def _raise_wrapped_cancellation(error: BaseException) -> None:
+    """Restore worker control-flow semantics after LangGraph wraps node errors."""
+
+    cause = getattr(error, "error", None) or error.__cause__
+    if isinstance(error, NodeCancelledError) and isinstance(
+        cause, (asyncio.CancelledError, JobExecutionRevoked)
+    ):
+        raise cause
 
 
 def _interrupt_id(interrupt_obj: Any) -> str:
@@ -161,6 +173,7 @@ async def ai_call_stream(
     initial_input_record: dict[str, Any] | None = None,
     execution_guard: JobExecutionGuard | None = None,
     web_search_enabled: bool = False,
+    agent_runtime_context: AgentRunContext | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """在显式传入的 graph 上执行一次调用并产出公开事件。"""
     if graph is None:
@@ -235,7 +248,7 @@ async def ai_call_stream(
         "subgraphs": True,
         "version": "v2",
     }
-    stream_kwargs["context"] = AgentRunContext(
+    stream_kwargs["context"] = agent_runtime_context or AgentRunContext(
         execution_guard=execution_guard,
         web_search_enabled=web_search_enabled,
     )
@@ -296,10 +309,14 @@ async def ai_call_stream(
     except JobExecutionRevoked:
         raise
     except Exception as exc:
+        _raise_wrapped_cancellation(exc)
         if execution_guard is not None:
             await execution_guard.check_after_call()
+        # 公开事件只保留脱敏文案；真实异常通过下划线前缀的内部字段传给
+        # OrderedEventWriter，后者只把 message 落库，诊断只用于 worker 日志。
         yield {
             "type": "error",
             "message": sanitize_public_error(exc),
             "attempt": job_attempt,
+            "_diagnostic": classify_graph_failure(exc),
         }

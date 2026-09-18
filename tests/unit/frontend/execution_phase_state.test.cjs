@@ -6,6 +6,7 @@ const phaseState = require('../../../app/static/js/execution_phase_state.js');
 test('history replay accepts node events but rejects message side effects', () => {
     assert.equal(phaseState.isHistoryEvent('node_start'), true);
     assert.equal(phaseState.isHistoryEvent('tool_call_result'), true);
+    assert.equal(phaseState.isHistoryEvent('decision_delta'), false);
     assert.equal(phaseState.isHistoryEvent('text_delta'), false);
     assert.equal(phaseState.isHistoryEvent('final_result'), false);
     assert.equal(phaseState.isHistoryEvent('interrupt'), false);
@@ -27,4 +28,16 @@ test('active API metadata cannot advance the rendered event cursor', () => {
     assert.equal(merged.status, 'running');
     assert.equal(merged.last_event_id, 12);
     assert.equal(merged.rendered_event_id, 12);
+});
+
+test('step details that arrive before their parent are deferred and replayed once', () => {
+    const pending = new Map();
+    const event = { type: 'decision', step_id: 'deep-step', summary: '选择 PC' };
+
+    assert.equal(phaseState.deferStepEvent(pending, event, { historyMode: true }), true);
+    assert.deepEqual(phaseState.takeDeferredStepEvents(pending, 'deep-step'), [{
+        eventData: event,
+        renderOptions: { historyMode: true },
+    }]);
+    assert.deepEqual(phaseState.takeDeferredStepEvents(pending, 'deep-step'), []);
 });

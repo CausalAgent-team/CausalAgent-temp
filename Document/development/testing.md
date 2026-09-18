@@ -83,7 +83,7 @@ Vue dist 缺失需验证稳定的 503、`chat_frontend_missing` 和 request ID�
 
 RAG State 隔离和异常分流的单元测试位于 `tests/unit/agent/test_rag_subgraph_state.py`，覆盖 Planner 预检跳过 ToolNode、查询失败与协议错误标记、`success=False` Parser 路径、父 State 投影和取消/撤销传播。该测试使用 fake LLM、fake RAG tool 和导入桩，不覆盖真实模型、真实 MCP session、真实知识库向量检索或 PostgreSQL checkpoint。
 
-测试镜像基于 Dockerfile 的 `test` target，安装 `requirements-test.txt`。`unit-test` 服务不依赖 app/worker/monitor/MySQL，关闭容器网络，只读挂载仓库，并通过 Compose `env_file` 注入 `tests/unit-test-env`；这些已注入环境变量优先于项目 `.env`：
+测试镜像基于 Dockerfile 的 `test` target：Python 3.11 Linux 运行依赖从 `tests/smoke/requirements-deep-agent-py311-linux.lock` 以 `--require-hashes` 安装，随后再安装 `requirements-test.txt`。`unit-test` 服务不依赖 app/worker/monitor/MySQL，关闭容器网络，只读挂载仓库，并通过 Compose `env_file` 注入 `tests/unit-test-env`；这些已注入环境变量优先于项目 `.env`：
 
 ```bash
 docker compose -f docker-compose.test.yml build unit-test
@@ -96,6 +96,59 @@ docker compose -f docker-compose.test.yml run --rm unit-test
 docker compose -f docker-compose.test.yml run --rm unit-test python -m pytest -p no:cacheprovider tests/unit/admin
 docker compose -f docker-compose.test.yml run --rm unit-test python -m pytest -p no:cacheprovider tests/unit/agent/test_job_lifecycle.py
 ```
+
+## Deep Agent 定向验证
+
+Deep Agent 新路径的定向测试覆盖静态 Algorithm Registry 与 `ToolNode` 依赖调度、父图
+`deep_agent → finalization_gate → report` 拓扑、父子 State 白名单投影、三类
+Finalization outcome/degraded 合同、RAG evidence 延迟初始化、可信 Web 开关、worker
+进程级 runtime 复用和公共事件/SSE 字段脱敏：
+
+```powershell
+docker compose -f docker-compose.test.yml run --rm --no-deps unit-test python -m pytest -p no:cacheprovider `
+  tests/unit/agent/test_dependency_dispatch.py `
+  tests/unit/agent/test_deep_agent_parent_graph.py `
+  tests/unit/agent/test_final_analysis_decision.py `
+  tests/unit/agent/test_runtime_tool_state_updates.py `
+  tests/unit/agent/test_stream_events.py `
+  tests/unit/agent/test_worker_runtime.py `
+  tests/integration/agent/test_deep_agent_graph_runtime.py
+```
+
+真实 Deep Agents 依赖下的 integration 证明 `CompiledStateGraph` 构造及当前默认
+PC/DirectLiNGAM tool 接线，不调用真实 DeepSeek；dependency middleware 的调度测试使用真实
+LangChain `ToolNode` 和 fake executor，不能替代真实 MCP HTTP、PostgreSQL Store、
+RAG/SearXNG 或完整 MySQL Job 验收。通过数量由实际 pytest 输出记录，不在长期文档中固化。
+
+公开决策和刷新恢复的定向覆盖还包括：Tool envelope 剥离 `public_decision` 后执行器只接收科学参数；RAG/Web 检索器入参不含该字段且公开工具名进入事件；无效公开说明不阻断工具；Gate 后内部结果引用映射为公开算法名；`decision/tool_call` 事件经会话历史白名单回放；前端对先于父阶段到达的明细执行一次性暂存和补绘，并对实时决策做渐进展示、对同阶段并行决策串行展示、对历史回放和 `prefers-reduced-motion` 直接展示完整文本。并行 RAG/Web ToolNode 回归还必须覆盖同一查询内排名 reference、跨查询重叠来源和 ToolMessage/State reference 一致性。浏览器缓存通过聊天页脚本与样式版本参数失效。
+
+终态引用契约的定向覆盖还必须包含：把 RAG/Web 证据引用写入 `result_assessments` 时 Gate 以 `assessment_ref_unknown_result` 拒绝，只修该处后继续以 `proposal_evidence_ref_unknown` 拒绝，两处都修正后才通过；失败规则被翻译成脱敏修正指令并进入重试输入；身份/账本类失败不带规则码且保持通用指令；Gate 拒绝、降级与第二次 Deep Agent 修正各自发布稳定 `event_key` 的 `progress` 阶段说明，并由事件适配器绑定到对应阶段的活跃实例；未登记节点名或空文本不被外带。这几项由 `tests/unit/agent/test_final_analysis_decision.py`、`tests/unit/agent/test_deep_agent_parent_graph.py` 和 `tests/unit/agent/test_stream_events.py` 覆盖，结构化字段描述变更必须同步 `tests/unit/agent/snapshots/` 两个快照。
+
+全量 `tests/unit` 与 `tests/integration` 应在交付前重新执行，并以本次命令输出报告
+passed/skipped/failed；历史通过数量不能代替当前工作树证据。日志序列化兜底事件本身也不能
+作为生产观测链路已验收的证据。
+
+## causal-mcp 纵向验证
+
+`causal-mcp` 的代码级验证覆盖固定 capability/spec digest、Bearer/HMAC 时窗与命令绑定、结果规范化、进程池容量/迟到结果、N×K 客户端池、owner task 清理和 `AlgorithmExecutor` 结构化结果。使用仓库测试镜像执行：
+
+```bash
+docker compose -f docker-compose.test.yml run --rm unit-test python -m pytest -p no:cacheprovider tests/unit/agent/test_mcp_v2_contract.py
+docker compose -f docker-compose.test.yml run --rm unit-test python tests/spike/p2_mcp_v2.py
+docker pull mysql:8.0
+docker run --rm --cpus=2 --memory=2g -v "${PWD}/tests:/tests:ro" causalagent-demopaper-causal-mcp:latest python /tests/acceptance/p2_mcp/run_acceptance.py
+.\tests\acceptance\p2_mcp\scan_container_logs.ps1 -ContainerName causal-mcp
+```
+
+第二条 smoke 使用真实 MCP 2.2 Streamable HTTP/HTTP/1.1、真实 client pool 和 fake authority reader，证明协议/结构化 envelope/生命周期；第三条在实际 `causal-mcp` 镜像和 `2 CPU/2 GiB` 容器约束下运行 PC、OLC、DirectLiNGAM fixture、容量窗口、deadline、RSS/CPU、A/B pool，以及使用合成慢 runner 的真实 HTTP `cancel_algorithm`、目标进程终止和重复取消幂等。镜像固定 CDMIR commit 与 CPU Torch，构建后必须通过 `pip check`。MySQL authority 另用一次性 `mysql:8.0` 容器与 `tests/acceptance/p2_mcp/mysql_strong_read.py` 验证有效 lease/旧 lease拒绝；真实容器算法调用后的 Docker logs 使用合成值做零命中扫描。生产数据规模、完整 migration Compose 和正式资源基准仍需单独验收。
+
+fake executor 的 State/checkpoint 前置验证：
+
+```bash
+docker compose -f docker-compose.test.yml run --rm unit-test python -m pytest -p no:cacheprovider tests/unit/agent/test_deep_agent_fake_executor.py
+```
+
+该测试只证明官方 `DeepAgentState` 扩展、runtime context 不进入 State、显式 parent/deep projection、fake executor 结果/ledger 和 checkpointer 单步恢复；不证明真实 Deep Agent、Memory、RAG/Web、Finalization 或 worker 集成。
 
 ## RAG、多模态与隔离评测
 
@@ -123,13 +176,19 @@ production 层不会摄取资料、调用外部 VLM/模型、运行完整评测�
 
 ## 迁移链验证
 
-空库升级和 migration graph 检查必须确认唯一 head 为 `s4d5e6f7a8b9`：
+空库升级和 migration graph 检查必须确认唯一 head 为 `u7a8b9c0d1e2`：
 
 ```bash
 python -m alembic heads
 ```
 
 迁移 downgrade/upgrade 仅在隔离数据库执行，并指定明确 revision；不能用 `alembic downgrade -1` 代替合并迁移的回退验证。
+
+生产/预发 Compose 的 `:?` 必需变量应在无凭据占位的临时环境中验证“缺失即 fail closed”，
+再使用合成占位值检查静态展开；不要把占位配置当成可部署或真实服务通过。`AsyncPostgresStore.setup()`
+属于 PostgreSQL 官方 Store schema 初始化，必须与 checkpointer schema/readiness 分开验证；
+checkpoint 清理不得触碰 `store`/`store_migrations` 表，用户长期记忆只由
+`user_memory_cleanup_outbox` 通过官方 Store API 删除。
 
 ## SearXNG 部署验证
 
@@ -154,6 +213,14 @@ powershell -ExecutionPolicy Bypass -File tests/run_searxng_docker_validation.ps1
 ## 日志与可观测性验证
 
 日志第二阶段的重点回归位于 `tests/unit/test_event_catalog.py`、`tests/unit/test_request_context_contract.py`、`tests/unit/agent/` 和 `tests/integration/test_logging_policy.py`。它们覆盖事件目录和固定消息、请求/线程/异步任务/worker slot 上下文隔离、Job 终态、node 最终降级、RAG 计数日志、MCP 可信参数及 stdout/stderr、数据库/monitor/cleanup 转移，以及运行路径普通 logging 调用和敏感详情键的 AST 政策。
+
+MCP 日志、60 秒慢调用、Job/invocation 关联、控制面取消、目标进程终止和 sibling 隔离集中由 `tests/unit/agent/test_mcp_v2_contract.py`、`tests/unit/agent/test_execution_guard.py`、`tests/unit/test_event_catalog.py` 与 `tests/integration/test_observability_compose.py` 覆盖。可先运行定向回归：
+
+```bash
+docker compose -f docker-compose.test.yml run --rm unit-test python -m pytest -p no:cacheprovider tests/unit/agent/test_mcp_v2_contract.py tests/unit/agent/test_execution_guard.py tests/unit/test_event_catalog.py tests/integration/test_observability_compose.py
+```
+
+其中 ProcessPool 测试只证明合成 runner 的 invocation 级终止和并行隔离，不代表 OLC 的生产数据性能；完整 Job 取消仍需真实 worker、MySQL heartbeat、HTTP MCP 和算法容器联调。
 
 日志改造必须运行完整 `unit-test` 服务，不能只运行新增文件。测试通过只证明代码级合同，不证明 Docker 日志驱动、Alloy、Loki、Grafana、positions、查询标签或真实模型/MCP 链路。
 
@@ -203,5 +270,7 @@ docker compose -f docker-compose.yml ps
 随后验证五类 service 唯一事件、Alloy/Loki 重启和 positions 续读、暂停 Loki 时业务日志不阻塞、高基数字段不成为标签，以及 30 分钟代表性负载的行数、字节数、stream 数和事件排行。第二阶段还要逐项执行 Web 500、Job/node/RAG/MCP/monitor/副本/cleanup 故障矩阵，通过 request ID 和 job ID 检索完整关联链，检查并发无串值、正常流零 `WARNING/ERROR`，并用合成秘密、连接 URL、提示词、LLM 输出、CSV、SQL 参数和异常敏感文本做 stderr、Docker log 与 Loki 零命中抽样。
 
 真实模型或知识库凭据不可用时，必须明确写为“未取得真实模型证据”，不能用 fake unit 测试替代。Docker daemon、Alloy validate、positions、上下文隔离、MCP stdout/可信参数或隐私检查任一失败时，不得标记第二阶段完成。
+
+MCP execute/control lane 改造的定向回归还应覆盖 `tests/unit/agent/test_mcp_v2_contract.py`、`tests/unit/agent/test_worker_runtime.py`、`tests/unit/test_event_catalog.py`、`tests/integration/deployment/test_mcp_compose.py` 和 `tests/integration/test_observability_compose.py`。真实 HTTP 验收使用 `tests/acceptance/p2_mcp/run_acceptance.py`，其中普通 execute 槽饱和时取消必须从独立 control lane 发出，并包含两个取消同时到达、同一 control 成员 `max_in_flight=2` 的场景。控制容量、响应、传输和协议异常分别记录为 `control_capacity_timeout`、`response_timeout`、`transport_error` 和 `invalid_response`；`unknown` 不能被解释为远端一定未取消。
 
 所有文档变更还必须检查相对链接、顶部职责声明、失效路径和旧 acceptance 入口引用，以及 `git diff --check`；如果任务涉及根 README 的入口或部署说明，还必须核对 README 中的命令、链接和目录导航。只有用户明确要求时才修改根 README；完整验收通过前不追加完成态 CHANGELOG。

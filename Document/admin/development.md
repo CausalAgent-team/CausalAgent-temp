@@ -37,7 +37,7 @@ docker compose -f docker-compose.yml run --rm app python -m app.auth.admin_cli p
 
 ## 系统服务依赖
 
-管理员后台依赖数据库 bootstrap、PostgreSQL checkpoint、monitor 和 cleanup worker。迁移前请在 `.env` 设置非空的 `CHECKPOINT_POSTGRES_PASSWORD`；完整初始化顺序和破坏性迁移规则见 [`../database/migrations-checkpoints.md`](../database/migrations-checkpoints.md)。常用入口为：
+管理员后台依赖数据库 bootstrap、PostgreSQL checkpoint 与 Store、monitor 和 Agent 持久化清理 worker。迁移前请在 `.env` 设置非空的 `CHECKPOINT_POSTGRES_PASSWORD`；完整初始化顺序和破坏性迁移规则见 [`../database/migrations-checkpoints.md`](../database/migrations-checkpoints.md)。常用入口为：
 
 ```bash
 docker compose -f docker-compose.yml run --rm db-bootstrap
@@ -46,10 +46,10 @@ docker compose -f docker-compose.yml run --rm db-bootstrap
 python -m Database.bootstrap
 ```
 
-数据库初始化统一由 `db-bootstrap` 完成，`checkpoint-cleanup` 是持续运行的跨库清理 worker：
+数据库初始化统一由 `db-bootstrap` 完成，`agent-persistence-cleanup` 是持续运行、消费两张 outbox 的跨库清理 worker：
 
 ```bash
-python -m Database.checkpoint_cleanup_worker
+python -m Database.agent_persistence_cleanup_worker
 ```
 
 ## 启动 monitor

@@ -42,7 +42,7 @@ docker compose -f docker-compose.prod.yml config --quiet
 
 ## Docker 单元测试环境（推荐）
 
-`docker-compose.test.yml` 提供独立的 `unit-test` 服务。Dockerfile 的 `test` 目标在共享 Python 项目依赖上安装 `requirements-test.txt`，不会把 `pytest` 临时安装到正在运行的应用容器。
+`docker-compose.test.yml` 提供独立的 `unit-test` 服务。Dockerfile 的 `test` 目标先从 `tests/smoke/requirements-deep-agent-py311-linux.lock` 安装 Python 3.11 Linux hash-pinned 项目依赖，再安装 `requirements-test.txt`，不会把 `pytest` 临时安装到正在运行的应用容器。
 
 该服务有以下边界：
 

@@ -5,9 +5,9 @@ from flask import Blueprint, request, jsonify
 from app.auth.session_guard import get_current_session_user
 import logging
 import json
-from app.chat.response_storage import render_summary_for_display
+from app.chat.response_storage import project_causal_graph, render_summary_for_display
 from app.chat.execution_phases import assemble_execution_phases
-from app.agent.checkpoint_cleanup import enqueue_checkpoint_cleanup_many
+from app.agent.persistence_cleanup import enqueue_checkpoint_cleanup_many
 from app.db import record_database_failure
 from app.request_context import (
     bind_request_log_context,
@@ -257,6 +257,15 @@ def load_session_content():
 
                     if causal_graph_data:
                         message_content = causal_graph_data
+
+                        # 早期版本把 Agent 内部图格式写进了附件，读取历史会话时
+                        # 同样投影成前端可渲染的 vis-network 载荷。
+                        if isinstance(message_content, dict):
+                            projected_graph = project_causal_graph(
+                                message_content.get("data")
+                            )
+                            if projected_graph is not None:
+                                message_content["data"] = projected_graph
 
                         if visualization_mapping and "summary" in message_content:
                             message_content["summary"] = render_summary_for_display(

@@ -18,19 +18,9 @@ RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.l
     libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
-# 先安装基础依赖（很少变化）
-COPY requirements-base.txt .
-RUN pip install --no-cache-dir -r requirements-base.txt
-
-# 先安装 CPU 版 PyTorch，避免从 PyPI 拉取包含 CUDA 组件的超大 wheel
-RUN pip install --no-cache-dir \
-    --index-url https://download.pytorch.org/whl/cpu \
-    torch==2.7.1+cpu \
-    torchvision==0.22.1+cpu
-
-# 再安装所有依赖
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# 依赖锁与镜像平台/解释器固定一致；CPU Torch 的 index 和 hash 也由锁文件控制。
+COPY tests/smoke/requirements-deep-agent-py311-linux.lock /tmp/requirements.lock
+RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements.lock
 
 
 FROM python-deps AS test

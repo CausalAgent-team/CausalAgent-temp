@@ -1279,6 +1279,16 @@ def _causal_method_context_for_report(analysis_result: Dict[str, Any]) -> str:
     )
 
 
+def _report_language_instruction() -> str:
+    """返回报告语言优先级，交由模型按用户请求决定具体语言。"""
+
+    return (
+        "报告输出语言规则（按优先级）：用户明确指定报告语言时，严格使用该语言；"
+        "未指定时，使用用户当前请求的主要语言；无法判断时默认使用中文。"
+        "不要因为系统提示、知识库、工具结果或变量名的语言改变报告语言。"
+    )
+
+
 async def report_node(state: CausalAgentState, llm: ChatOpenAI) -> dict:
     """
     报告模块：
@@ -1289,7 +1299,7 @@ async def report_node(state: CausalAgentState, llm: ChatOpenAI) -> dict:
     system_prompt_template = (
         """
          system role: {system_role}
-         #输出语言：**请用英文回复**
+         #输出语言：{report_language}
          
          你的任务是根据用户的对话历史和当前状态，按照要求的报告格式生成一份综合的，完整的因果领域报告
          # 当前状态摘要
@@ -1374,6 +1384,7 @@ async def report_node(state: CausalAgentState, llm: ChatOpenAI) -> dict:
         "method_context": _causal_method_context_for_report(
             state.get("causal_analysis_result", {})
         ),
+        "report_language": _report_language_instruction(),
         "system_role": causal_report_prompt()
     })
 

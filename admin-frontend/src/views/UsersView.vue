@@ -46,13 +46,13 @@ const deleteConfirmation = ref('')
 const deleteReauthPassword = ref('')
 const deleteIdempotencyKey = ref('')
 const deleteError = ref('')
-const checkpointCleanupResult = ref<AdminOperationResult | null>(null)
-const CHECKPOINT_CLEANUP_STORAGE_KEY = 'causalagent.admin.last-checkpoint-cleanup'
+const persistenceCleanupResult = ref<AdminOperationResult | null>(null)
+const PERSISTENCE_CLEANUP_STORAGE_KEY = 'causalagent.admin.last-persistence-cleanup'
 
 /** 尝试保留最近一次删除进度；浏览器禁用存储时不影响已提交的删除。 */
-function persistCheckpointCleanupResult(result: AdminOperationResult): void {
+function persistPersistenceCleanupResult(result: AdminOperationResult): void {
   try {
-    window.sessionStorage.setItem(CHECKPOINT_CLEANUP_STORAGE_KEY, JSON.stringify(result))
+    window.sessionStorage.setItem(PERSISTENCE_CLEANUP_STORAGE_KEY, JSON.stringify(result))
   } catch {
     // 页面内状态仍然可见，存储不可用不应覆盖成功结果。
   }
@@ -127,31 +127,34 @@ function newIdempotencyKey(): string {
 }
 
 /** 轮询跨库 cleanup 操作，避免把 MySQL 已完成误报成 PostgreSQL 已完成。 */
-async function waitForCheckpointCleanup(operationId: string): Promise<void> {
+async function waitForPersistenceCleanup(operationId: string): Promise<void> {
   for (let attempt = 0; attempt < 30; attempt += 1) {
     await new Promise(resolve => window.setTimeout(resolve, 1000))
     try {
       const operation = await adminApi.operation(operationId)
-      checkpointCleanupResult.value = operation
-      persistCheckpointCleanupResult(operation)
+      persistenceCleanupResult.value = operation
+      persistPersistenceCleanupResult(operation)
       if (operation.status === 'succeeded') {
-        ElMessage.success('用户删除及 checkpoint 清理已完成')
+        ElMessage.success('用户删除及 PostgreSQL 持久化数据清理已完成')
         return
       }
       if (operation.status === 'failed') {
-        ElMessage.error('用户业务数据已删除，但 checkpoint 清理失败，请查看操作状态')
+        ElMessage.error('用户业务数据已删除，但 PostgreSQL 清理失败，请查看操作状态')
         return
       }
     } catch {
       // 短暂读取失败不改变已提交的删除结果，下一轮继续查询。
     }
   }
-  ElMessage.warning('用户业务数据已删除，checkpoint 仍在后台清理')
+  ElMessage.warning('用户业务数据已删除，PostgreSQL 持久化数据仍在后台清理')
 }
 
 /** 把 cleanup 聚合状态转换成不含内部异常的管理员文案。 */
-function checkpointCleanupStatusLabel(result: AdminOperationResult | null): string {
-  const status = result?.checkpoint_cleanup?.status || result?.status
+function persistenceCleanupStatusLabel(
+  result: AdminOperationResult | null,
+  task: 'checkpoint_cleanup' | 'user_memory_cleanup',
+): string {
+  const status = result?.[task]?.status || result?.status
   if (status === 'succeeded') return '成功'
   if (status === 'failed') return '失败'
   if (status === 'running' || status === 'pending') return '清理中'
@@ -276,11 +279,11 @@ async function submitDelete(): Promise<void> {
       },
       deleteIdempotencyKey.value,
     )
-    checkpointCleanupResult.value = result
-    persistCheckpointCleanupResult(result)
+    persistenceCleanupResult.value = result
+    persistPersistenceCleanupResult(result)
     if (result.status === 'running') {
-      ElMessage.info('用户业务数据已删除，checkpoint 正在后台清理')
-      void waitForCheckpointCleanup(result.operation_id)
+      ElMessage.info('用户业务数据已删除，PostgreSQL 持久化数据正在后台清理')
+      void waitForPersistenceCleanup(result.operation_id)
     } else {
       ElMessage.success(`用户已删除${result.replayed ? '（幂等重放）' : ''}`)
     }
@@ -302,16 +305,16 @@ async function submitDelete(): Promise<void> {
 onMounted(() => {
   let stored: string | null = null
   try {
-    stored = window.sessionStorage.getItem(CHECKPOINT_CLEANUP_STORAGE_KEY)
+    stored = window.sessionStorage.getItem(PERSISTENCE_CLEANUP_STORAGE_KEY)
   } catch {
     stored = null
   }
   if (stored) {
     try {
-      checkpointCleanupResult.value = JSON.parse(stored) as AdminOperationResult
+      persistenceCleanupResult.value = JSON.parse(stored) as AdminOperationResult
     } catch {
       try {
-        window.sessionStorage.removeItem(CHECKPOINT_CLEANUP_STORAGE_KEY)
+        window.sessionStorage.removeItem(PERSISTENCE_CLEANUP_STORAGE_KEY)
       } catch {
         // 忽略不可用的浏览器存储。
       }
@@ -344,31 +347,36 @@ onMounted(() => {
 
     <el-alert v-if="error" class="page-notice" type="error" :closable="false" :title="error" />
 
-    <section v-if="checkpointCleanupResult" class="panel checkpoint-cleanup-result">
+    <section v-if="persistenceCleanupResult" class="panel persistence-cleanup-result">
       <div class="panel-header">
         <div>
-          <h2>Checkpoint 清理进度</h2>
-          <p>用户业务数据已删除；PostgreSQL checkpoint 由后台 worker 异步清理。</p>
+          <h2>PostgreSQL 持久化数据清理进度</h2>
+          <p>用户业务数据已删除；父子图 checkpoint 和长期记忆 Store 由后台 worker 异步清理。</p>
         </div>
         <el-tag
-          :type="checkpointCleanupStatusLabel(checkpointCleanupResult) === '成功' ? 'success' : checkpointCleanupStatusLabel(checkpointCleanupResult) === '失败' ? 'danger' : 'warning'"
+          :type="persistenceCleanupStatusLabel(persistenceCleanupResult, 'checkpoint_cleanup') === '成功'
+            && persistenceCleanupStatusLabel(persistenceCleanupResult, 'user_memory_cleanup') === '成功' ? 'success'
+            : persistenceCleanupStatusLabel(persistenceCleanupResult, 'checkpoint_cleanup') === '失败'
+              || persistenceCleanupStatusLabel(persistenceCleanupResult, 'user_memory_cleanup') === '失败' ? 'danger'
+              : 'warning'"
           round
         >
-          {{ checkpointCleanupStatusLabel(checkpointCleanupResult) }}
+          {{ persistenceCleanupResult.status === 'succeeded' ? '成功' : persistenceCleanupResult.status === 'failed' ? '失败' : '清理中' }}
         </el-tag>
       </div>
       <div class="inline-metrics four-columns">
         <div><span>MySQL 用户数据</span><strong>已删除</strong></div>
-        <div><span>PostgreSQL checkpoint</span><strong>{{ checkpointCleanupStatusLabel(checkpointCleanupResult) }}</strong></div>
-        <div><span>总任务数</span><strong>{{ checkpointCleanupResult.checkpoint_cleanup?.total ?? 0 }}</strong></div>
-        <div><span>成功数</span><strong>{{ checkpointCleanupResult.checkpoint_cleanup?.succeeded ?? 0 }}</strong></div>
-        <div><span>失败数</span><strong>{{ checkpointCleanupResult.checkpoint_cleanup?.failed ?? 0 }}</strong></div>
-        <div><span>待处理数</span><strong>{{ checkpointCleanupResult.checkpoint_cleanup?.pending ?? 0 }}</strong></div>
-        <div><span>Operation ID</span><strong class="break-anywhere">{{ checkpointCleanupResult.operation_id }}</strong></div>
+        <div><span>父子图 checkpoint</span><strong>{{ persistenceCleanupStatusLabel(persistenceCleanupResult, 'checkpoint_cleanup') }}</strong></div>
+        <div><span>长期记忆 Store</span><strong>{{ persistenceCleanupStatusLabel(persistenceCleanupResult, 'user_memory_cleanup') }}</strong></div>
+        <div><span>Checkpoint 任务（成功/总数）</span><strong>{{ persistenceCleanupResult.checkpoint_cleanup?.succeeded ?? 0 }} / {{ persistenceCleanupResult.checkpoint_cleanup?.total ?? 0 }}</strong></div>
+        <div><span>记忆清理任务（成功/总数）</span><strong>{{ persistenceCleanupResult.user_memory_cleanup?.succeeded ?? 0 }} / {{ persistenceCleanupResult.user_memory_cleanup?.total ?? 0 }}</strong></div>
+        <div><span>失败任务数</span><strong>{{ (persistenceCleanupResult.checkpoint_cleanup?.failed ?? 0) + (persistenceCleanupResult.user_memory_cleanup?.failed ?? 0) }}</strong></div>
+        <div><span>待处理任务数</span><strong>{{ (persistenceCleanupResult.checkpoint_cleanup?.pending ?? 0) + (persistenceCleanupResult.user_memory_cleanup?.pending ?? 0) }}</strong></div>
+        <div><span>Operation ID</span><strong class="break-anywhere">{{ persistenceCleanupResult.operation_id }}</strong></div>
       </div>
       <router-link
-        class="checkpoint-cleanup-link"
-        :to="{ path: '/database', query: { view: 'outbox', operation_id: checkpointCleanupResult.operation_id } }"
+        class="persistence-cleanup-link"
+        :to="{ path: '/database', query: { view: 'outbox', operation_id: persistenceCleanupResult.operation_id } }"
       >
         查看全局清理状态
       </router-link>

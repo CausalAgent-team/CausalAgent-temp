@@ -8,7 +8,7 @@ from typing import Any
 from langchain_core.messages import AIMessage
 
 from Agent.causal_agent.web_search_node import WEB_SEARCH_MAX_RESULTS
-from app.chat.response_storage import render_summary_for_display
+from app.chat.response_storage import project_causal_graph, render_summary_for_display
 from observability.logging_runtime import log_context, log_event
 
 
@@ -40,6 +40,9 @@ def process_final_result(final_state_data: dict[str, Any]) -> dict[str, Any]:
                     "summary": final_state_data["final_report"],
                     "layout": "report",
                 }
+                finalization_status = final_state_data.get("finalization_status")
+                if finalization_status in {"valid", "degraded"}:
+                    result["finalization_status"] = finalization_status
                 analysis_data = final_state_data.get("causal_analysis_result")
                 if isinstance(analysis_data, dict) and analysis_data.get("success"):
                     original_graph = analysis_data.get("data")
@@ -52,8 +55,14 @@ def process_final_result(final_state_data: dict[str, Any]) -> dict[str, Any]:
                         and not postprocess_result.get("error")
                     )
                     result["type"] = "causal_graph"
-                    result["data"] = (
+                    selected_graph = (
                         revised_graph if has_valid_revised_graph else original_graph
+                    )
+                    # 前端只渲染 vis-network 载荷，公开发出的图必须在
+                    # 展示层完成投影，不能把 StandardizedGraph 直接交给浏览器。
+                    projected_graph = project_causal_graph(selected_graph)
+                    result["data"] = (
+                        projected_graph if projected_graph is not None else selected_graph
                     )
                     result["graph_source"] = (
                         "postprocessed" if has_valid_revised_graph else "original"
@@ -79,6 +88,9 @@ def process_final_result(final_state_data: dict[str, Any]) -> dict[str, Any]:
     final_report = final_state_data.get("final_report")
     if final_report:
         result = {"type": "text", "summary": final_report, "layout": "report"}
+        finalization_status = final_state_data.get("finalization_status")
+        if finalization_status in {"valid", "degraded"}:
+            result["finalization_status"] = finalization_status
         references = _extract_references(final_state_data.get("web_search_result"))
         if references:
             result["references"] = references

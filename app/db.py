@@ -19,7 +19,7 @@ import mysql.connector
 from mysql.connector import errorcode, pooling
 from mysql.connector.errors import PoolError
 
-from config.settings import settings
+from config.database_settings import database_settings
 from observability.logging_runtime import log_event
 from observability.noise_control import FailureTransitionTracker, RepeatEventLimiter
 
@@ -77,20 +77,20 @@ def _sql_identity(sql: str) -> tuple[str, str]:
 def _base_connection_config(host: str) -> dict[str, Any]:
     return {
         "host": host,
-        "port": settings.MYSQL_PORT,
+        "port": database_settings.MYSQL_PORT,
         "charset": "utf8mb4",
         "use_unicode": True,
-        "connection_timeout": settings.MYSQL_CONNECT_TIMEOUT_SECONDS,
+        "connection_timeout": database_settings.MYSQL_CONNECT_TIMEOUT_SECONDS,
     }
 
 
 def write_connection_config(host: str | None = None) -> dict[str, Any]:
     """写库连接配置，只用于业务写入和启动就绪检查。"""
     return {
-        **_base_connection_config(host or settings.MYSQL_WRITE_HOST),
-        "user": settings.MYSQL_WRITE_USER,
-        "password": settings.MYSQL_WRITE_PASSWORD,
-        "database": settings.MYSQL_DATABASE,
+        **_base_connection_config(host or database_settings.MYSQL_WRITE_HOST),
+        "user": database_settings.MYSQL_WRITE_USER,
+        "password": database_settings.MYSQL_WRITE_PASSWORD,
+        "database": database_settings.MYSQL_DATABASE,
     }
 
 
@@ -98,20 +98,20 @@ def read_connection_config(host: str) -> dict[str, Any]:
     """业务读取连接配置，可连接主库或从库，但不做复制状态观测。"""
     return {
         **_base_connection_config(host),
-        "user": settings.MYSQL_READ_USER,
-        "password": settings.MYSQL_READ_PASSWORD,
-        "database": settings.MYSQL_DATABASE,
+        "user": database_settings.MYSQL_READ_USER,
+        "password": database_settings.MYSQL_READ_PASSWORD,
+        "database": database_settings.MYSQL_DATABASE,
     }
 
 
 def replica_status_connection_config(host: str) -> dict[str, Any] | None:
     """复制状态观测连接配置；缺失专用账号时禁用从库状态检查。"""
-    if not settings.MYSQL_REPLICA_STATUS_USER or not settings.MYSQL_REPLICA_STATUS_PASSWORD:
+    if not database_settings.MYSQL_REPLICA_STATUS_USER or not database_settings.MYSQL_REPLICA_STATUS_PASSWORD:
         return None
     return {
         **_base_connection_config(host),
-        "user": settings.MYSQL_REPLICA_STATUS_USER,
-        "password": settings.MYSQL_REPLICA_STATUS_PASSWORD,
+        "user": database_settings.MYSQL_REPLICA_STATUS_USER,
+        "password": database_settings.MYSQL_REPLICA_STATUS_PASSWORD,
     }
 
 
@@ -122,9 +122,9 @@ def _get_write_pool() -> pooling.MySQLConnectionPool:
             if _write_pool is None:
                 _write_pool = pooling.MySQLConnectionPool(
                     pool_name="causalagent_write_pool",
-                    pool_size=settings.MYSQL_POOL_SIZE_WRITE,
+                    pool_size=database_settings.MYSQL_POOL_SIZE_WRITE,
                     pool_reset_session=True,
-                    **write_connection_config(settings.MYSQL_WRITE_HOST),
+                    **write_connection_config(database_settings.MYSQL_WRITE_HOST),
                 )
     return _write_pool
 
@@ -137,7 +137,7 @@ def _get_read_pool(host: str) -> pooling.MySQLConnectionPool:
             if pool is None:
                 pool = pooling.MySQLConnectionPool(
                     pool_name=f"causalagent_read_{abs(hash(host))}",
-                    pool_size=settings.MYSQL_POOL_SIZE_READ,
+                    pool_size=database_settings.MYSQL_POOL_SIZE_READ,
                     pool_reset_session=True,
                     **read_connection_config(host),
                 )
@@ -147,8 +147,8 @@ def _get_read_pool(host: str) -> pooling.MySQLConnectionPool:
 
 def _acquire_pool_connection(pool, *, target: str):
     """在有界等待内获取池连接，耗尽时给出明确错误而不是无限阻塞。"""
-    deadline = time.monotonic() + settings.MYSQL_POOL_ACQUIRE_TIMEOUT_SECONDS
-    retry_seconds = settings.MYSQL_POOL_ACQUIRE_RETRY_MS / 1000
+    deadline = time.monotonic() + database_settings.MYSQL_POOL_ACQUIRE_TIMEOUT_SECONDS
+    retry_seconds = database_settings.MYSQL_POOL_ACQUIRE_RETRY_MS / 1000
     while True:
         try:
             return pool.get_connection()
@@ -243,15 +243,15 @@ def get_replica_status(
 ) -> dict[str, Any] | None:
     """短时缓存专用账号读取的从库状态；失效或失败时返回 None。"""
     if host is None:
-        if not settings.MYSQL_READ_HOSTS:
+        if not database_settings.MYSQL_READ_HOSTS:
             return None
-        host = settings.MYSQL_READ_HOSTS[0]
+        host = database_settings.MYSQL_READ_HOSTS[0]
     now = time.monotonic()
     cached = _replica_status_cache.get(host)
     if (
         not force_refresh
         and cached is not None
-        and now - cached[0] < settings.MYSQL_REPLICA_STATUS_CACHE_SECONDS
+        and now - cached[0] < database_settings.MYSQL_REPLICA_STATUS_CACHE_SECONDS
     ):
         return dict(cached[1]) if cached[1] is not None else None
 
@@ -261,7 +261,7 @@ def get_replica_status(
         if (
             not force_refresh
             and cached is not None
-            and now - cached[0] < settings.MYSQL_REPLICA_STATUS_CACHE_SECONDS
+            and now - cached[0] < database_settings.MYSQL_REPLICA_STATUS_CACHE_SECONDS
         ):
             return dict(cached[1]) if cached[1] is not None else None
         conn = None
@@ -300,7 +300,7 @@ def should_use_replica(host: str) -> bool:
     lag = row.get("Seconds_Behind_Source")
     if lag is not None:
         lag = int(lag)
-    return lag is not None and lag <= settings.MYSQL_REPLICA_MAX_LAG_SECONDS
+    return lag is not None and lag <= database_settings.MYSQL_REPLICA_MAX_LAG_SECONDS
 
 
 def _replica_failure_reason(host: str) -> tuple[str, int | None]:
@@ -317,7 +317,7 @@ def _replica_failure_reason(host: str) -> tuple[str, int | None]:
         lag_seconds = None
     if lag_seconds is None:
         return "replica_status_unavailable", None
-    if lag_seconds > settings.MYSQL_REPLICA_MAX_LAG_SECONDS:
+    if lag_seconds > database_settings.MYSQL_REPLICA_MAX_LAG_SECONDS:
         return "replica_lag", max(0, lag_seconds)
     return "connection_unavailable", max(0, lag_seconds)
 
@@ -376,10 +376,10 @@ def get_read_connection_with_source(
         raise ValueError("consistency 必须是 'strong' 或 'eventual'")
 
     primary_source = {"source_role": "primary", "source_alias": "primary"}
-    if consistency == "strong" or not settings.MYSQL_READ_HOSTS:
+    if consistency == "strong" or not database_settings.MYSQL_READ_HOSTS:
         try:
             connection = _acquire_pool_connection(
-                _get_read_pool(settings.MYSQL_WRITE_HOST),
+                _get_read_pool(database_settings.MYSQL_WRITE_HOST),
                 target="主库只读",
             )
         except mysql.connector.Error as err:
@@ -394,9 +394,9 @@ def get_read_connection_with_source(
 
     aliases = {
         host: f"replica-{index}"
-        for index, host in enumerate(settings.MYSQL_READ_HOSTS, start=1)
+        for index, host in enumerate(database_settings.MYSQL_READ_HOSTS, start=1)
     }
-    hosts = list(settings.MYSQL_READ_HOSTS)
+    hosts = list(database_settings.MYSQL_READ_HOSTS)
     random.shuffle(hosts)
     fallback_reason = "replica_status_unavailable"
     fallback_lag: int | None = None
@@ -422,7 +422,7 @@ def get_read_connection_with_source(
     _record_replica_fallback(fallback_reason, fallback_lag)
     try:
         connection = _acquire_pool_connection(
-            _get_read_pool(settings.MYSQL_WRITE_HOST),
+            _get_read_pool(database_settings.MYSQL_WRITE_HOST),
             target="主库只读回退",
         )
     except mysql.connector.Error as err:
@@ -453,7 +453,7 @@ def execute_with_timing(cursor, sql: str, params: Iterable[Any] | None = None):
         return cursor.execute(sql, params)
     finally:
         elapsed_ms = (time.perf_counter() - start) * 1000
-        if elapsed_ms >= settings.MYSQL_QUERY_WARN_MS:
+        if elapsed_ms >= database_settings.MYSQL_QUERY_WARN_MS:
             try:
                 operation, statement_digest = _sql_identity(sql)
                 emit, suppressed_count = _SLOW_QUERY_LIMITER.should_emit(statement_digest)
@@ -498,6 +498,7 @@ def check_database_readiness():
                 "user_files",
                 "archived_sessions",
                 "checkpoint_cleanup_outbox",
+                "user_memory_cleanup_outbox",
                 "analysis_jobs",
                 "analysis_job_events",
                 "analysis_job_inputs",
@@ -516,7 +517,7 @@ def check_database_readiness():
                 FROM information_schema.tables
                 WHERE table_schema = %s
                 """,
-                (settings.MYSQL_DATABASE,),
+                (database_settings.MYSQL_DATABASE,),
             )
             existing_tables = [row[0] for row in cursor.fetchall()]
 
@@ -536,7 +537,7 @@ def check_database_readiness():
                   AND table_name = 'users'
                   AND column_name = 'role'
                 """,
-                (settings.MYSQL_DATABASE,),
+                (database_settings.MYSQL_DATABASE,),
             )
             if cursor.fetchone() is None:
                 error_msg = (
@@ -553,7 +554,7 @@ def check_database_readiness():
                   AND table_name = 'users'
                   AND column_name IN ('auth_version', 'password_changed_at')
                 """,
-                (settings.MYSQL_DATABASE,),
+                (database_settings.MYSQL_DATABASE,),
             )
             security_columns = {row[0] for row in cursor.fetchall()}
             missing_security_columns = {
@@ -583,7 +584,7 @@ def check_database_readiness():
                     'cancel_idempotency_key', 'cancel_request_fingerprint'
                   )
                 """,
-                (settings.MYSQL_DATABASE,),
+                (database_settings.MYSQL_DATABASE,),
             )
             job_request_columns = {row[0] for row in cursor.fetchall()}
             missing_job_request_columns = {
@@ -621,7 +622,7 @@ def check_database_readiness():
                   AND table_name = 'rag_eval_jobs'
                   AND column_name IN ('job_kind', 'priority')
                 """,
-                (settings.MYSQL_DATABASE,),
+                (database_settings.MYSQL_DATABASE,),
             )
             rag_eval_job_columns = {row[0] for row in cursor.fetchall()}
             missing_rag_eval_job_columns = {"job_kind", "priority"} - rag_eval_job_columns
@@ -642,6 +643,10 @@ def check_database_readiness():
                     (
                       table_name = 'checkpoint_cleanup_outbox'
                       AND index_name = 'idx_checkpoint_cleanup_outbox_claim'
+                    )
+                    OR (
+                      table_name = 'user_memory_cleanup_outbox'
+                      AND index_name = 'idx_user_memory_cleanup_outbox_claim'
                     )
                     OR (
                       table_name = 'admin_operations'
@@ -705,11 +710,15 @@ def check_database_readiness():
                     )
                   )
                 """,
-                (settings.MYSQL_DATABASE,),
+                (database_settings.MYSQL_DATABASE,),
             )
             critical_indexes = {(row[0], row[1]) for row in cursor.fetchall()}
             required_indexes = {
                 ("checkpoint_cleanup_outbox", "idx_checkpoint_cleanup_outbox_claim"),
+                (
+                    "user_memory_cleanup_outbox",
+                    "idx_user_memory_cleanup_outbox_claim",
+                ),
                 (
                     "admin_operations",
                     "uq_admin_operations_actor_idempotency",
@@ -757,7 +766,7 @@ def check_database_readiness():
                   AND index_name = 'idx_rag_eval_jobs_priority_queue'
                 ORDER BY seq_in_index ASC
                 """,
-                (settings.MYSQL_DATABASE,),
+                (database_settings.MYSQL_DATABASE,),
             )
             priority_index_columns = [row[0] for row in cursor.fetchall()]
             if priority_index_columns != ["status", "priority", "created_at", "id"]:
@@ -779,7 +788,7 @@ def check_database_readiness():
         record_database_failure(e, operation="readiness_query")
         if e.errno == errorcode.ER_BAD_DB_ERROR:
             error_msg = (
-                f"数据库 '{settings.MYSQL_DATABASE}' 不存在。"
+                f"数据库 '{database_settings.MYSQL_DATABASE}' 不存在。"
                 "请先运行 'python -m Database.bootstrap'。"
             )
             raise RuntimeError(error_msg) from e

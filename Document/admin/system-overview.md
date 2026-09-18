@@ -63,7 +63,7 @@ flowchart LR
 
 敏感正文单次最多读取 64 KiB，成功读取要求审计可写，审计不保存正文。CSV 仅按文本预览，限制 256 KiB、100 行、50 列。文件与用户删除均为物理删除且没有回收站；存在活动任务或关联量超过阈值时会阻断。
 
-看板 GET 不现场执行重采集，只读取 `database_monitor_snapshots`。手动刷新仅登记请求，独立 monitor 通过 MySQL 命名锁采集 `realtime`、`sql_performance`、`capacity`、`integrity` 和仅手动触发的 `deep_audit`，再写回主库共享快照。默认开发拓扑包含 Web、Job worker、monitor、checkpoint cleanup、统一 bootstrap、MySQL 主从、PostgreSQL checkpoint 及独立可观测组件；副本异常时读路径回退主库，不提供自动故障切换。
+看板 GET 不现场执行重采集，只读取 `database_monitor_snapshots`。手动刷新仅登记请求，独立 monitor 通过 MySQL 命名锁采集 `realtime`、`sql_performance`、`capacity`、`integrity` 和仅手动触发的 `deep_audit`，再写回主库共享快照。默认开发拓扑包含 Web、Job worker、monitor、agent-persistence-cleanup、统一 bootstrap、MySQL 主从、PostgreSQL checkpoint 及独立可观测组件；副本异常时读路径回退主库，不提供自动故障切换。
 
 ## 四、边界与维护
 

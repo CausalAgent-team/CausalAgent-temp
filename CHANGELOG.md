@@ -1311,6 +1311,27 @@
 
 ---
 2026.9.15
+- 【MCP/Deep Agent：完成 P2-M 代码切片与 P2-U fake executor 前置】
+  - 【P2-M 服务】：新增独立 `causal-mcp` 服务，提供 MCP 2.2 Streamable HTTP、Bearer/HMAC 鉴权、MySQL primary strong read 与旧 lease/worker fencing、固定 PC/OLC/DirectLiNGAM runner、bounded ProcessPool 和 N×K client pool。
+  - 【P2-U 前置】：新增基于官方 `DeepAgentState` 的隔离扩展、runtime-only run context、显式 parent/deep state projection，以及带 checkpointer 的 fake executor graph；当前 worker 仍保留旧 stdio 路径，真实接入留待 P3。
+  - 【部署与依赖】：补齐 `causal-mcp` 私网 Compose 服务、健康检查和资源边界；独立镜像固定 CDMIR 版本并使用 CPU-only Torch，镜像 `pip check` 通过。
+  - 【验收证据】：Docker unit `454 passed`，相关 integration `20 passed`；隔离 MySQL strong-read/旧 lease、HMAC/Compose 配置、真实算法 fixture runner、并发排队/超时回收、A/B pool、故障 generation/cancel 和容器日志敏感字段扫描均按脚本记录。
+  - 【边界与风险】：MySQL 使用最小隔离 schema；算法调用、`2 running + 4 queued`、RSS/CPU 为受控 fixture/容器基线，不构成生产容量或性能承诺；真实容器调用已验证健康、鉴权和结构化响应，但极小输入仍返回 `execution_failed`，完整 P3 worker HTTP 接入、迁移链路和生产规模验收尚未完成。
+  - 【主线合并收口】：保留 DeepAgent 主线 State/Context/Graph 权威实现，补齐三阶段 lease fencing、异步 strong read、`/ready` 健康门禁、PC 参数透传、容量信号量释放、旧进程代际终止后回收和成功/失败目录事件；修复全量测试中的 RAG module stub 污染。
+  - 【合并验证】：重建 Python 3.11 测试镜像后全量 unit `515 passed`；Agent/部署/migration/日志定向 integration `44 passed, 3 skipped`，开发 Compose 静态展开通过；既有 admin deployment 两项失败仍独立保留，不计入 MCP/DeepAgent 完成证据。
+- 【P3 worker 与父图接入】：在普通 merge 合入 MCP 协作代码后，接入进程级 MCP client pool、真实 executor、官方 PostgreSQL Store 装配、静态 Algorithm Registry、Deep Agent 子图及外层 `agent → fold/preprocess → deep_agent → finalization_gate → report` 路径；生产路径不按 slot 启动 stdio session。
+- 【P4 结果与事件收口】：加入 AlgorithmSpec 驱动的同响应 ToolNode dispatch、RAG evidence 惰性初始化、FinalizationGate 一次修正与二次 degraded 报告、公共 Tool result 安全字段和 `finalization_status`；未删除旧兼容文件或重要产物。
+
+
+- 【数据库配置隔离】：新增独立 `DatabaseConfig`/`database_settings`，让 `app.db` 不再导入完整 `config.settings`；App/Worker 仍保留 `API_KEY`、`BASE_URL`、`MODEL` 的 fail-fast 校验和兼容的 `MYSQL_*` 字段。
+- 【MCP 启动边界】：开发、预发和生产的 `causal-mcp` 配置不注入应用/模型密钥；开发 Compose 同时移除不必要的 `SECRET_KEY`，并补充无模型环境导入与 Compose 契约回归测试。
+
+- 【Deep Agent 恢复边界】：生产装配让父图与 Deep Agent child 共用 worker 创建的 PostgreSQL saver，但使用独立稳定的 child thread/`deep_agent_v1` namespace；child scope 绑定 Job、attempt、lease 和冻结输入 hash，父图只投影 child 引用/status、结果、Ledger、证据和 Gate 所需事实，完整 messages/内部计划留在 child checkpoint。真实 PostgreSQL 重启恢复仍未作为 P5 通过项。
+- 【Ledger 与结果加固】：InvocationRecord 新记录强制携带当前 Job、attempt、lease、worker 和输入 hash 归属，FinalizationGate 对缺失或错配归属 fail-closed；`AlgorithmResult.result_ref` 必须严格由自身 invocation 和规范非负 result index 构成，executor、Adapter 和 Gate 均复核 input/result_ref 契约。
+- 【撤销与 MCP 语义】：`JobExecutionRevoked`/`CancelledError` 继续作为控制流传播，不生成普通失败 AlgorithmResult、不进入 FinalizationGate/degraded；MCP stale lease 映射为撤销，在途调用按 at-least-once 语义重建，不承诺从 HTTP 中途恢复。
+- 【工具生命周期与 RAG】：算法、RAG、Web Tool 在真实外部调用前后通过 worker `OrderedEventWriter` 写入有序 lifecycle start/result，并用稳定 `event_key` 支持重放幂等；RAG readiness、release id 和输入快照绑定已传入实际 RAG Tool，未就绪或 release 不匹配时调用前短路。新增取消事件同键 payload 一致性回归，避免 sink 与 stream 产生幂等冲突。
+- 【Ledger 归属补强与最终验证】：FinalizationGate 现在先对 Ledger 中指向当前 Job 的所有 invocation 统一校验 identity 与所有权字段，再仅纳入当前 attempt、lease、worker 和输入 hash 的算法记录；缺失、跨 Job 污染和当前 Job 的非法 invocation identity 均 fail-closed。新增相关回归后 Docker Agent unit/integration 共 `368 passed`；LangSmith 外部上报因测试环境 DNS 不可达产生告警，但不影响测试结果。
+
 - 【普通端 Vue 并行迁移】
   - 【工程与传输层】：新增独立 `chat-frontend/` Vue 3 + TypeScript 工程，按 API schema、Pinia、Job runtime、组件和渲染器分域；普通端 SSE 改用 `fetch()` + `ReadableStream`，手工解析 `id/event/data`，保留 Flask SSE 路径和公共内容，增加未知事件游标、协议坏包和有界重连处理。
   - 【入口与构建】：增加 `/chat-next`、`/chat-legacy`、`/chat-assets/` 和 `CHAT_FRONTEND_ENTRY`/`CHAT_FRONTEND_DIST_DIR`/`CHAT_VITE_DEV_SERVER_URL`；Docker 通过 Node 24 `chat-builder` 构建 Vue 产物，最终 runtime 不包含 Node/npm。迁移期根入口默认仍为旧版。
@@ -1319,11 +1340,66 @@
   - 【布局骨架】：以旧版 HTML/CSS/JS 为事实基线，恢复默认收起的 300px 抽屉侧栏、无顶部标题栏的主内容区，以及欢迎区与输入卡居中、会话输入卡置底的双状态 880px 内容列。
   - 【视觉语义】：恢复浅绿用户气泡、无卡片 AI 与思考文本流、旧版输入卡/按钮/文件草稿、认证遮罩、设置弹窗、用户信息弹窗、报告和因果图样式，并把语言切换入口放回设置菜单。
 
-
 ---
 2026.9.16
+- 【问题修复】
+  - 【MCP 隔离修复】：新增无 `app`/LangChain/数据库依赖的共享 `Agent.execution_control.JobExecutionRevoked`，避免私有 MCP 镜像导入 `Agent.deep_agent_tools` 时加载 worker/job runtime；MCP-only import smoke 和相关 36 项测试通过。
+  - 【PostgreSQL Store 启动修复】：移除传给 `psycopg.conninfo.make_conninfo()` 的非法 `autocommit` DSN 参数，补充连接串契约测试；相关 checkpoint/MCP/planner 回归 31 项通过。
+- 【Deep Agent 调用后 Guard 修复】：为生产 `AgentRunContext` 补齐 `check_after_call()` 委托，确保节点与父图在模型或工具返回后继续校验当前 Job lease/cancel 状态，避免成功的 DeepSeek 响应因上下文接口缺失触发 `AttributeError` 和无效重试；新增生产上下文包装回归，Docker Agent unit/integration 共 `370 passed`。
+- 【Deep Agent 记忆 namespace 修复】：修正官方 `StoreBackend` 传入 LangGraph `Runtime` 时的可信身份解包，按 `Runtime.context.trusted_identity.user_id` 生成既有用户隔离 namespace，避免 Deep Agent 在 child checkpoint 建立前因误判身份缺失而失败；新增 Runtime 包装形态回归，Docker Agent unit/integration 共 `371 passed`。确认无活动 Job/lease 后重启开发 worker，`worker.startup.ready` 与两个 `worker.slot.ready` 均正常。
+- 【DeepSeek Responses 配置修复】：生产 Deep Agent 模型恢复 P0 已验证的 `output_version="responses/v1"` 与 `reasoning.effort="none"`，避免 DeepSeek 默认思考模式在携带 tools 和既有 assistant 历史时因缺少回传 `reasoning_text` 返回 HTTP 400；新增生产模型配置回归，Docker Agent unit/integration 共 `372 passed`。重启 worker 后真实 DeepSeek Responses 单/双工具、Tool 结果回填、结构化输出 smoke 以及真实 Deep Agent checkpoint、权限、取消、schema retry、无 reasoning stream、summarization P0 均通过。
+- 【RAG 降级日志收敛】：移除 `RagService` 对 embedding API 故障的重复 `rag.enrichment.degraded` 记录，只保留 `embedding_runtime` 的单次分类日志；将 DashScope `AllocationQuota.FreeTierOnly`/免费额度耗尽归类为 `quota_billing`。
+- 【工具状态文案修复】：公共 Tool 生命周期将 Web Search 关闭显示为“未启用”并保留 `not_ready` 状态，将 RAG/Web 依赖不可用显示为“暂不可用”，取消和超时继续使用独立文案；RAG/工具事件与日志合同定向 Docker 回归共 `100 passed`。
+- 【MCP 调用可观测性】：worker 与 MCP 服务端统一按 `job_id + invocation_id + tool` 关联调用生命周期，补齐请求发起、接收、接受、完成、失败、取消与 60 秒慢调用事件；新增 Grafana「CausalAgent MCP Job 时间线」面板，关联字段只从 JSON 正文解析，不提升为 Loki 高基数标签。
+- 【MCP 精确取消】：worker 在 Job lease/cancel 撤销时中断本地等待并发送签名控制请求，MCP 端按完整执行身份幂等取消排队 invocation 或终止对应独立算法进程，同时保留并行 sibling；取消继续作为控制流传播，不生成普通失败结果或进入算法重试。
+- 【MCP 架构文档】：新增 MCP 客户端池与服务端算法执行池说明，完整记录 Worker 通信、Streamable HTTP/HTTP/1.1/TCP 分层、容量计算、generation 重连、精确取消、进程终止、一致性边界和运维注意事项，并加入技术文档导航。
+- 【OLC 默认停用】：以 `DEFAULT_ALGORITHM_SPECS` 作为 worker Adapter 与 MCP runner 的共同 allowlist，当前只注册 PC、DirectLiNGAM；OLC 的 Spec、Adapter、runner 和算法实现继续保留，旧兼容 MCP 入口也取消工具装饰器，后续可通过恢复 allowlist 注册重新启用。
+- 【FinalizationGate 修复】：补齐父图子图包装器传入的 `config` 参数，修复最终节点因签名不匹配导致的 `TypeError`；新增真实 LangGraph 包装执行回归，并同步两算法 schema 快照与架构/测试文档。Docker Agent unit/integration 共 `380 passed`，注册面调整后的定向回归 `38 passed`；测试容器的 LangSmith DNS 上报告警不影响断言结果。
+- 【开发产物忽略】：忽略 Playwright CLI 在仓库根目录生成的 `.playwright-cli/` 页面快照与控制台产物，避免浏览器验证文件进入版本控制候选。
+- 【MCP 控制 lane】：将 Worker MCP 客户端池拆为 execute/control 两个独立请求 lane；默认普通容量 `2 × 1`、控制容量 `1 × 2`，取消不再受普通请求占满影响，重连保留 lane 并记录 `pool_lane`。
+- 【取消预算与原因】：新增控制槽获取 1 秒、取消确认总预算 6 秒配置；取消失败细分为 `control_capacity_timeout`、`response_timeout`、`transport_error` 和 `invalid_response`，外层 `CancelledError` 继续传播。
+- 【部署与验收】：同步开发、预发、生产 Compose 与 `.env.example`，补充 lane/容量/事件目录契约测试及真实 HTTP 饱和并发验收场景；Docker 定向回归 `62 passed`、完整单元测试 `575 passed`，MCP spike 与真实 HTTP 饱和/双取消验收通过。
+- 【Deep Agent 公开决策与刷新恢复】：算法 Tool Call 新增可选 `public_decision.summary` 公开说明 envelope，dependency middleware 在调度和执行前剥离该字段并将有效说明持久化为幂等 `decision` 事件；FinalizationGate 通过后再把内部结果引用映射为公开算法名和最终选择说明，degraded 路径不公开未验证决策。
+- 【前端历史回放】：确认现有 Deep Agent lifecycle 已完整落入 `analysis_job_events` 并能由 `/api/load_session` 重建；前端增加明细先于父阶段到达时的 `step_id` 暂存补绘，并为相关静态脚本增加版本参数，避免缓存旧恢复代码。
+- 【Agent worker：graph 终态失败日志保真】
+  - 【异常传递】：`graph_runner` 不再把 LangGraph 抛出的异常压缩成一句脱敏文案后丢弃；公开 `message` 保持 `sanitize_public_error()` 原有文案不变，真实异常改由 `_diagnostic` 内部字段携带 `error_category`、真实 `reason_code` 和 `exc_info` 继续传递。
+  - 【内部通道】：`OrderedEventWriter` 只把 `message` 交给 `fail_job`，诊断与 `terminal_type == "error"` 同步挂在只读的 `terminal_diagnostic` 上；`_diagnostic` 不进入 `analysis_job_events`、SSE、聊天投影或管理员接口。
+  - 【稳定分类】：`worker.job.failed` 新增 `error_category` 字段，取值为 `provider_error/protocol_error/checkpoint_error/runtime_contract_error/internal_error`，只按异常类名（含基类）判定、不读取异常文本；`reason_code` 由固定 `node_error` 改为按异常映射到既有 `REASON_CODES`，未识别异常仍保留 `node_error`。
+  - 【日志产出】：`worker.job.failed` 现在带上非 null 的 `exception_type` 与清理后的 `stack`，可定位到具体堆栈帧。
+  - 【同步更新】：`Document/development/observability.md` 的事件表与关联链路补充 `error_category` 取值和内部诊断边界。
+
 - 【普通端 Vue 单架构收敛】
   - 【布局与任务交互】：侧栏内容区改为占满剩余高度，使设置与用户入口固定在底部；Thinking 标题和执行步骤统一左对齐；移除独立取消按钮，运行时发送键显示旋转进度环与中心停止方块，再次点击沿用 Job 取消接口。
   - 【入口与部署】：根路由固定提供 Vue 构建产物，`/chat-next` 仅保留兼容别名，移除 `/chat-legacy` 和 `CHAT_FRONTEND_ENTRY` 的路由、配置及三个 Compose 引用；缺少 Vue dist 时继续返回带 request ID 的稳定 503。
   - 【旧文件边界】：旧普通端静态文件已经退出运行时引用；受仓库禁止 agent 删除重要文件的规则限制，物理文件仍保留并在普通端文档中列出人工删除清单，独立 RAG 工作台不在清理范围内。
 
+---
+2026.9.17
+- 【工具公开决策扩展与渐进展示】
+  - 【检索决策】：`rag_evidence_search` 与 `web_evidence_search` 复用 `public_decision.summary` envelope，在外部检索前剥离该字段并写入 `decision_kind=evidence` 幂等事件；检索器、Adapter 和 MCP 入参不含该字段，缺失或格式无效不阻断工具。
+  - 【渐进展示】：`decision` 事件仍以完整校验文本单条落库；实时页面按字符渐进显示，历史回放与 `prefers-reduced-motion` 环境直接展示完整文本，展示速度不阻塞算法执行。聊天页脚本与样式缓存版本更新为 `20260917-tool-decisions-2`。
+  - 【并行 evidence 修复】：RAG/Web evidence reference 在进入 Deep Agent State 和 ToolMessage 前增加稳定 invocation 作用域，修复不同并行查询复用 `E1` 或重叠来源时触发不可变 reducer 冲突；同一调用恢复仍复用相同 reference。
+  - 【并行展示修复】：同一阶段同时到达的公开决策继续各自保留，但渐进动画改为按事件到达顺序串行执行，避免多行文字同时流式出现；历史回放和减少动态效果偏好保持即时展示。
+- 【文档：Deep Agent 文档核对】
+  - 【Agent：运行事实与历史材料收束】：以生产 worker、父/子图、AlgorithmSpec allowlist、MCP execute/control lane、公共事件和部署配置为准重写 Agent 运行时及系统总览；将冗长实施计划收束为长期维护记录，并把产品规划与技术设计标为历史决策材料。修正公共工具状态、实际配置入口、父子 checkpoint 身份和 raw 文件归属；明确当前 cleanup outbox 尚未删除 Deep Agent child thread，以及 recursion/finalization retry 两项配置尚未接入生产调用路径。
+- 【FinalizationGate：终态引用契约与修正链路】
+  - 【引用契约】：`FinalAnalysisDecision` 明确两套引用命名空间：`result_assessments`、`primary_result_ref`、`conflicts.result_refs` 与 `revision_proposals.result_ref` 只接受本次运行返回的算法结果引用，RAG/Web 证据引用只能出现在 `revision_proposals.evidence_refs`；该分工写入结构化字段描述与系统提示，使模型在提交时就能区分“算法结果取舍”和“检索证据引用”。
+  - 【规则化修正指令】：Gate 校验失败改为携带稳定规则码，并把规则翻译成脱敏的中文修正要求写进重试指令，使模型知道具体违反了哪条引用规则，而不是只收到泛泛的重新提交要求；身份、账本与状态一致性失败不带规则码，继续使用通用指令，不把内部完整性问题包装成模型可修正的指令。
+  - 【阶段公开说明】：Gate 拒绝时发布 `progress` 阶段说明，可修正时挂在 `finalization_gate` 阶段并给出修正要求，降级时说明本次仅基于已验证输入生成报告；第二次 Deep Agent 启动修正时，新阶段同样收到一条 `progress` 说明，指出该阶段沿用已有工具结果、不重复调用工具。事件适配器按登记节点名绑定活跃阶段，并拒绝未登记节点名与空文本。
+  - 【事故回归】：新增复现真实事故的用例，把证据引用写进 `result_assessments` 时先以 `assessment_ref_unknown_result` 拒绝，只修该处后继续以 `proposal_evidence_ref_unknown` 拒绝，两处都修正后才通过，锁定两处违规与修正路径。
+
+- 【Agent 持久化清理：父子图 checkpoint 与用户长期记忆统一清理】
+  - 【数据库迁移】：新增 `user_memory_cleanup_outbox`（revision `t5e6f7a8b9c0`），按 `user_id` 唯一保存状态、重试次数、可领取时间、租约、脱敏错误结论和完成时间；只与 `admin_operations` 建立外键，不关联 `users`，从而在用户行删除后仍保留任务；迁移不回填也不激活历史数据，downgrade 只删除新表；同时新增 `u7a8b9c0d1e2` 把 `database_monitor_snapshots.snapshot_key` 扩展到 64 字符，容纳按进程命名的清理心跳与队列快照键。
+  - 【删除事务】：用户物理删除在同一个 MySQL 事务中为每个 Job 登记 checkpoint 清理、为同一 `user_id` 登记一条长期记忆清理，并写入管理员操作聚合；任一登记失败回滚整个删除；单独删除 Session 或 Job 仍只清理 checkpoint，保留用户长期记忆。
+  - 【清理 worker】：`Database/checkpoint_cleanup_worker.py` 与 `app/agent/checkpoint_cleanup.py` 改名为 `Database/agent_persistence_cleanup_worker.py` 与 `app/agent/persistence_cleanup.py`；一个进程轮转消费两张 outbox，复用同一个 PostgreSQL 连接池构造 `AsyncPostgresSaver` 和 `AsyncPostgresStore`，不新增第二个容器；Compose 服务名、容器名、启动命令和 `AGENT_PERSISTENCE_CLEANUP_*` 环境变量同步切换。
+  - 【父子图清理】：checkpoint 任务在一次 attempt 内删除父图 `thread_id=job_id` 和子图 `thread_id=deep-agent:<uuid5(job_id)>`，两者都成功才标记成功，部分成功整项重试并依赖官方删除接口的幂等性。
+  - 【长期记忆清理】：记忆任务按可信 `("causalagent", "memory", str(user_id))` namespace 使用官方 Store API 枚举并逐条删除，删除后重新查询确认 namespace 为空，不对 Store 表执行宽泛 SQL；清理 worker 启动时校验 checkpoint 与 Store schema 版本，Store 未 setup 时有界等待，不自行建表。
+  - 【操作聚合与维护入口】：管理员用户删除只有在 checkpoint 清理和记忆清理全部成功后进入 `succeeded`，任一任务最终失败进入 `failed`；`Database/lifecycle_repair.py` 的失败/过期重置扩展到两张 outbox。
+  - 【监控与看板】：worker 心跳快照改为 `agent_persistence_cleanup_runtime` 并新增当前任务类型；队列快照改为 `agent_persistence_cleanup_outbox`，分别汇总两类 outbox 的 pending、due、processing、过期租约和 failed 数量；管理员数据库看板、用户删除结果视图和 SQL 语义映射同步更新字段与名称。
+  - 【日志事件】：cleanup 事件前缀统一为 `agent.persistence.cleanup.*`，成功事件新增 `task_type` 和 `deleted_count`，运行快照不再保留旧的 `checkpoint_cleanup_runtime` 名称。
+  - 【文档同步】：更新系统架构总览、Job/文件生命周期、数据库总览与迁移 checkpoint、监控、部署、可观测性、测试和管理员模块文档，删除已经修复的父子图与长期记忆清理缺口描述。
+
+- 【因果图渲染修复】
+  - 【载荷投影】：`process_final_result` 在展示层把 Agent 内部标准化图（节点名列表与 `source`/`target` 边）投影为前端 vis-network 的 `{id,label}` 节点与 `{from,to}` 边，边类型映射为箭头与虚线，权重按 `.6g` 作为边标签，`graph_semantics` 等内部字段不再进入公开载荷。
+  - 【历史会话】：`/api/load_session` 读取 `causal_graph` 附件时执行同一投影，早期版本按内部格式写入的附件不需要重跑分析即可恢复显示。
+  - 【失败可见】：前端 `renderCausalGraph` 把节点/边建表与网络创建一起纳入异常处理，数据格式不符合 vis-network 要求时在图上直接给出说明文本，同时更新聊天页脚本缓存版本号。
