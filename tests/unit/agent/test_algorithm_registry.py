@@ -6,6 +6,7 @@ import pytest
 
 from Agent.deep_agent_tools import (
     AlgorithmRegistry,
+    CDFM_SPEC,
     DIRECT_LINGAM_SPEC,
     PC_SPEC,
     RegistryConflictError,
@@ -74,10 +75,12 @@ def test_default_registry_does_not_expose_disabled_olc() -> None:
         {
             "causal.pc": object(),
             "causal.direct_lingam": object(),
+            "causal.cdfm": object(),
         }
     )
 
     assert [entry.spec for entry in registry.entries] == [
+        CDFM_SPEC,
         DIRECT_LINGAM_SPEC,
         PC_SPEC,
     ]

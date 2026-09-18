@@ -8,6 +8,7 @@ import os
 from typing import Any
 
 from Agent.deep_agent_tools.algorithm_executor import (
+    AlgorithmExecutionResponse,
     AlgorithmExecutorError,
     validate_executor_command,
     validate_executor_result,
@@ -74,7 +75,7 @@ class McpAlgorithmExecutor:
         self,
         command: AlgorithmExecutionCommand,
         trusted_context: McpInvocationContext,
-    ) -> AlgorithmResult:
+    ) -> AlgorithmResult | AlgorithmExecutionResponse:
         validate_executor_command(command, trusted_context=trusted_context)
         with log_context(
             invocation_id=command.invocation_id,
@@ -207,7 +208,7 @@ class McpAlgorithmExecutor:
         self,
         command: AlgorithmExecutionCommand,
         trusted_context: McpInvocationContext,
-    ) -> AlgorithmResult:
+    ) -> AlgorithmResult | AlgorithmExecutionResponse:
         signature = sign_invocation(trusted_context, command, self.signing_key)
         arguments = {
             "command": command.model_dump(mode="json"),
@@ -294,10 +295,22 @@ class McpAlgorithmExecutor:
                     == SafeErrorCode.MCP_LEASE_STALE.value
                 ):
                     raise self._remote_lease_revoked(command.invocation_id)
-                return validate_executor_result(
+                validated_result = validate_executor_result(
                     result,
                     command=command,
                     trusted_context=trusted_context,
+                )
+                raw_payload = payload.get("raw_payload")
+                if raw_payload is None:
+                    return validated_result
+                if not isinstance(raw_payload, dict):
+                    raise AlgorithmExecutorError(
+                        "MCP raw payload is not structured",
+                        safe_error_code=SafeErrorCode.ALGORITHM_RESULT_CONTRACT_INVALID,
+                    )
+                return AlgorithmExecutionResponse(
+                    result=validated_result,
+                    raw_payload=raw_payload,
                 )
             except asyncio.CancelledError as exc:
                 if call_task is not None and not call_task.done():

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from functools import lru_cache
 from typing import Any, Literal
 
@@ -62,6 +63,23 @@ class CausalDirectLiNGAMInput(ContractModel):
     """DirectLiNGAM 当前没有可由模型改变的公开参数。"""
 
     pass
+
+
+class CausalCdfmInput(ContractModel):
+    """CDFM 唯一公开的科学参数；模型路径和预处理策略由服务端固定。"""
+
+    threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    @field_validator("threshold", mode="before")
+    @classmethod
+    def validate_threshold_type(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("threshold must be a number or null")
+        if not math.isfinite(float(value)):
+            raise ValueError("threshold must be finite")
+        return value
 
 
 class AlgorithmSpec(ContractModel):
@@ -263,9 +281,43 @@ DIRECT_LINGAM_SPEC = AlgorithmSpec(
 )
 
 
+CDFM_SPEC = AlgorithmSpec(
+    capability_id="causal.cdfm",
+    version="1.0",
+    tool_name="causal_cdfm",
+    public_name="CDFM 因果发现",
+    description=(
+        "在连续数值表格数据上使用 CDFM 进行零样本因果图推断。"
+        "缺失值由服务端按 CDFM missing mask 规则传递；不接受分类变量，"
+        "结果仅表示本次模型推断，不构成准确率或生产能力证明。"
+    ),
+    model_input_schema=CausalCdfmInput,
+    requires=frozenset({"continuous_tabular_dataset"}),
+    produces=frozenset({"standardized_graph", "diagnostics"}),
+    assumptions=(
+        "输入为连续数值变量",
+        "变量名、样本顺序和冻结输入身份由外层准入固定",
+        "CDFM checkpoint 可由 causal-mcp 服务端加载",
+    ),
+    result_contract=StandardizedGraph,
+    default_timeout_seconds=600,
+    concurrency_key="causal_cdfm",
+    default_concurrency=1,
+    analysis_goal="在连续观测数据上生成 CDFM 的有向图推断结果",
+    description_source=("用途", "连续数值要求", "缺失值掩码", "能力边界"),
+    data_requirements=(
+        "continuous_tabular_dataset",
+        "至少 2 行数据",
+        "至少 2 个变量",
+        "分类变量不适用",
+    ),
+)
+
+
 DEFAULT_ALGORITHM_SPECS: tuple[AlgorithmSpec, ...] = (
     PC_SPEC,
     DIRECT_LINGAM_SPEC,
+    CDFM_SPEC,
 )
 
 

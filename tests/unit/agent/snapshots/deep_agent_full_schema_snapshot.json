@@ -2091,6 +2091,62 @@
   "schema_version": "p1-v1",
   "tools": [
     {
+      "capability_id": "causal.cdfm",
+      "spec_digest": "ae915de1dbfe74816396de781c0d024ce0eb040531dd8d4616685e2bb7d9762c",
+      "tool": {
+        "name": "causal_cdfm",
+        "description": "在连续数值表格数据上使用 CDFM 进行零样本因果图推断。缺失值由服务端按 CDFM missing mask 规则传递；不接受分类变量，结果仅表示本次模型推断，不构成准确率或生产能力证明。",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "threshold": {
+              "anyOf": [
+                {
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Threshold"
+            },
+            "public_decision": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "description": "模型在 Tool Call 中显式生成、可直接展示的简短决策说明。",
+                  "properties": {
+                    "summary": {
+                      "maxLength": 400,
+                      "minLength": 1,
+                      "title": "Summary",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "summary"
+                  ],
+                  "title": "PublicDecision",
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "面向当前用户公开的工具选择依据；应在同一次 Tool Call 中提供。该字段不属于算法科学参数或检索参数。",
+              "title": "Public Decision"
+            }
+          },
+          "title": "CausalCdfmInputToolInput",
+          "type": "object"
+        }
+      }
+    },
+    {
       "capability_id": "causal.direct_lingam",
       "spec_digest": "718ac64c3efe7790b5bda8a2b700e850cfa554500ad11a095d8fba9450898915",
       "tool": {

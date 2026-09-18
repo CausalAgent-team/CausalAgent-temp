@@ -42,6 +42,7 @@ from Agent.CausalAgentMCP.runner_registry import (
 from Agent.CausalAgentMCP.service import CausalMcpService
 from Agent.CausalAgentMCP.app import create_app
 from Agent.deep_agent_tools.algorithm_specs import (
+    CDFM_SPEC,
     DIRECT_LINGAM_SPEC,
     OLC_SPEC,
     PC_SPEC,
@@ -297,12 +298,19 @@ async def timeout_and_late_result() -> dict[str, Any]:
 async def resource_sample(csv_data: str) -> dict[str, Any]:
     registry = build_default_registry()
     samples: dict[str, dict[str, Any]] = {}
+    skipped: dict[str, dict[str, str]] = {}
     resource_inputs = {
         "causal.pc": csv_data,
         "causal.olc": _resource_fixture(),
         "causal.direct_lingam": csv_data,
     }
     for entry in registry._entries.values():  # fixed registry, only for acceptance observation
+        if entry.capability_id == CDFM_SPEC.capability_id:
+            skipped[entry.capability_id] = {
+                "status": "NOT_RUN",
+                "reason": "CDFM requires the explicit cdfm_acceptance.py smoke entry",
+            }
+            continue
         pool = BoundedProcessPool(
             process_workers=1,
             queue_capacity=1,
@@ -370,7 +378,11 @@ async def resource_sample(csv_data: str) -> dict[str, Any]:
             }
         finally:
             await pool.close()
-    return {"status": "PARTIAL" if any(v["status"] == "NOT_RUN" for v in samples.values()) else "PASS", "algorithms": samples}
+    return {
+        "status": "PARTIAL" if any(v["status"] == "NOT_RUN" for v in samples.values()) else "PASS",
+        "algorithms": samples,
+        "skipped": skipped,
+    }
 
 
 async def start_server(
@@ -710,6 +722,10 @@ async def main() -> None:
         "mcp_version": importlib.metadata.version("mcp"),
         "httpx2_version": importlib.metadata.version("httpx2"),
         "real_algorithms": real_algorithm_calls(csv_data),
+        "cdfm": {
+            "status": "NOT_RUN",
+            "reason": "Run tests/acceptance/p2_mcp/cdfm_acceptance.py explicitly",
+        },
         "capacity_window": await capacity_window(),
         "deadline_and_late_result": await timeout_and_late_result(),
         "rss_cpu": await resource_sample(_resource_fixture()),

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any, Protocol, runtime_checkable
 
 from .error_codes import SafeErrorCode
 from .identity import build_result_ref
@@ -12,6 +14,14 @@ from .models import (
     AlgorithmResultStatus,
     McpInvocationContext,
 )
+
+
+@dataclass(frozen=True)
+class AlgorithmExecutionResponse:
+    """Executor 返回的统一结果与仅供 Adapter 保存的 runner payload。"""
+
+    result: AlgorithmResult
+    raw_payload: Mapping[str, Any] | None = None
 
 
 @runtime_checkable
@@ -26,7 +36,7 @@ class AlgorithmExecutor(Protocol):
         self,
         command: AlgorithmExecutionCommand,
         trusted_context: McpInvocationContext,
-    ) -> AlgorithmResult:
+    ) -> AlgorithmResult | AlgorithmExecutionResponse:
         """执行一次只读算法调用并返回统一 AlgorithmResult。"""
 
 

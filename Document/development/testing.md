@@ -137,10 +137,11 @@ docker compose -f docker-compose.test.yml run --rm unit-test python -m pytest -p
 docker compose -f docker-compose.test.yml run --rm unit-test python tests/spike/p2_mcp_v2.py
 docker pull mysql:8.0
 docker run --rm --cpus=2 --memory=2g -v "${PWD}/tests:/tests:ro" causalagent-demopaper-causal-mcp:latest python /tests/acceptance/p2_mcp/run_acceptance.py
+docker run --rm --cpus=2 --memory=2g -v "${PWD}/tests:/tests:ro" causalagent-demopaper-causal-mcp:latest python /tests/acceptance/p2_mcp/cdfm_acceptance.py
 .\tests\acceptance\p2_mcp\scan_container_logs.ps1 -ContainerName causal-mcp
 ```
 
-第二条 smoke 使用真实 MCP 2.2 Streamable HTTP/HTTP/1.1、真实 client pool 和 fake authority reader，证明协议/结构化 envelope/生命周期；第三条在实际 `causal-mcp` 镜像和 `2 CPU/2 GiB` 容器约束下运行 PC、OLC、DirectLiNGAM fixture、容量窗口、deadline、RSS/CPU、A/B pool，以及使用合成慢 runner 的真实 HTTP `cancel_algorithm`、目标进程终止和重复取消幂等。镜像固定 CDMIR commit 与 CPU Torch，构建后必须通过 `pip check`。MySQL authority 另用一次性 `mysql:8.0` 容器与 `tests/acceptance/p2_mcp/mysql_strong_read.py` 验证有效 lease/旧 lease拒绝；真实容器算法调用后的 Docker logs 使用合成值做零命中扫描。生产数据规模、完整 migration Compose 和正式资源基准仍需单独验收。
+第二条 smoke 使用真实 MCP 2.2 Streamable HTTP/HTTP/1.1、真实 client pool 和 fake authority reader，证明协议/结构化 envelope/生命周期；第三条在实际 `causal-mcp` 镜像和 `2 CPU/2 GiB` 容器约束下运行 PC、OLC、DirectLiNGAM fixture、容量窗口、deadline、RSS/CPU、A/B pool，以及使用合成慢 runner 的真实 HTTP `cancel_algorithm`、目标进程终止和重复取消幂等。CDFM 使用独立的 `cdfm_acceptance.py` 入口，显式验证真实 CPU 模型、`directed_graph`、方向转换、私有 raw artifact、公共结果脱敏和控制面取消；它使用进程内冻结 CSV，不等价于 MySQL strong-read 或准确率验收，也不加入默认资源窗口。镜像固定 CDMIR commit、`cdfm-base==0.1.0` 与 CPU Torch，构建后必须通过 `pip check`。MySQL authority 另用一次性 `mysql:8.0` 容器与 `tests/acceptance/p2_mcp/mysql_strong_read.py` 验证有效 lease/旧 lease拒绝；真实容器算法调用后的 Docker logs 使用合成值做零命中扫描。生产数据规模、完整 migration Compose 和正式资源基准仍需单独验收。
 
 fake executor 的 State/checkpoint 前置验证：
 
