@@ -98,7 +98,7 @@ sequenceDiagram
     M->>CPU: 启动单 invocation 单进程 executor
     CPU-->>M: 原始算法结果
     M->>DB: 返回前再次核对执行资格
-    M-->>P: 标准化 AlgorithmResult
+    M-->>P: AlgorithmResult + 私有 raw_payload
     P-->>E: structured content
     E->>G: check_after_call()
     E-->>G: 校验契约后交给上层
@@ -109,6 +109,8 @@ sequenceDiagram
 服务端配置可以装载 current/previous 两个 key id，但生产 Worker 目前只读取 `CAUSAL_MCP_SIGNING_KEY_CURRENT`，构造上下文时固定使用 `key_id="current"`。因此 `CAUSAL_MCP_SIGNING_KEY_ID` 必须保持默认值 `current`；previous key 与自定义 ID 还不是已经打通的生产轮换流程。
 
 服务端只从 MySQL primary strong read 读取冻结 CSV，不信任 Worker 直接提交文件正文。执行资格在读取输入、真正占用进程前、算法返回后三个边界核对，避免旧 Worker、旧 attempt 或失效 lease 的结果进入上层。
+
+成功 runner payload 中的 `raw_payload` 只存在于 Worker 与 causal-mcp 的私有 structured response；`McpAlgorithmExecutor` 将它封装为 `AlgorithmExecutionResponse`，由 Adapter 写入 `/raw_algorithm_results/...` 并回读校验。公开的 `AlgorithmResult` 只保留标准化图、诊断和 raw artifact 元数据，不携带 logits、probabilities 或其他 runner 原始字段。
 
 ### 服务端算法执行池
 
