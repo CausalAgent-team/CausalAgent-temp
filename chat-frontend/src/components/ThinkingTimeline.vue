@@ -7,6 +7,7 @@ import type { ThinkingProjection, ThinkingStep } from '../types/domain'
 import ThinkingStepDetails from './ThinkingStepDetails.vue'
 
 const props = defineProps<{ thinking: ThinkingProjection }>()
+const emit = defineEmits<{ 'decision-settled': [{ stepId: string; key: string }] }>()
 const { text } = useLocale()
 const scrollFollow = useChatScrollFollow()
 const expanded = ref(true)
@@ -71,7 +72,12 @@ onBeforeUnmount(() => {
             <span class="step-time">{{ step.duration !== null ? `${step.duration}s` : text.inProgress }}</span>
             <span class="disclosure">{{ expandedSteps[step.stepId] ? '▾' : '▸' }}</span>
           </button>
-          <ThinkingStepDetails v-show="expandedSteps[step.stepId]" :step="step" :animate="animate" />
+          <ThinkingStepDetails
+            v-show="expandedSteps[step.stepId]"
+            :step="step"
+            :animate="animate"
+            @decision-settled="emit('decision-settled', $event)"
+          />
         </div>
       </div>
     </div>

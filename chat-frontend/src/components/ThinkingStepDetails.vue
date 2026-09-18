@@ -11,6 +11,7 @@ import { decisionKindPrefix } from '../runtime/jobs/step-details'
 import type { StepDecisionDetail, StepDetail, ThinkingStep } from '../types/domain'
 
 const props = defineProps<{ step: ThinkingStep; animate: boolean }>()
+const emit = defineEmits<{ 'decision-settled': [{ stepId: string; key: string }] }>()
 const scrollFollow = useChatScrollFollow()
 const revealed = ref<Record<string, number>>({})
 let timer: number | null = null
@@ -30,26 +31,43 @@ function stopTimer(): void {
 function nextEntry(): StepDecisionDetail | null {
   if (!props.animate || prefersReducedMotion()) return null
   for (const entry of decisions.value) {
+    if (entry.released) continue
     if ((revealed.value[entry.key] ?? 0) < textLength(entry.text)) return entry
   }
   return null
 }
 
 function visibleText(entry: StepDecisionDetail): string {
-  if (!props.animate || prefersReducedMotion()) return entry.text
+  if (!props.animate || prefersReducedMotion() || entry.released) return entry.text
   return Array.from(entry.text).slice(0, revealed.value[entry.key] ?? 0).join('')
+}
+
+function revealedLength(entry: StepDecisionDetail): number {
+  if (!props.animate || prefersReducedMotion()) return textLength(entry.text)
+  return revealed.value[entry.key] ?? 0
+}
+
+/** 展示追平后通知上层放行被挂起的工具事件；未收到完整 decision 时不放行。 */
+function settleDecisions(): void {
+  for (const entry of decisions.value) {
+    if (entry.released || !entry.complete) continue
+    if (revealedLength(entry) >= textLength(entry.text)) {
+      emit('decision-settled', { stepId: props.step.stepId, key: entry.key })
+    }
+  }
 }
 
 function tick(): void {
   const entry = nextEntry()
-  if (!entry) {
+  if (entry) {
+    const current = revealed.value[entry.key] ?? 0
+    const limit = textLength(entry.text)
+    revealed.value = { ...revealed.value, [entry.key]: Math.min(limit, current + PRESENTATION_CHARS_PER_TICK) }
+    scrollFollow.keepLatest()
+  } else {
     stopTimer()
-    return
   }
-  const current = revealed.value[entry.key] ?? 0
-  const limit = textLength(entry.text)
-  revealed.value = { ...revealed.value, [entry.key]: Math.min(limit, current + PRESENTATION_CHARS_PER_TICK) }
-  scrollFollow.keepLatest()
+  settleDecisions()
 }
 
 function sync(): void {
@@ -58,6 +76,7 @@ function sync(): void {
   } else {
     stopTimer()
   }
+  settleDecisions()
 }
 
 function detailKey(detail: StepDetail, index: number): string {

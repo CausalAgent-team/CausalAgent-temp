@@ -20,6 +20,7 @@ function step(): ThinkingStep {
         streamId: 'decision-1',
         text: '一二',
         complete: true,
+        released: false,
         pending: [],
       },
       {
@@ -30,6 +31,7 @@ function step(): ThinkingStep {
         streamId: 'decision-2',
         text: '三四',
         complete: true,
+        released: false,
         pending: [],
       },
     ],
@@ -62,5 +64,48 @@ describe('ThinkingStepDetails', () => {
     const wrapper = mount(ThinkingStepDetails, { props: { step: step(), animate: false } })
     expect(wrapper.text()).toContain('算法决策：一二')
     expect(wrapper.text()).toContain('检索决策：三四')
+  })
+
+  it('reports a decision as settled only after its text is fully revealed', async () => {
+    const target = step()
+    target.details = [{
+      kind: 'decision',
+      key: 's1:algorithm:pc',
+      decisionKind: 'algorithm',
+      toolName: 'pc',
+      streamId: 'decision-1',
+      text: '一二',
+      complete: true,
+      released: false,
+      pending: [{ type: 'tool_call_start', step_id: 's1', tool_name: 'pc' }],
+    }]
+    const wrapper = mount(ThinkingStepDetails, { props: { step: target, animate: true } })
+
+    expect(wrapper.text()).toBe('算法决策：')
+    expect(wrapper.emitted('decision-settled')).toBeUndefined()
+
+    await vi.advanceTimersByTimeAsync(25)
+    expect(wrapper.emitted('decision-settled')).toBeUndefined()
+
+    await vi.advanceTimersByTimeAsync(25)
+    expect(wrapper.emitted('decision-settled')).toEqual([[{ stepId: 's1', key: 's1:algorithm:pc' }]])
+  })
+
+  it('shows a force-released decision with its full text immediately', () => {
+    const target = step()
+    target.details = [{
+      kind: 'decision',
+      key: 's1:algorithm:pc',
+      decisionKind: 'algorithm',
+      toolName: 'pc',
+      streamId: 'decision-1',
+      text: '一二',
+      complete: true,
+      released: true,
+      pending: [],
+    }]
+    const wrapper = mount(ThinkingStepDetails, { props: { step: target, animate: true } })
+    expect(wrapper.text()).toContain('算法决策：一二')
+    expect(wrapper.emitted('decision-settled')).toBeUndefined()
   })
 })

@@ -52,6 +52,7 @@ describe('MessageTimeline', () => {
             streamId: 'decision-1',
             text: '选择 PC，因为样本充足',
             complete: true,
+            released: true,
             pending: [],
           },
         ],
