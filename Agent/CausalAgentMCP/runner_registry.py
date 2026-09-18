@@ -52,6 +52,12 @@ def _direct_lingam(csv_data: str, _parameters: Mapping[str, Any]) -> dict[str, A
     return run_direct_lingam_analysis(csv_data)
 
 
+def _cdfm(csv_data: str, parameters: Mapping[str, Any]) -> dict[str, Any]:
+    from Agent.causal.cdfm_runner import run_cdfm_analysis
+
+    return run_cdfm_analysis(csv_data, threshold=parameters.get("threshold"))
+
+
 class RunnerRegistry:
     """Index the enabled reviewed capabilities and reject incompatible callers."""
 
@@ -85,6 +91,7 @@ def build_default_registry() -> RunnerRegistry:
         "causal.pc": _pc,
         "causal.olc": _olc,
         "causal.direct_lingam": _direct_lingam,
+        "causal.cdfm": _cdfm,
     }
     entries = [
         (spec, runners[spec.capability_id]) for spec in DEFAULT_ALGORITHM_SPECS
