@@ -479,6 +479,7 @@ class DatabaseInspectionTests(unittest.TestCase):
         self.assertIn("ordinal_position = 1", memory_fk_sql)
         descriptions = {definition["key"]: definition["description"] for definition in definitions}
         self.assertIn("visualization", descriptions["constraint_chat_attachment_type_enum"])
+        self.assertIn("report_document", descriptions["constraint_chat_attachment_type_enum"])
         self.assertIn("数量为 0 时健康", descriptions["checkpoint_cleanup_failed"])
         self.assertIn("长期记忆", descriptions["user_memory_cleanup_failed"])
 

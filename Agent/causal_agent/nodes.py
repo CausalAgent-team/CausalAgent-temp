@@ -159,19 +159,22 @@ async def agent_node(state: CausalAgentState, llm: ChatOpenAI) -> dict:
     if not has_tool_results and _is_explicit_causal_analysis_request(latest_human_text):
         response_message = AIMessage(content="决策：信息不全，启动文件加载模块。", name="agent")
         return {"messages": [response_message], "route_decision": "fold"}
+    followup_context = _report_followup_context(state)
+    has_report = _report_document_from_state(state) is not None
     agent_prompt = """
             你是一个专业的AI助手路由中枢。你的任务是根据用户的对话历史和当前状态，决定下一步的最佳路径。
             
             # 用户需求或者对话历史:{messages}
             # 当前状态摘要:
             - 是否已获得分析工具的结果: {has_tool_results}
-            - 是否已获取到了最终的报告：{final_report}
+            - 是否已获取到了最终的报告：{has_report}
+            - 已有报告的摘要：{report_summary}
 
             # 你的决策选项:
             1. `postprocess`: 如果已经获得了因果分析结果 ({has_tool_results} is True)，可以选择此路径以进入后处理模块。
             2. `fold`: 如果用户想要进行因果分析 (例如，对话中提到“分析”、“处理数据”或与“因果推断”相关的用语)，但我们还没有分析结果 ({has_tool_results} is False)，选择此路径以启动文件加载模块。
             3. `normal_chat`: 如果用户的提问只是一个与因果领域不相关的消息，不需要调用任何复杂的因果分析工具，选择此路径。
-            4. `inquiry_answer`: 如果已经获取到了最终的报告（{final_report} is not None），选择此路径以直接根据报告回答用户的问题。
+            4. `inquiry_answer`: 如果已经获取到了最终的报告（{has_report} 为 True），选择此路径以直接根据报告回答用户的问题。
             
             请根据下面的对话历史，做出你的选择。
             你必须按照RouteQuery返回一个只包含 "route" 键的 JSON 对象格式来返回你的决策。
@@ -197,7 +200,8 @@ async def agent_node(state: CausalAgentState, llm: ChatOpenAI) -> dict:
             inputs={
                 "messages": latest_human_text,
                 "has_tool_results": has_tool_results,
-                "final_report": state.get("final_report", None)
+                "has_report": has_report,
+                "report_summary": followup_context["report_summary"][:600],
             },
             node_name="agent",
         )
@@ -234,7 +238,20 @@ class foldQuery(BaseModel):
 ## fold节点用到的函数
 from Agent.Processing.fold_processing import get_data_summary
 from Agent.Processing.fold_verify import validate_analysis
-from Agent.Processing.data_visualize import generate_visualizations
+from Agent.Report.assets import (
+    build_causal_graph_model,
+    build_chart_assets,
+    build_report_resources,
+    coerce_chart_assets,
+    describe_chart_asset,
+)
+from Agent.Report.document import (
+    ChartAsset,
+    ReportDraft,
+    ReportDocument,
+    build_report_document,
+    report_document_summary,
+)
 
 
 FILE_LOAD_INTERRUPT_MESSAGE = (
@@ -434,8 +451,8 @@ async def preprocess_node(state: CausalAgentState, llm: ChatOpenAI) -> dict:
     """
     项目预处理模块:
     1.  从状态(state)中加载 DataFrame 和数据摘要。
-    2.  调用 `generate_visualizations` 生成数据图表。
-        - 如果缺少可视化库 (seaborn, matplotlib)，会跳过此步并向用户发出警告。
+    2.  调用 `build_chart_assets` 生成结构化图表资源。
+        - 图表资源生成失败时会跳过此步并记录日志，不阻断后续流程。
     3.  调用 LLM 对数据摘要进行自然语言总结。
     4.  将图表和总结存入状态，然后直接进入下一步。
     """
@@ -464,19 +481,20 @@ async def preprocess_node(state: CausalAgentState, llm: ChatOpenAI) -> dict:
         pd.read_csv,
         io.BytesIO(file_row["file_content"]),
     )
-    # 生成可视化图表 
-    visualizations = {}
+    # 生成结构化图表资源
     try:
-        visualizations = await asyncio.to_thread(generate_visualizations, df, analysis_parameters)
-        state["visualizations"] = visualizations
+        chart_assets = await asyncio.to_thread(build_chart_assets, df, analysis_parameters)
+        state["chart_assets"] = {
+            asset_key: asset.model_dump(mode="json")
+            for asset_key, asset in chart_assets.items()
+        }
     except Exception:
         _log_node_degradation(
-            "visualization_error",
-            "skip_visualization",
+            "chart_asset_error",
+            "skip_chart_assets",
             exc_info=True,
         )
-        # 可视化失败不阻断流程，记录日志即可
-        # 不需要添加消息到state，继续执行后续步骤
+        # 图表资源生成失败不阻断流程，记录日志后继续执行后续步骤
     
     # 3. 调用LLM进行自然语言总结
     prompt = ChatPromptTemplate.from_messages(
@@ -521,7 +539,7 @@ async def preprocess_node(state: CausalAgentState, llm: ChatOpenAI) -> dict:
     return {
         "messages": [summary_message],
         "preprocess_summary": state["preprocess_summary"],
-        "visualizations": state.get("visualizations", {})
+        "chart_assets": state.get("chart_assets", {}),
     }
 
 
@@ -1238,9 +1256,6 @@ async def postprocess_node(state: CausalAgentState, llm: ChatOpenAI) -> dict:
         }
 
 ## 调用元数据
-from Agent.Report.Metadata_sum import metadata_summary, metadata_mapping
-
-
 def _causal_method_context_for_report(analysis_result: Dict[str, Any]) -> str:
     """为报告节点生成算法专用解释边界。"""
     if not isinstance(analysis_result, dict):
@@ -1289,27 +1304,211 @@ def _report_language_instruction() -> str:
     )
 
 
+REPORT_GRAPH_ASSET_KEY = "graph_main"
+
+
+def _report_graph_asset(state: CausalAgentState):
+    """选择报告使用的因果图资源：优先采用通过校验的修订图，否则回退原始算法图。"""
+    analysis_result = state.get("causal_analysis_result")
+    if not isinstance(analysis_result, dict) or not analysis_result.get("success"):
+        return None
+    postprocess_result = state.get("postprocess_result") or {}
+    revised_graph = postprocess_result.get("revised_graph")
+    has_valid_revised_graph = (
+        isinstance(revised_graph, dict)
+        and isinstance(revised_graph.get("nodes"), list)
+        and isinstance(revised_graph.get("edges"), list)
+        and not postprocess_result.get("error")
+    )
+    selected_graph = (
+        revised_graph if has_valid_revised_graph else analysis_result.get("data")
+    )
+    algorithm = analysis_result.get("algorithm")
+    return build_causal_graph_model(
+        selected_graph,
+        graph_id=REPORT_GRAPH_ASSET_KEY,
+        algorithm=str(algorithm) if algorithm else "",
+        graph_source="postprocessed" if has_valid_revised_graph else "original",
+        revision_summary=str(postprocess_result.get("revision_summary") or ""),
+    )
+
+
+def _prompt_json(value: Any) -> str:
+    """把结构化提示词输入渲染成稳定的 JSON 文本。
+
+    ChatPromptTemplate 对字典和列表只做 str()，会得到单引号、None 和无缩进的 Python
+    字面量；这里统一转成 JSON，和预处理节点的 data_summary 写法保持一致。
+    """
+
+    return json.dumps(value, ensure_ascii=False, indent=2)
+
+
+_REPORT_METADATA_COLUMN_FIELDS = (
+    "inferred_type",
+    "unique_count",
+    "is_constant",
+    "missing_ratio",
+    "causal_suitability",
+    "possible_id",
+    "stats",
+    "issues",
+)
+
+_REPORT_METADATA_QUALITY_FIELDS = (
+    "total_missing_ratio",
+    "constant_columns",
+    "high_missing_columns",
+)
+
+
+def _report_metadata_for_prompt(analysis_parameters: Any) -> str:
+    """给报告模型的数据概览：规模、列清单和每列的类型与质量标记。
+
+    只保留报告需要的事实，去掉 ``value_counts`` 等取值分布，使提示词长度随列数线性
+    增长而不是随每列的取值数量增长。
+    """
+
+    params = analysis_parameters if isinstance(analysis_parameters, dict) else {}
+    column_profiles = params.get("column_profiles")
+    columns = [str(column) for column in (params.get("columns") or [])]
+    if not columns and isinstance(column_profiles, dict):
+        columns = [str(column) for column in column_profiles]
+
+    profiles: dict[str, dict] = {}
+    if isinstance(column_profiles, dict):
+        for column, profile in column_profiles.items():
+            if not isinstance(profile, dict):
+                continue
+            profiles[str(column)] = {
+                field: profile[field]
+                for field in _REPORT_METADATA_COLUMN_FIELDS
+                if field in profile
+            }
+
+    quality = params.get("quality_assessment")
+    quality_summary: dict[str, Any] = {}
+    if isinstance(quality, dict):
+        quality_summary = {
+            field: quality[field]
+            for field in _REPORT_METADATA_QUALITY_FIELDS
+            if field in quality
+        }
+
+    return _prompt_json({
+        "n_rows": params.get("n_rows"),
+        "n_cols": params.get("n_cols", len(columns) or None),
+        "columns": columns,
+        "column_profiles": profiles,
+        "quality_assessment": quality_summary,
+    })
+
+
+def _report_asset_manifest(assets: dict[str, Any]) -> list[dict[str, str]]:
+    """给模型看的资源清单：只有资源键、块类型和简短描述，不含数据点。"""
+    manifest: list[dict[str, str]] = []
+    for asset_key, asset in assets.items():
+        if isinstance(asset, ChartAsset):
+            manifest.append(
+                {
+                    "asset_key": asset_key,
+                    "block_type": "chart",
+                    "description": describe_chart_asset(asset),
+                }
+            )
+            continue
+        algorithm = asset.metadata.get("algorithm") or "未知算法"
+        graph_source = asset.metadata.get("graph_source") or "original"
+        manifest.append(
+            {
+                "asset_key": asset_key,
+                "block_type": "causal_graph",
+                "description": f"因果图（算法 {algorithm}，来源 {graph_source}）",
+            }
+        )
+    return manifest
+
+
+def _report_evidence_manifest(evidence_refs: list[Any]) -> list[dict[str, str]]:
+    """给模型看的证据清单：只有证据 ID 和简短描述。"""
+    return [
+        {"evidence_id": evidence.evidence_id, "description": evidence.description}
+        for evidence in evidence_refs
+    ]
+
+
+def _report_document_from_state(state: CausalAgentState):
+    """从 State 读取结构化报告文档；缺失或类型不符时返回 None。"""
+    document = state.get("report_document")
+    return document if isinstance(document, ReportDocument) else None
+
+
+def _report_followup_context(state: CausalAgentState) -> dict[str, str]:
+    """报告追问只使用摘要、资源和证据说明，不把图表数据和图模型塞进提示词。"""
+    document = _report_document_from_state(state)
+    if document is None:
+        return {
+            "report_summary": "",
+            "asset_notes": "",
+            "source_notes": "",
+            "evidence_notes": "",
+        }
+    asset_notes: list[str] = []
+    for asset_key, asset in document.assets.items():
+        if isinstance(asset, ChartAsset):
+            asset_notes.append(f"- {asset_key}: {describe_chart_asset(asset)}")
+        else:
+            algorithm = asset.metadata.get("algorithm") or "未知算法"
+            asset_notes.append(f"- {asset_key}: 因果图（算法 {algorithm}）")
+    source_notes = [
+        f"- {source.source_id}: {source.kind} {source.title}"
+        + (f" {source.url}" if source.url else "")
+        for source in document.sources
+    ]
+    evidence_notes = [
+        f"- {evidence.evidence_id}: {evidence.description}"
+        for evidence in document.evidence_refs
+    ]
+    return {
+        "report_summary": report_document_summary(document),
+        "asset_notes": "\n".join(asset_notes),
+        "source_notes": "\n".join(source_notes),
+        "evidence_notes": "\n".join(evidence_notes),
+    }
+
+
 async def report_node(state: CausalAgentState, llm: ChatOpenAI) -> dict:
+    """报告模块：生成结构化报告文档。
+
+    模型只产出 ReportDraft（报告标题、块结构、Markdown 文本和资源/证据引用）；
+    图表资源、因果图模型、来源和证据全部由后端注入并校验。资源引用、块 ID 或
+    证据引用非法时抛出 ReportSchemaError，进入图节点受控错误路径，不保存部分报告。
     """
-    报告模块：
-    主要是对所有的参数生成一份报告
-    
-    """
-    # 分离 system prompt 和 messages placeholder
-    system_prompt_template = (
-        """
+    chart_assets = coerce_chart_assets(state.get("chart_assets"))
+    assets: dict[str, Any] = dict(chart_assets)
+    graph_asset = _report_graph_asset(state)
+    if graph_asset is not None:
+        assets[graph_asset.graph_id] = graph_asset
+
+    resources = build_report_resources(
+        file_summary=state.get("file_summary"),
+        web_search_result=state.get("web_search_result"),
+        rag_evidence=state.get("deep_agent_rag_evidence"),
+        web_evidence=state.get("deep_agent_web_evidence"),
+    )
+
+    system_prompt_template = """
          system role: {system_role}
          #输出语言：{report_language}
-         
-         你的任务是根据用户的对话历史和当前状态，按照要求的报告格式生成一份综合的，完整的因果领域报告
+
+         你的任务是根据用户的对话历史和当前状态，生成一份综合、完整的因果领域报告。
          # 当前状态摘要
          1. 预处理结果：{preprocess_summary}
          2. 预处理元数据：{preprocess_meta_data}
-         2. 因果分析结果：{causal_analysis_result}
-        3. 知识库结果：{knowledge_base_result}
-        4. 联网搜索结果：{web_search_result}
-        5. 后处理结果：{postprocess_result}
-        6. 算法解释补充：{method_context}
+         3. 因果分析结果：{causal_analysis_result}
+         4. 知识库结果：{knowledge_base_result}
+         5. 联网搜索结果：{web_search_result}
+         6. 后处理结果：{postprocess_result}
+         7. 算法解释补充：{method_context}
 
         ## 因果分析结果解读规则
         - 如果因果分析结果包含 error_type，请明确说明算法未能产生有效因果图，不要声称“没有因果关系”。
@@ -1317,31 +1516,39 @@ async def report_node(state: CausalAgentState, llm: ChatOpenAI) -> dict:
         - 只有当算法 success 为 true 且边列表为空时，才可以表述为“未发现显著因果边/因果关系”。
         - 如果算法解释补充中出现 DirectLiNGAM，请明确说明线性、非高斯、误差独立、DAG 和无潜在混杂假设。
         - DirectLiNGAM 的带权边只能解释为模型假设下的候选因果关系，不得写成实验已验证事实。
-         
+
+        ## 报告文档结构
+        你必须返回一个 JSON 对象，只包含 title 和 blocks 两个字段：
+        - title：报告标题。
+        - blocks：报告块数组。每个块必须有唯一的 id 和 type，允许的类型只有四种：
+          1. section：{{"id": "...", "type": "section", "title": "章节标题", "children": [子块]}}
+          2. markdown：{{"id": "...", "type": "markdown", "content": "Markdown 文本", "evidence_refs": []}}
+          3. chart：{{"id": "...", "type": "chart", "title": "图表标题", "asset_key": "资源键"}}
+          4. causal_graph：{{"id": "...", "type": "causal_graph", "title": "图标题", "asset_key": "资源键"}}
+
+        ## 硬性规则
+        - 只有 markdown 块的 content 字段可以包含 Markdown，例如标题、列表、有序列表、表格、引用、代码块、加粗和链接。
+        - 禁止生成 HTML 标签、CSS、Base64 图片、图片标签或图表占位符，图表与因果图一律使用资源块表达。
+        - chart 和 causal_graph 块的 asset_key 必须来自下面“可用资源”列出的资源键，不得自行编造。
+        - markdown 块的 evidence_refs 只能引用下面“可用证据”列出的证据 ID；没有可用证据时请留空数组。
+        - 块 id 在整篇报告中必须唯一，使用稳定的英文或拼音短名。
+        - 不要重新计算或编造数据，图表数据由系统根据真实数据注入。
+
+        ## 可用资源
+        {asset_manifest}
+
+        ## 可用证据
+        {evidence_manifest}
+
         ## 报告结构要求
-        1. **数据概览**：基于上述数据概览进行总结
-
-        2. **数据可视化**：在合适的位置插入图表，帮助读者理解数据分布
-            - 如果用户没有提到具体的变量类型，必须插入所有变量的图表，变量需要从预处理元数据中获取
-            - 如果用户提到了具体的变量类型，则只插入该变量的图表，变量类型需要从预处理元数据中获取
-        3. **分析过程**：详细描述因果分析的步骤和方法
-        4. **分析结果**：总结主要发现和因果关系
-
-        ## 图表插入规则
-        - 当你想要插入某个图表时，直接在文本中使用对应的占位符(占位符见预处理元数据)
-        - 例如：要展示年龄分布，就写 [[CHART:histogram_age]]
-        - 占位符需要单独成行，前后空一行
-        - 在占位符前后添加必要的文字说明，解释这个图表展示了什么
-        ### 示例格式:
-        #### 年龄分布特征
-        从收集的数据来看，用户年龄主要集中在...
-
-        [[CHART:histogram_age]]
-
-        上图展示了年龄的分布情况，我们可以观察到...、
+        1. 数据概览：基于数据概览进行总结。
+        2. 数据可视化：在合适的位置使用 chart 块展示数据分布，并在图表前后补充文字说明。
+           - 如果用户没有提到具体的变量类型，必须包含“可用资源”中的全部图表。
+           - 如果用户提到了具体的变量类型，则只包含该类型的图表。
+        3. 分析过程：详细描述因果分析的步骤和方法。
+        4. 分析结果：总结主要发现和因果关系；当“可用资源”中存在因果图时，使用 causal_graph 块展示。
         """
-    )
-    
+
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", system_prompt_template),
@@ -1349,21 +1556,6 @@ async def report_node(state: CausalAgentState, llm: ChatOpenAI) -> dict:
         ]
     )
 
-    # 格式化字符串输出
-    runnable = prompt | llm | StrOutputParser()
-    
-    meta_data = await asyncio.to_thread(
-        metadata_summary,
-        state.get("analysis_parameters", {}),
-        state.get("visualizations", {}),
-    )
-    mapping_data = await asyncio.to_thread(
-        metadata_mapping,
-        meta_data,
-        state.get("visualizations", {}),
-    )
-    
-    # 在invoke时，将模板变量和消息历史分开传入
     knowledge_summary = format_rag_summary_for_prompt(
         state.get("knowledge_base_result", {}),
         max_questions=3,
@@ -1373,43 +1565,45 @@ async def report_node(state: CausalAgentState, llm: ChatOpenAI) -> dict:
         state.get("web_search_result", {}),
     )
 
-    response = await runnable.ainvoke({
-        "messages": llm_prompt_messages(state["messages"]),
-        "preprocess_meta_data": meta_data,
-        "preprocess_summary": state.get("preprocess_summary", {}),
-        "causal_analysis_result": state.get("causal_analysis_result", {}),
-        "knowledge_base_result": knowledge_summary,
-        "web_search_result": web_summary,
-        "postprocess_result": state.get("postprocess_result", {}),
-        "method_context": _causal_method_context_for_report(
-            state.get("causal_analysis_result", {})
-        ),
-        "report_language": _report_language_instruction(),
-        "system_role": causal_report_prompt()
-    })
-
-    report_complete_message = AIMessage(
-        content="决策：因果分析报告已生成完成。",
-        name="report"
+    draft = await ainvoke_structured(
+        llm=llm,
+        schema=ReportDraft,
+        prompt=prompt,
+        inputs={
+            "messages": llm_prompt_messages(state["messages"]),
+            "preprocess_meta_data": _report_metadata_for_prompt(
+                state.get("analysis_parameters")
+            ),
+            "preprocess_summary": state.get("preprocess_summary", {}),
+            "causal_analysis_result": state.get("causal_analysis_result", {}),
+            "knowledge_base_result": knowledge_summary,
+            "web_search_result": web_summary,
+            "postprocess_result": state.get("postprocess_result", {}),
+            "method_context": _causal_method_context_for_report(
+                state.get("causal_analysis_result", {})
+            ),
+            "report_language": _report_language_instruction(),
+            "system_role": causal_report_prompt(),
+            "asset_manifest": _prompt_json(_report_asset_manifest(assets)),
+            "evidence_manifest": _prompt_json(
+                _report_evidence_manifest(resources.evidence_refs)
+            ),
+        },
+        node_name="report",
     )
-    # 占位符替换：将报告中的占位符替换为实际的 HTML 图片标签
 
-    ## 注释:避免数据库中存入最终报告的html图片标签，导致数据库爆炸
-    # final_report = response
-    # try:
-    #     for placeholder, base64_str in mapping_data.items():
+    document = build_report_document(
+        draft,
+        assets=assets,
+        sources=resources.sources,
+        evidence_refs=resources.evidence_refs,
+    )
 
-    #         html_img = f'<img src="data:image/png;base64,{base64_str}" alt="{placeholder}" style="max-width:100%; height:auto; display:block; margin:20px 0;" />'
-    #         final_report = final_report.replace(placeholder, html_img)
-        
-    # except Exception:
-    #     # 如果替换失败，仍然返回原始报告（不含图片）
-    #     final_report = response
-    # 只返回新消息和最终报告
     return {
-        "final_report": response,  
-        "visualization_mapping": mapping_data,
-        "messages": [report_complete_message]
+        "report_document": document,
+        "messages": [
+            AIMessage(content="决策：因果分析报告已生成完成。", name="report")
+        ],
     }
 
 async def normal_chat_node(state: CausalAgentState,llm: ChatOpenAI) -> dict:
@@ -1449,7 +1643,10 @@ async def inquiry_answer_node(state: CausalAgentState, llm: ChatOpenAI) -> dict:
         2. 知识库结果：{knowledge_base_result}
         3. 联网搜索结果：{web_search_result}
         4. 后处理结果：{postprocess_result}
-        5. 报告：{final_report}
+        5. 报告摘要：{report_summary}
+        6. 报告资源说明：{asset_notes}
+        7. 报告来源说明：{source_notes}
+        8. 报告证据说明：{evidence_notes}
         
         # 你的任务：根据历史摘要和所有分析结果，回答用户问题
         - 用户的问题：{messages}
@@ -1471,6 +1668,7 @@ async def inquiry_answer_node(state: CausalAgentState, llm: ChatOpenAI) -> dict:
     web_summary = format_web_search_summary_for_prompt(
         state.get("web_search_result", {}),
     )
+    followup_context = _report_followup_context(state)
 
     response = await runnable.ainvoke({
         "messages": llm_prompt_messages(state["messages"]),
@@ -1478,7 +1676,10 @@ async def inquiry_answer_node(state: CausalAgentState, llm: ChatOpenAI) -> dict:
         "knowledge_base_result": knowledge_summary,
         "web_search_result": web_summary,
         "postprocess_result": state.get("postprocess_result", {}),
-        "final_report": state.get("final_report", {}),
+        "report_summary": followup_context["report_summary"],
+        "asset_notes": followup_context["asset_notes"],
+        "source_notes": followup_context["source_notes"],
+        "evidence_notes": followup_context["evidence_notes"],
         "system_role": causal_prompt()
     })
     # 只返回新消息

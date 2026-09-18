@@ -6,6 +6,7 @@ from app.auth.session_guard import get_current_session_user
 import logging
 import json
 from app.chat.response_storage import project_causal_graph, render_summary_for_display
+from Agent.Report.document import ReportSchemaError, parse_report_document
 from app.chat.execution_phases import assemble_execution_phases
 from app.agent.persistence_cleanup import enqueue_checkpoint_cleanup_many
 from app.db import record_database_failure
@@ -227,6 +228,7 @@ def load_session_content():
                 if sender == "ai" and row["has_attachment"]:
                     causal_graph_data = None
                     visualization_mapping = None
+                    report_document = None
 
                     ## attachment格式：{"type": "causal_graph", "content": {...}}
                     for attachment in attachments_by_message.get(int(row["id"]), []):
@@ -255,7 +257,31 @@ def load_session_content():
                                     },
                                 )
 
-                    if causal_graph_data:
+                        elif attachment["attachment_type"] == "report_document":
+                            try:
+                                report_document = parse_report_document(
+                                    json.loads(attachment["content"])
+                                )
+                            except (json.JSONDecodeError, ReportSchemaError):
+                                log_event(
+                                    LOGGER,
+                                    "chat.attachment.degraded",
+                                    details={
+                                        "attachment_type": "report_document",
+                                        "reason_code": "protocol_error",
+                                    },
+                                )
+
+                    if report_document is not None:
+                        # 结构化报告历史恢复：附件 JSON 通过后端 schema 校验后
+                        # 包装成前端使用的报告载荷，非法内容只回退到消息预览正文。
+                        message["text"] = {
+                            "type": "report",
+                            "layout": "report",
+                            "render_mode": "structured",
+                            "document": report_document,
+                        }
+                    elif causal_graph_data:
                         message_content = causal_graph_data
 
                         # 早期版本把 Agent 内部图格式写进了附件，读取历史会话时

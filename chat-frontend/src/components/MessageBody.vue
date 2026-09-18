@@ -2,10 +2,15 @@
 import { computed } from 'vue'
 import { renderMarkdown } from '../renderers/markdown-adapter'
 import CausalGraph from './CausalGraph.vue'
+import ReportRenderer from './ReportRenderer.vue'
 import type { CausalGraphData, MessageText, StructuredMessage } from '../types/domain'
 
 const props = defineProps<{ text: MessageText }>()
 const structured = computed<StructuredMessage | null>(() => typeof props.text === 'string' ? null : props.text)
+// 结构化报告由专用渲染器接管；MessageBody 不再拼接报告 HTML。
+const isReportDocument = computed(() => structured.value?.type === 'report'
+  && structured.value.render_mode === 'structured'
+  && structured.value.document !== undefined)
 const isGraph = computed(() => {
   const data = structured.value?.data
   return structured.value?.type === 'causal_graph'
@@ -27,7 +32,8 @@ const summaryHtml = computed(() => {
 </script>
 
 <template>
-  <div v-if="isGraph" class="report-content causal-report">
+  <ReportRenderer v-if="isReportDocument" :document="structured?.document" />
+  <div v-else-if="isGraph" class="report-content causal-report">
     <div v-if="structured?.summary" class="markdown-content" v-html="summaryHtml"></div>
     <CausalGraph v-if="graph" :graph="graph" />
   </div>

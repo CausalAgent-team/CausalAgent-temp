@@ -22,14 +22,10 @@ for key, value in {
 
 
 def _install_import_stubs():
-    """隔离路由测试不需要的数据库、绘图和向量库依赖。"""
+    """隔离路由测试不需要的数据库和向量库依赖。"""
     agent_connect = types.ModuleType("Database.agent_connect")
     agent_connect.require_frozen_file_for_job = lambda *args, **kwargs: None
     sys.modules.setdefault("Database.agent_connect", agent_connect)
-
-    data_visualize = types.ModuleType("Agent.Processing.data_visualize")
-    data_visualize.generate_visualizations = lambda *args, **kwargs: {}
-    sys.modules.setdefault("Agent.Processing.data_visualize", data_visualize)
 
 _install_import_stubs()
 
