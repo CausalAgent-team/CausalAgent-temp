@@ -64,14 +64,77 @@ FinalizationGate 拒绝时额外发布 `progress` 阶段说明，只含 `summary
 
 新 Deep Agent 报告的 `final_result.data` 可包含程序生成的 `finalization_status`：`valid` 表示最终结构化决策已通过当前 Job/attempt/lease、AlgorithmResult 与 Action Ledger 校验；`degraded` 表示一次修正仍未通过，但系统生成了安全报告并将 Job 置为 `succeeded`。`degraded` 结果不展示未经 Gate 验证的主图，也不把内部校验错误、provider ID、raw result 或工具参数返回给用户。该字段是结果质量元数据，不是模型的 `outcome`，旧 Job 没有该字段时按兼容语义处理。
 
-联网搜索成功且存在结果时，报告终态的 `final_result.data` 额外包含最多 9 条引用。报告/追问使用的搜索结果与公开引用共用 `WEB_SEARCH_MAX_RESULTS=9` 上限。引用只公开网页标题和 URL，不返回网页正文、搜索工具内部字段或完整搜索结果：
+新报告终态是结构化报告文档，`final_result.data` 的形状如下：
 
 ```json
 {
   "type": "final_result",
   "data": {
-    "type": "causal_graph",
-    "summary": "报告正文",
+    "type": "report",
+    "layout": "report",
+    "render_mode": "structured",
+    "document": {
+      "schema_version": 1,
+      "report_id": "report_550e8400e29b41d4a716446655440000",
+      "title": "因果分析报告",
+      "blocks": [
+        {
+          "id": "section_summary",
+          "type": "section",
+          "title": "结论摘要",
+          "children": [
+            {
+              "id": "markdown_summary",
+              "type": "markdown",
+              "content": "## 结论\n\n- 变量 X 与变量 Y 呈正相关",
+              "evidence_refs": ["ev_7c9e6679e25b4c3a8f0b123456789abc"]
+            }
+          ]
+        },
+        { "id": "chart_age", "type": "chart", "title": "年龄分布", "asset_key": "chart_histogram_age" },
+        { "id": "graph_main", "type": "causal_graph", "title": "主要因果关系", "asset_key": "graph_main" }
+      ],
+      "assets": {
+        "chart_histogram_age": {
+          "asset_key": "chart_histogram_age",
+          "type": "chart",
+          "chart_type": "histogram",
+          "data": { "bins": [20, 25, 30], "counts": [4, 8] },
+          "metadata": { "variable": "age", "sample_count": 1200, "unit": null },
+          "options": { "show_tooltip": true }
+        },
+        "graph_main": {
+          "graph_id": "graph_main",
+          "schema_version": 1,
+          "nodes": [
+            { "id": "node_age", "variable": "age", "label": "age", "metadata": {}, "evidence_refs": [] }
+          ],
+          "edges": [
+            {
+              "id": "edge_age_income",
+              "source": "node_age",
+              "target": "node_income",
+              "edge_type": "directed",
+              "weight": 0.42,
+              "metadata": {},
+              "evidence_refs": []
+            }
+          ],
+          "metadata": { "algorithm": "causal_pc", "graph_source": "postprocessed" }
+        }
+      },
+      "sources": [
+        { "source_id": "src_550e8400e29b41d4a716446655440000", "kind": "file", "title": "data.csv", "file_id": 123, "url": null }
+      ],
+      "evidence_refs": [
+        {
+          "evidence_id": "ev_7c9e6679e25b4c3a8f0b123456789abc",
+          "source_ids": ["src_550e8400e29b41d4a716446655440000"],
+          "locator": { "columns": ["age", "income"], "rows": [1, 1200] },
+          "description": "年龄和收入字段的相关性统计结果"
+        }
+      ]
+    },
     "references": [
       {
         "title": "网页标题",
@@ -82,9 +145,13 @@ FinalizationGate 拒绝时额外发布 `progress` 阶段说明，只含 `summary
 }
 ```
 
-引用随 assistant 消息独立持久化；重新加载会话时通过 `message.references` 返回相同的 `title + url` 数组。后端只提供该字段契约，不要求前端展示引用。报告、普通问答和报告追问节点的公开正文使用 `text_delta` 增量；预处理和后处理节点不发送文字增量。算法选择说明使用独立的 `decision_delta`，不进入聊天正文。
+报告文档只使用四种块类型：`section` 包含子块，`markdown` 保存自然语言文本，`chart` 和 `causal_graph` 通过 `asset_key` 引用 `assets` 中的资源。`markdown.content` 是新报告中唯一允许出现 Markdown 的字段，列表、标题、表格、引用、代码块和链接继续复用普通聊天的 Markdown 解析器；模型不生成 HTML、CSS、Base64 图片、图片标签或图表占位符。图表资源第一阶段只支持 `histogram`、`bar` 和 `heatmap`，数据是经过校验的原始数值，前端使用 SVG 与 CSS 绘制。因果图资源是业务模型，前端通过投影函数转换为 vis-network 载荷，`graph_semantics` 等 Agent 内部字段不出现在公开结果中。
 
-报告终态包含主因果图时，`final_result.data` 的 `type` 为 `causal_graph`，图本身在 `data` 字段：`nodes` 是 `{id, label}` 节点数组，`edges` 是 `{from, to, arrows, dashes, label}` 边数组，对应前端 vis-network 的节点与边结构。`graph_source` 为 `postprocessed` 时表示该图经过后处理修订，为 `original` 时表示直接采用算法原图，`revision_summary` 给出修订说明。Agent 内部使用的标准化算法图（节点名列表与 `source`/`target` 端点）在结果展示层投影成上述载荷，`graph_semantics` 等内部字段不出现在公开结果中；会话历史和实时 SSE 返回同一份载荷。
+因果图的节点 ID 由变量名生成（例如 `node_age`），边 ID 由端点变量名生成（例如 `edge_age_income`），端点重复时追加序号后缀；节点和边 ID 只用于渲染与选择事件。`sources` 的 `source_id` 和 `evidence_refs` 的 `evidence_id` 使用前缀加随机 UUID，不在其中编码标题、文件名或数组位置。
+
+`sources` 和 `evidence_refs` 由后端根据冻结文件、联网搜索和检索证据生成，报告块只引用 `evidence_id`；ID 使用前缀加随机 UUID，不在其中编码标题、文件名或数组位置，也不保存原始文件正文。模型返回的块 ID 重复、块类型未知、`asset_key` 不存在或类型不匹配、`evidence_id` 不存在时，报告节点进入受控错误路径并返回降级报告文档，不保存部分报告。
+
+联网搜索成功且存在结果时，报告终态额外包含最多 9 条 `references`。报告/追问使用的搜索结果与公开引用共用 `WEB_SEARCH_MAX_RESULTS=9` 上限。引用只公开网页标题和 URL，不返回网页正文、搜索工具内部字段或完整搜索结果。引用随 assistant 消息独立持久化；重新加载会话时通过 `message.references` 返回相同的 `title + url` 数组。后端只提供该字段契约，不要求前端展示引用。报告、普通问答和报告追问节点的公开正文使用 `text_delta` 增量；预处理和后处理节点不发送文字增量。算法选择说明使用独立的 `decision_delta`，不进入聊天正文。
 
 ## Resume 与 Cancel
 
