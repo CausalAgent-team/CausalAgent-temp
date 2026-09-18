@@ -13,10 +13,91 @@ export interface CausalGraphData {
   edges: Array<Record<string, unknown>>
 }
 
+export interface CausalGraphNode {
+  id: string
+  variable: string
+  label: string
+  metadata?: Record<string, unknown>
+  evidence_refs?: string[]
+}
+
+export interface CausalGraphEdge {
+  id: string
+  source: string
+  target: string
+  edge_type: string
+  weight?: number | null
+  metadata?: Record<string, unknown>
+  evidence_refs?: string[]
+}
+
+export interface CausalGraphModel {
+  graph_id: string
+  schema_version: number
+  nodes: CausalGraphNode[]
+  edges: CausalGraphEdge[]
+  metadata?: Record<string, unknown>
+}
+
+export type ChartType = 'histogram' | 'bar' | 'heatmap'
+
+export interface ChartAssetData {
+  bins?: number[]
+  counts?: number[]
+  categories?: string[]
+  variables?: string[]
+  matrix?: number[][]
+}
+
+export interface ChartAsset {
+  asset_key: string
+  type: 'chart'
+  chart_type: ChartType
+  data: ChartAssetData
+  metadata?: Record<string, unknown>
+  options?: Record<string, unknown>
+}
+
+/* 报告文档的业务模型；后端已校验，前端只消费投影后的数据。 */
+export interface ReportSource {
+  source_id: string
+  kind: string
+  title: string
+  file_id?: number | null
+  url?: string | null
+}
+
+export interface ReportEvidence {
+  evidence_id: string
+  source_ids?: string[]
+  locator?: Record<string, unknown>
+  description: string
+}
+
+export type ReportAsset = ChartAsset | CausalGraphModel
+
+export type ReportBlock =
+  | { id: string; type: 'section'; title?: string | null; children: ReportBlock[] }
+  | { id: string; type: 'markdown'; content: string; evidence_refs?: string[] }
+  | { id: string; type: 'chart'; title?: string | null; asset_key: string }
+  | { id: string; type: 'causal_graph'; title?: string | null; asset_key: string }
+
+export interface ReportDocument {
+  schema_version: number
+  report_id: string
+  title: string
+  blocks: ReportBlock[]
+  assets: Record<string, ReportAsset>
+  sources: ReportSource[]
+  evidence_refs: ReportEvidence[]
+}
+
 export interface StructuredMessage {
   type: string
   summary?: string
   layout?: string
+  render_mode?: string
+  document?: unknown
   data?: unknown
   references?: Reference[]
   [key: string]: unknown
