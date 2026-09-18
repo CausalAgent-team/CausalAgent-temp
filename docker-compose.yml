@@ -164,6 +164,7 @@ services:
       - /app/杂项
       - ./Agent/knowledge_base/models:/app/Agent/knowledge_base/models:ro
       - ./Agent/knowledge_base/db:/app/Agent/knowledge_base/db
+      - kb_multimodal_indexes:/app/Agent/knowledge_base/multimodal_indexes
       - ./tmp/rag_eval:/app/tmp/rag_eval
     depends_on:
       mysql-primary:
@@ -171,6 +172,8 @@ services:
       mysql-replica:
         condition: service_healthy
       db-bootstrap:
+        condition: service_completed_successfully
+      kb-indexes-sync:
         condition: service_completed_successfully
     networks:
       - causalagent_replica_network
@@ -258,6 +261,7 @@ services:
       - /app/杂项
       - ./Agent/knowledge_base/models:/app/Agent/knowledge_base/models:ro
       - ./Agent/knowledge_base/db:/app/Agent/knowledge_base/db
+      - kb_multimodal_indexes:/app/Agent/knowledge_base/multimodal_indexes
     depends_on:
       mysql-primary:
         condition: service_healthy
@@ -267,6 +271,8 @@ services:
         condition: service_completed_successfully
       causal-mcp:
         condition: service_healthy
+      kb-indexes-sync:
+        condition: service_completed_successfully
     networks:
       - causalagent_replica_network
     restart: unless-stopped
@@ -473,6 +479,7 @@ services:
       - /app/杂项
       - ./Agent/knowledge_base/models:/app/Agent/knowledge_base/models:ro
       - ./Agent/knowledge_base/db:/app/Agent/knowledge_base/db
+      - kb_multimodal_indexes:/app/Agent/knowledge_base/multimodal_indexes
       - ./tmp/rag_eval:/app/tmp/rag_eval
     depends_on:
       mysql-primary:
@@ -480,6 +487,8 @@ services:
       mysql-replica:
         condition: service_healthy
       db-bootstrap:
+        condition: service_completed_successfully
+      kb-indexes-sync:
         condition: service_completed_successfully
     networks:
       - causalagent_replica_network
@@ -667,6 +676,19 @@ services:
     mem_limit: 512m
     restart: unless-stopped
 
+  kb-indexes-sync:
+    image: python:3.11-slim
+    container_name: causalagent_kb_indexes_sync
+    volumes:
+      - .:/src:ro
+      - kb_multimodal_indexes:/app/Agent/knowledge_base/multimodal_indexes
+    command:
+      - sh
+      - -c
+      - cp -a /src/Agent/knowledge_base/multimodal_indexes/. /app/Agent/knowledge_base/multimodal_indexes/
+    networks:
+      - causalagent_replica_network
+
 networks:
   causalagent_replica_network:
     driver: bridge
@@ -689,4 +711,6 @@ volumes:
   grafana_data:
     driver: local
   alloy_positions:
+    driver: local
+  kb_multimodal_indexes:
     driver: local

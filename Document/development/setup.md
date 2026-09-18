@@ -45,7 +45,23 @@ docker compose -f docker-compose.yml ps searxng searxng-init valkey
 
 需要验证 Compose 合并后的部署契约时，使用 `docker compose config`；不要使用 `down -v` 清理共享数据库或搜索数据卷。
 
-开发 Compose 使用 `mysql-primary`、`mysql-replica`、`postgres-checkpoint`、`app`、`worker`、`causal-mcp`、`monitor`、`agent-persistence-cleanup`、`rag-eval-worker`、`searxng-init`、`searxng`、`valkey`、`loki`、`alloy` 和 `grafana`；固定端口和数据卷属于共享 Docker daemon 资源，多个 worktree 同时运行时必须采用独立 project/端口策略，不能误用 `down -v`。
+多模态索引使用可写命名卷 `kb_multimodal_indexes`，不直接挂载仓库目录：一次性的 `kb-indexes-sync` 服务在启动 `app`、`worker`、`rag-eval-worker` 之前把仓库里的 release 复制进卷。切换分支或 `git pull` 之后需要单独重新同步时执行：
+
+```bash
+docker compose -f docker-compose.yml run --rm kb-indexes-sync
+docker compose -f docker-compose.yml up -d app worker rag-eval-worker
+```
+
+在容器内通过 `/api/rag_eval/multimodal/releases/*` 发布新 release 之后，索引只写入卷，需要导出到仓库再提交，并重启读取索引的服务：
+
+```bash
+docker cp causalagent_app:/app/Agent/knowledge_base/multimodal_indexes/<release_id> ./Agent/knowledge_base/multimodal_indexes/
+docker compose -f docker-compose.yml up -d app worker rag-eval-worker
+```
+
+这条路径不能改回只读挂载，也不能直接挂宿主目录：Chroma 打开索引时会写入 `acquire_write` 写锁记录，只读挂载下第一次 RAG 查询就会降级为 `rag_unavailable`，直挂宿主目录则会把锁记录写进仓库里被跟踪的 release 文件。完整说明见 [`deployment.md`](deployment.md)。
+
+开发 Compose 使用 `mysql-primary`、`mysql-replica`、`postgres-checkpoint`、`app`、`worker`、`causal-mcp`、`monitor`、`agent-persistence-cleanup`、`rag-eval-worker`、`kb-indexes-sync`、`searxng-init`、`searxng`、`valkey`、`loki`、`alloy` 和 `grafana`；固定端口和数据卷属于共享 Docker daemon 资源，多个 worktree 同时运行时必须采用独立 project/端口策略，不能误用 `down -v`。
 
 ## 本地 Python
 

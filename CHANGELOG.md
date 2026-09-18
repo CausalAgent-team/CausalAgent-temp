@@ -1420,3 +1420,7 @@
   - 【契约与接线】：默认 Algorithm Registry 新增 `causal.cdfm`/`causal_cdfm`，工具只公开 `threshold`；新增连续数值输入边界、CPU CDFM runner、`directed_graph` 语义和独立矩阵方向转换。
   - 【结果与部署】：通过私有 `AlgorithmExecutionResponse` 保存 logits、probabilities、threshold 到 raw artifact，标准结果和公共事件不携带 raw 字段；causal-mcp 镜像固定 `cdfm-base==0.1.0`、CPU Torch 与 `CDFM_MODEL_PATH` 配置。
   - 【验收边界】：新增单元契约和独立 `CDFM_MCP_ENGINEERING_SMOKE` 入口；本轮不扩展算法路由、共识、准确率、模型常驻化或生产图环路修复承诺。
+- 【多模态索引目录改为可写命名卷】
+  - 【Compose】：开发、兼容副本、预发和生产把 `Agent/knowledge_base/multimodal_indexes` 从仓库直挂或只读挂载改为可写命名卷（`kb_multimodal_indexes`、`kb_multimodal_indexes_staging`、`kb_multimodal_indexes_prod`），覆盖会打开该索引的 app、worker 和开发/兼容副本的 rag-eval-worker；新增一次性 `kb-indexes-sync` 服务作为这些服务的 `service_completed_successfully` 依赖，在启动前把宿主 release 复制进卷；staging 的 `STAGING_VOLUME_NAMES` 同步登记新卷。
+  - 【文档】：部署文档新增“多模态索引目录与挂载”小节，说明 Chroma 构造 `PersistentClient` 时写入 `acquire_write` 写锁记录、只读挂载会让 RAG 降级为 `rag_unavailable`、卷与宿主 release 的一致性要求、发布后导出与卷重建步骤以及禁止 `down -v`；开发环境文档补充同步与导出命令并登记 `kb-indexes-sync`；根 AGENTS.md 增加对应核对项。
+  - 【测试】：`tests/test_staging_compose_contract.py` 改为断言四份 Compose 的可写命名卷挂载，并移除 staging 的索引只读挂载契约。

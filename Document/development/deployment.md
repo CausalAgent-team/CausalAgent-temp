@@ -33,6 +33,7 @@
 | `agent-persistence-cleanup` | 跨库删除 Job 父子图 checkpoint 和用户长期记忆 Store |
 | `rag-eval-worker` | 独立领取 RAG 摄取、候选、评测和治理队列任务 |
 | `searxng-init` | 一次性 init，首次启动时在配置目录内生成临时文件，完成 secret_key 注入和校验后原子发布 `settings.yml`，已存在则跳过 |
+| `kb-indexes-sync` | 一次性同步，把仓库里的多模态 release 复制进命名卷 `kb_multimodal_indexes`；作为 app、worker、rag-eval-worker 的启动依赖先运行 |
 | `searxng` / `valkey` | 固定版本的 SearXNG 联网学术搜索及其缓存/队列依赖 |
 | `loki` / `alloy` / `grafana` | 开发环境运行日志采集、存储和查看；只加入独立的 observability network |
 
@@ -48,12 +49,34 @@
 
 ## 预发部署
 
-`docker-compose.staging.yml` 是隔离预发拓扑，保留 `gateway`、`scripts/staging_environment_guard.py` 启动 guard 和独立 `rag-eval-worker`，并使用独立 MySQL 主从、PostgreSQL checkpoint、卷和 gateway 日志。所有 Python 服务先通过 guard 校验项目/DSN/数据库/卷名中的 production/prod 标识，`db-bootstrap` 成功后才启动应用服务；worker 还等待 `causal-mcp` healthy，并要求显式的 Deep Agent model/base/API key/context window 与 MCP service token/signing key。gateway 负责入口和日志轮转。staging 显式只读挂载多模态 index、active/previous runtime、assets 与 retrieval policy。它不自动加入开发专用 SearXNG/Valkey 或 Loki/Alloy/Grafana。
+`docker-compose.staging.yml` 是隔离预发拓扑，保留 `gateway`、`scripts/staging_environment_guard.py` 启动 guard 和独立 `rag-eval-worker`，并使用独立 MySQL 主从、PostgreSQL checkpoint、卷和 gateway 日志。所有 Python 服务先通过 guard 校验项目/DSN/数据库/卷名中的 production/prod 标识，`db-bootstrap` 成功后才启动应用服务；worker 还等待 `causal-mcp` healthy，并要求显式的 Deep Agent model/base/API key/context window 与 MCP service token/signing key。gateway 负责入口和日志轮转。staging 的多模态 index 使用可写命名卷 `kb_multimodal_indexes_staging`，active/previous runtime、assets 与 retrieval policy 仍为只读挂载。它不自动加入开发专用 SearXNG/Valkey 或 Loki/Alloy/Grafana。
 
 ## 生产部署
 
 `docker-compose.prod.yml` 使用生产 MySQL、PostgreSQL checkpoint、统一 bootstrap、Web、Agent worker、独立 `causal-mcp`、monitor、checkpoint cleanup 和独立 `rag-eval-worker`；生产环境不挂载源代码，使用独立卷、网络和日志轮转设置。worker 通过进程级 MCP Client pool 调用私有服务，必须显式提供不可变 Deep Agent 配置和 MCP 鉴权材料；它依赖 `causal-mcp` healthy 后才开始 claim Job。`causal-mcp` 使用独立不可变镜像、单 ASGI worker、默认最多 2 个并行 invocation 和 4 个等待队列，不开放宿主端口；每个已运行 invocation 使用独立单进程 executor 以支持精确取消。镜像内的 CDMIR 与 `cdfm-base==0.1.0` 固定版本，并使用 CPU Torch 依赖闭合 `pip check`；`CDFM_MODEL_PATH` 由部署环境显式传入。RAG evaluation worker 与主系统进程隔离，并通过独立评测卷共享必要的运行产物；它不带开发可观测性标签，不应把评测日志混入主系统观测流。当前生产 Compose 是单独的生产配置，不能假设它自动提供开发 Compose 的 MySQL replica、SearXNG、Loki/Alloy/Grafana 或故障切换能力。
 当前生产 Compose 未定义 SearXNG 服务；如果生产环境启用 `web_search_enabled`，必须另外提供可访问的 `SEARXNG_URL` 和对应的搜索服务部署，搜索不可用时仍遵循 worker 运行期降级语义。生产 readiness 和发布证据必须按 [`testing.md`](testing.md) 重新执行并记录，不能用单元或静态 Compose 检查替代。
+
+## 多模态索引目录与挂载
+
+`Agent/knowledge_base/multimodal_indexes/` 同时承担两个角色：它是正式 release 的存放位置，也是运行期读取的向量索引。发布接口在 `app` 容器内把通过门禁的 staged index 物化成 `<release_id>/chroma`；运行期各服务按 `multimodal_runtime/active_index.json` 的 `index_path` 打开其中的 `chroma`。
+
+这份索引不能只读挂载。Chroma 的持久层是 SQLite，`PersistentClient` 在构造阶段就要写入跨进程写锁记录（`acquire_write` 表），只读挂载下会抛 `error returned from database: (code: 8) attempt to write a readonly database`，第一次 RAG 查询就降级为 `rag_unavailable`；readiness 检查只读 pointer、manifest、embedding 和目录，不打开向量库，所以这个失败不会在 worker 启动时暴露。release 的字节稳定性由 manifest 校验保证：`_stable_file_chunks` 在计算 `chroma` 目录哈希时已经剔除 `acquire_write` 的建表和插入语句，锁记录不会让 release 校验失败。
+
+开发、兼容副本、预发和生产都把这条路径挂到可写命名卷：开发和兼容副本 Compose 使用 `kb_multimodal_indexes`（`app`、`worker`、`rag-eval-worker`），预发使用 `kb_multimodal_indexes_staging`（`app`、`worker`），生产使用 `kb_multimodal_indexes_prod`（`app`、`worker`）。四份 Compose 各有一个一次性 `kb-indexes-sync` 服务，把宿主目录里的 release 复制进卷，并作为上述服务的 `service_completed_successfully` 依赖在启动前运行；开发和兼容副本从仓库根目录复制，预发和生产从宿主 `Agent/knowledge_base/multimodal_indexes/` 复制。复制是合并式的，不删除卷内已有的 release。
+
+卷内容与宿主 release 必须指向同一个 release id。指针文件 `multimodal_runtime/active_index.json` 仍从宿主目录读取，不在卷内；两侧不一致时 `_resolve_multimodal_release` 会因找不到目录而抛错、RAG 不可用，如果指针里存在 fallback 项还会触发自动回退，改写指针并把原 active release 目录移入 `quarantine/`。需要在不重启整套服务的前提下重新同步时执行：
+
+```bash
+docker compose run --rm kb-indexes-sync
+```
+
+发布新 release 后仍按既有约定重启读取索引的服务（发布响应的 `requires_worker_restart=true`）。开发环境在容器内发布的新 release 只写入卷，需要导出到仓库后再提交：
+
+```bash
+docker cp causalagent_app:/app/Agent/knowledge_base/multimodal_indexes/<release_id> ./Agent/knowledge_base/multimodal_indexes/
+```
+
+卷内容落后于宿主目录时按显式步骤重建，而不是依赖 `down -v`：停止读取索引的服务，删除对应命名卷（开发为 `<项目名>_kb_multimodal_indexes`，预发和生产分别为 `<项目名>_kb_multimodal_indexes_staging`、`<项目名>_kb_multimodal_indexes_prod`），再重新 `up`，卷会先由 `kb-indexes-sync` 从宿主目录填充。`docker compose down -v` 会连同 MySQL、PostgreSQL、SearXNG 数据卷一起删除，任何时候都不要使用。
 
 ## RAG release 与 worker 生命周期
 
