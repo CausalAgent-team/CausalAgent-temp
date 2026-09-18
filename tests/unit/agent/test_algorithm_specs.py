@@ -9,7 +9,9 @@ from pydantic import ValidationError
 
 from Agent.deep_agent_tools.algorithm_specs import (
     AlgorithmSpec,
+    CausalCdfmInput,
     CausalPcInput,
+    CDFM_SPEC,
     DEFAULT_ALGORITHM_SPECS,
     OLC_SPEC,
     PC_SPEC,
@@ -22,6 +24,7 @@ def test_default_specs_only_enable_reviewed_runtime_capabilities() -> None:
     assert [spec.capability_id for spec in DEFAULT_ALGORITHM_SPECS] == [
         "causal.pc",
         "causal.direct_lingam",
+        "causal.cdfm",
     ]
     assert OLC_SPEC.capability_id == "causal.olc"
     assert OLC_SPEC not in DEFAULT_ALGORITHM_SPECS
@@ -31,6 +34,10 @@ def test_default_specs_only_enable_reviewed_runtime_capabilities() -> None:
     assert PC_SPEC.default_timeout_seconds == 300
     assert PC_SPEC.default_concurrency == 2
     assert len(PC_SPEC.spec_digest) == 64
+    assert CDFM_SPEC.tool_name == "causal_cdfm"
+    assert CDFM_SPEC.requires == frozenset({"continuous_tabular_dataset"})
+    assert CDFM_SPEC.default_timeout_seconds == 600
+    assert CDFM_SPEC.default_concurrency == 1
 
 
 def test_spec_digest_and_tool_schema_are_stable() -> None:
@@ -52,6 +59,7 @@ def test_spec_digest_and_tool_schema_are_stable() -> None:
 def test_tool_snapshot_contains_capability_and_spec_identity() -> None:
     snapshot = build_tool_schema_snapshot()
     assert [item["capability_id"] for item in snapshot] == [
+        "causal.cdfm",
         "causal.direct_lingam",
         "causal.pc",
     ]
@@ -61,6 +69,18 @@ def test_tool_snapshot_contains_capability_and_spec_identity() -> None:
 def test_model_input_schema_rejects_out_of_range_alpha() -> None:
     with pytest.raises(ValidationError):
         CausalPcInput(alpha=1.0)
+
+
+@pytest.mark.parametrize("value", [-0.1, 1.1, "0.5", True])
+def test_cdfm_threshold_rejects_invalid_values(value) -> None:
+    with pytest.raises(ValidationError):
+        CausalCdfmInput(threshold=value)
+
+
+def test_cdfm_threshold_accepts_none_and_boundary_values() -> None:
+    assert CausalCdfmInput().threshold is None
+    assert CausalCdfmInput(threshold=0.0).threshold == 0.0
+    assert CausalCdfmInput(threshold=0.5).threshold == 0.5
 
 
 def test_spec_requires_an_assumption_and_stable_result_schema() -> None:

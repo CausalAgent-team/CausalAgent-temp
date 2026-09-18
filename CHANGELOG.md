@@ -1410,6 +1410,13 @@
   - 【合并】：在 `refactor(Frontend)/refactor-fronten` 上合并 `origin/develop`（PR #74 合入的 Deep Agent 后端与公共事件契约）；文本冲突只出现在 `CHANGELOG.md` 与 `Document/README.md`，自动合并的 `Dockerfile`、`config/settings.py`、三个 Compose、`tests/README.md` 和 `Document/` 页面逐项核对后同时保留双方内容。
   - 【阶段明细】：Vue 端补齐 `decision_delta` 增量、`decision_kind` 公开前缀、同一工具生命周期事件的挂起与放行、明细早于父 `node_start` 时的暂存补绘，以及 `node_retry`/`node_end` 的错误与重试文案。
   - 【展示】：新增草稿与公开决策的逐字展示（40 字/秒、25ms 步进）；终态校正同一草稿，报告布局同样复用；`prefers-reduced-motion` 和终态直接展示完整文本。聊天区新增 80px 阈值滚动跟随，用户主动上滑后停止跟随。
+  - 【验证】：`npm ci` 与 `npm run check`（Lint、`vue-tsc -b` 类型检查、35 项 unit/contract、9 项组件、1 项 Mock E2E、生产构建）通过；`python -m pytest tests/integration/deployment/test_chat_frontend.py` 8 项通过；`docker compose -f docker-compose.yml config --quiet` 通过；遗留静态脚本的 19 项 Node 测试继续通过。
+  - 【计划外修正】：`chat-frontend` 的 `typecheck` 原本是 `vue-tsc --noEmit`，在 solution 配置下不检查任何文件，改为 `vue-tsc -b` 后才暴露并修正事件适配器的一处类型错误；`Document/development/deployment.md` 的镜像阶段数量和依赖锁定说明按当前 `Dockerfile` 更新。
+  - 【边界】：真实 Flask、数据库、worker、模型和浏览器人工验收未执行；`app/static/` 旧静态文件及其配套 Node 测试仍按 `Document/development/chat-frontend.md` 的清单由用户自行删除。
   - 【工具事件顺序】：同一工具的 `tool_call_start`/`tool_call_result` 改为在该决策的逐字展示追平之后才出现；收到完整 `decision` 只结束该决策流，工具结果与任务终态负责强制放行，修正原先收到完整 `decision` 就立即放行、决策文本与工具调用同时出现的问题。
   - 【界面尺寸】：普通端侧栏宽度由 300px 调整为 360px，会话与文件条目在右侧为编辑、删除按钮留出固定位置，标题不再被按钮压住；用户消息气泡的上下内边距由 7px 调整为 12px。
   - 【计划外修正】：`chat-frontend` 的 `typecheck` 原本是 `vue-tsc --noEmit`，在 solution 配置下不检查任何文件，改为 `vue-tsc -b` 后修正了事件适配器的一处类型错误；`Document/development/deployment.md` 的镜像阶段数量和依赖锁定说明按当前 `Dockerfile` 更新。
+- 【CDFM v0.1 causal-mcp 能力接入】
+  - 【契约与接线】：默认 Algorithm Registry 新增 `causal.cdfm`/`causal_cdfm`，工具只公开 `threshold`；新增连续数值输入边界、CPU CDFM runner、`directed_graph` 语义和独立矩阵方向转换。
+  - 【结果与部署】：通过私有 `AlgorithmExecutionResponse` 保存 logits、probabilities、threshold 到 raw artifact，标准结果和公共事件不携带 raw 字段；causal-mcp 镜像固定 `cdfm-base==0.1.0`、CPU Torch 与 `CDFM_MODEL_PATH` 配置。
+  - 【验收边界】：新增单元契约和独立 `CDFM_MCP_ENGINEERING_SMOKE` 入口；本轮不扩展算法路由、共识、准确率、模型常驻化或生产图环路修复承诺。

@@ -366,6 +366,12 @@
   "schema_version": "p1-v1",
   "tools": [
     {
+      "capability_id": "causal.cdfm",
+      "schema_sha256": "684fcb15ec6310c65e8cea153a45be5b53336bb468cf1ce85fa2490fce7f5e89",
+      "spec_digest": "ae915de1dbfe74816396de781c0d024ce0eb040531dd8d4616685e2bb7d9762c",
+      "tool_name": "causal_cdfm"
+    },
+    {
       "capability_id": "causal.direct_lingam",
       "schema_sha256": "723945a1c464701111fa0c2b5399ef06264230e540a19f3ecde58e50c07ea59c",
       "spec_digest": "718ac64c3efe7790b5bda8a2b700e850cfa554500ad11a095d8fba9450898915",

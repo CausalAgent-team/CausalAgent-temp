@@ -25,7 +25,7 @@ from Agent.CausalAgentMCP.runner_registry import (
     build_default_registry,
 )
 from Agent.CausalAgentMCP.service import CausalMcpService, McpServiceError
-from Agent.deep_agent_tools.algorithm_specs import OLC_SPEC, PC_SPEC
+from Agent.deep_agent_tools.algorithm_specs import CDFM_SPEC, OLC_SPEC, PC_SPEC
 from Agent.deep_agent_tools.error_codes import SafeErrorCode
 from Agent.deep_agent_tools.identity import build_result_ref
 from Agent.deep_agent_tools.models import (
@@ -35,6 +35,7 @@ from Agent.deep_agent_tools.models import (
     McpInvocationContext,
     StandardizedGraph,
 )
+from Agent.deep_agent_tools.algorithm_executor import AlgorithmExecutionResponse
 from Agent.deep_agent_tools.mcp_algorithm_executor import McpAlgorithmExecutor
 from app.agent.worker.mcp_client_pool import (
     McpClientPool,
@@ -50,9 +51,15 @@ def test_default_mcp_registry_does_not_expose_disabled_olc() -> None:
     registry = build_default_registry()
 
     assert [item[0] for item in registry.capability_summary()] == [
+        "causal.cdfm",
         "causal.direct_lingam",
         "causal.pc",
     ]
+    assert registry.resolve(
+        CDFM_SPEC.capability_id,
+        CDFM_SPEC.version,
+        CDFM_SPEC.spec_digest,
+    ).capability_id == CDFM_SPEC.capability_id
     with pytest.raises(RunnerRegistryError) as exc_info:
         registry.resolve(
             OLC_SPEC.capability_id,
@@ -174,6 +181,8 @@ def test_service_returns_normalized_result_without_raw_runner_text() -> None:
     assert payload["result"]["status"] == "valid"
     assert payload["result"]["standardized_graph"]["edges"][0]["source"] == "A"
     assert "runner" not in payload["result"]
+    assert payload["raw_payload"]["data"]["edges"][0]["from"] == "A"
+    assert "raw_payload" not in payload["result"]
 
 
 def test_service_logs_job_invocation_timeline_and_slow_threshold() -> None:
@@ -715,6 +724,57 @@ def test_executor_reuses_invocation_id_for_structured_mcp_result() -> None:
     )
     assert output.invocation_id == context.invocation_id
     assert output.result_ref == result.result_ref
+
+
+def test_executor_keeps_private_runner_payload_outside_algorithm_result() -> None:
+    context = _context()
+    command = _command(context)
+    result = AlgorithmResult(
+        result_ref=build_result_ref(invocation_id=context.invocation_id),
+        invocation_id=context.invocation_id,
+        provider_call_id=command.provider_call_id,
+        capability_id=command.capability_id,
+        capability_version=command.capability_version,
+        status="valid",
+        standardized_graph=StandardizedGraph(graph_semantics="dag"),
+        provenance=AlgorithmResultProvenance(
+            job_id=context.job_id,
+            attempt_count=context.attempt_count,
+            lease_epoch=context.lease_epoch,
+            input_identity=command.input_identity,
+            spec_digest=command.spec_digest,
+            invocation_id=context.invocation_id,
+            capability_id=command.capability_id,
+            capability_version=command.capability_version,
+        ),
+    )
+    raw_payload = {
+        "success": True,
+        "raw_results": {
+            "logits": [[0.0, 1.0], [2.0, 0.0]],
+            "probabilities": [[0.0, 0.7], [0.8, 0.0]],
+            "threshold": 0.5,
+        },
+    }
+
+    class FakePool:
+        async def call_tool(self, _arguments, **_kwargs):
+            return SimpleNamespace(
+                structured_content={
+                    "ok": True,
+                    "result": result.model_dump(mode="json"),
+                    "raw_payload": raw_payload,
+                }
+            )
+
+    output = asyncio.run(
+        McpAlgorithmExecutor(FakePool(), signing_key="secret").execute(
+            command, context
+        )
+    )
+    assert isinstance(output, AlgorithmExecutionResponse)
+    assert output.result.result_ref == result.result_ref
+    assert output.raw_payload == raw_payload
 
 
 def test_executor_checks_guard_after_remote_response_and_propagates_revocation() -> None:

@@ -99,6 +99,7 @@ def standardize_runner_graph(
         "causal.pc": "pdag",
         "causal.olc": "latent_mixed_graph",
         "causal.direct_lingam": "dag_target_to_source",
+        "causal.cdfm": "directed_graph",
     }.get(capability_id, "algorithm_graph")
     return StandardizedGraph(graph_semantics=semantics, nodes=nodes, edges=edges)
 

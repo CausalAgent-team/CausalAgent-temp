@@ -129,6 +129,7 @@ def _graph_semantics(capability_id: str) -> str:
         "causal.pc": "partially_directed_graph",
         "causal.olc": "latent_partially_directed_graph",
         "causal.direct_lingam": "dag",
+        "causal.cdfm": "directed_graph",
     }.get(capability_id, "causal_graph")
 
 
@@ -405,7 +406,7 @@ class CausalMcpService:
         *,
         request: ExecuteAlgorithmRequest,
         entry: Any,
-        trace: dict[str, str | int | None],
+        trace: dict[str, Any],
         started_at: float,
     ) -> dict[str, Any]:
         command = request.command
@@ -609,6 +610,8 @@ class CausalMcpService:
             )
 
         trace["executor_slot_id"] = outcome.executor_slot_id
+        trace["peak_rss_bytes"] = outcome.peak_rss_bytes
+        trace["cpu_seconds"] = outcome.cpu_seconds
         try:
             # Never return a result produced by a worker/attempt/lease that
             # became stale while the CPU-bound algorithm was running.
@@ -693,7 +696,9 @@ class CausalMcpService:
                         invocation_id=command.invocation_id,
                         capability_id=command.capability_id,
                         capability_version=entry.version,
-                        algorithm_runner_version="causalachieve-v1",
+                        algorithm_runner_version=str(
+                            raw_result.get("runner_version") or "causalachieve-v1"
+                        ),
                     ),
                 )
             except Exception:
@@ -740,7 +745,10 @@ class CausalMcpService:
                     "reason_code": reason_code,
                 },
             )
-        return {"ok": True, "result": result.model_dump(mode="json"), "trace": trace}
+        response = {"ok": True, "result": result.model_dump(mode="json"), "trace": trace}
+        if result.status == "valid":
+            response["raw_payload"] = dict(raw_result)
+        return response
 
     async def cancel_payload(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         """鉴权并幂等取消一个精确的 MCP invocation。"""
