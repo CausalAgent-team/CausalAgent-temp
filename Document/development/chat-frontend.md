@@ -15,7 +15,7 @@ Vue 构建产物由 Flask 在同源路径提供：入口为 `/chat-assets/` 对�
 
 `chat-frontend/src/` 按 API schema、Pinia store、Job runtime、组件、渲染器和设计样式分域。后端响应先以 `unknown` 接收，再由 Zod schema 解析；Store 只保存可序列化领域状态。`AbortController`、ReadableStream reader、定时器和 vis-network 实例由 controller 或 Vue 生命周期持有，不放入 Pinia。
 
-普通端 Vue 化不改变 Flask 业务 API、Session/文件/Job 数据规则、数据库、worker 或 SSE 路径。旧版静态文件已经退出路由、配置和部署契约；由于仓库规则禁止 agent 删除重要文件，其物理清理由用户按本文“旧文件清理边界”执行。
+普通端 Vue 化不改变 Flask 业务 API、Session/文件/Job 数据规则、数据库、worker 或 SSE 路径。旧版静态文件已经退出路由、配置和部署契约，并已按用户授权从仓库物理删除；它们在旧页面上新增的行为已经在本 Vue 工程按等价语义重新实现。
 
 ## SSE 与 Job 状态
 
@@ -78,24 +78,10 @@ Vue 构建缺失属于运行期请求边界：`/`、`/chat-next` 和 `/chat-asse
 
 当前部署产物只包含 Vue 构建链。回退通过部署上一份经过验证的代码与镜像完成，不触碰 Session、Job、消息或数据库；不再依赖同一运行版本中的旧前端路由。
 
-## 旧文件清理边界
+## 旧静态文件清理
 
-下列文件已无运行时引用，但仍属于重要回滚文件，agent 不得直接删除。`app/static/js/` 中的脚本还包含 develop 在旧版普通聊天页面上新增的公开决策、假流式展示和滚动跟随改动，这些行为已经在本 Vue 工程按等价语义重新实现。用户确认当前代码、构建产物和人工验收记录均可接受后，应自行删除：
+旧版普通端静态页面及其样式、脚本已经删除：`app/static/chat.html`、`app/static/css/style.css`，以及 `app/static/js/` 下的 `script.js`、`chat_layout_state.js`、`execution_phase_state.js`、`job_subscription_state.js`、`stream_state.js` 和 `marked.min.js`。这些脚本原先承载 develop 在旧页面上的公开决策、假流式展示和滚动跟随改动，对应行为已经在本 Vue 工程实现，删除后 `/` 与 `/chat-next` 只提供 Vue 构建产物。
 
-- `app/static/chat.html`
-- `app/static/css/style.css`
-- `app/static/js/script.js`
-- `app/static/js/chat_layout_state.js`
-- `app/static/js/execution_phase_state.js`
-- `app/static/js/job_subscription_state.js`
-- `app/static/js/stream_state.js`
-- `app/static/js/marked.min.js`
+只验证这些静态文件的测试随实现一起删除：`tests/unit/frontend/` 的四个 Node 测试，以及 `admin-frontend/tests/e2e-mock/chat-auth.spec.ts`。后者直接读取旧页面文件并用旧页面的元素 id 断言管理员入口与越权提示；管理员端 Mock E2E 仍由 `admin-frontend/tests/e2e-mock/admin-ui.spec.ts` 覆盖，管理员入口与越权回跳的真实浏览器覆盖在 `admin-frontend/tests/e2e/admin.spec.ts`，该文件目前使用的仍是旧页面元素 id，需要按 Vue 普通端选择器更新后才能作为有效证据。
 
-配套的 Node 测试只验证上述静态文件，需要和它们一起删除，否则测试会指向不存在的文件：
-
-- `tests/unit/frontend/chat_layout_state.test.cjs`
-- `tests/unit/frontend/chat_stream_state.test.cjs`
-- `tests/unit/frontend/execution_phase_state.test.cjs`
-- `tests/unit/frontend/job_subscription_state.test.cjs`
-
-不得删除 `app/static/rag_eval_app/`，它是独立的 RAG 工作台静态产物。物理删除完成后，应重新执行 `rg` 失效引用检查、普通端部署契约测试和 `git diff --check`；在用户实际删除前，变更日志和验收报告只能写“运行时已移除、物理文件待用户清理”。
+`app/static/rag_eval_app/` 不属于旧页面，它是 RAG 工作台自己的静态产物，继续保留。删除后已用 `rg` 复查，仓库中不再存在指向这些路径的代码、配置或测试引用。

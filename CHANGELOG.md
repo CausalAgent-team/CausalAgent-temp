@@ -1441,3 +1441,14 @@
   - 【样式】：报告主题变量集中在 `.report-document`，报告背景、标题层级、章节间距、Markdown 表格、证据提示和移动端布局由组件作用域样式控制，模型不返回类名或样式。
 - 【文档：结构化报告契约】
   - 【API、架构与数据库】：更新 `Document/api/agent-jobs.md`、`Document/api/chat-files.md`、`Document/architecture/agent-runtime.md`、`Document/database/migrations-checkpoints.md` 和 `Document/development/chat-frontend.md`，写入报告文档结构、`report_document` 附件、历史恢复与降级行为、迁移 head 和前端渲染边界。
+- 【应用 README：Deep Agent 与 CDFM 能力补齐】
+  - 【中文 README：技术栈与运行流程】：技术栈加入 Deep Agents、TypeScript 和 Pinia；Agent 运行流程改为父图编排预处理、Deep Agent 子图、终态校验与报告节点，并补上 PostgreSQL 长期记忆的独立边界。
+  - 【中文 README：深度分析 Agent】：新增该章节，说明显式状态投影、父子图独立执行身份、按 `requires/produces` 分层的工具编排、长期记忆写入白名单、有界预算、终态校验与取消路径。
+  - 【中文 README：算法清单】：因果分析改为默认启用 PC、DirectLiNGAM 和 CDFM，补充 CDFM 只公开 `threshold`、缺失值掩码与分类变量不适用的边界，并说明 OLC 的实现保留但不进入默认工具面。
+  - 【中文 README：报告、配置与部署】：报告生成补充结构化报告渲染；最小配置新增 `DEEP_AGENT_*`、`CAUSAL_MCP_*` 和 `CDFM_MODEL_PATH`；Docker 说明改为 Node 24 分别构建普通端与管理员 Vue。
+  - 【中文 README：开发入口与项目结构】：新增“普通端前端（Vue）”章节，说明 `chat-frontend/` 构建产物的入口、缺少构建时的 503 边界、Vite 开发方式和检查命令；项目结构补充 `chat-frontend/`、`Agent/deep_agent` 和 `Agent/deep_agent_tools`。
+  - 【英文 README】：同步上述能力、配置、开发入口和项目结构。
+- 【旧普通端静态前端清理】
+  - 【删除静态文件】：删除 `app/static/chat.html`、`app/static/css/style.css` 与 `app/static/js/` 下的 `script.js`、`chat_layout_state.js`、`execution_phase_state.js`、`job_subscription_state.js`、`stream_state.js`、`marked.min.js`，并移除随之为空的 `app/static/css` 与 `app/static/js` 目录；`app/static/rag_eval_app/` 是 RAG 工作台自己的产物，保留原样。
+  - 【失效测试】：删除只覆盖旧页面的 `tests/unit/frontend/` 四个 Node 测试与 `admin-frontend/tests/e2e-mock/chat-auth.spec.ts`，管理员端 Mock E2E 仍由 `admin-ui.spec.ts` 承担。
+  - 【文档】：`Document/development/chat-frontend.md` 的“旧文件清理边界”改写为已完成的清理记录，并说明 `admin-frontend/tests/e2e/admin.spec.ts` 仍在使用旧页面元素 id，需要按 Vue 普通端选择器更新。
