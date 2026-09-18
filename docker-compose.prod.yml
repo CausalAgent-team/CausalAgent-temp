@@ -258,7 +258,7 @@ services:
       - ./Agent/knowledge_base/models:/app/Agent/knowledge_base/models:ro
       - ./Agent/knowledge_base/source:/app/Agent/knowledge_base/source:ro
       - ./Agent/knowledge_base/db:/app/Agent/knowledge_base/db
-      - ./Agent/knowledge_base/multimodal_indexes:/app/Agent/knowledge_base/multimodal_indexes:ro
+      - kb_multimodal_indexes_prod:/app/Agent/knowledge_base/multimodal_indexes
       - ./Agent/knowledge_base/multimodal_runtime:/app/Agent/knowledge_base/multimodal_runtime:ro
       - ./Agent/knowledge_base/multimodal_assets:/app/Agent/knowledge_base/multimodal_assets:ro
       - ./Agent/knowledge_base/rag/runtime:/app/Agent/knowledge_base/rag/runtime:ro
@@ -282,6 +282,8 @@ services:
       postgres-checkpoint:
         condition: service_healthy
       db-bootstrap:
+        condition: service_completed_successfully
+      kb-indexes-sync:
         condition: service_completed_successfully
     
     networks:
@@ -380,7 +382,7 @@ services:
       - ./Agent/knowledge_base/models:/app/Agent/knowledge_base/models:ro
       - ./Agent/knowledge_base/source:/app/Agent/knowledge_base/source:ro
       - ./Agent/knowledge_base/db:/app/Agent/knowledge_base/db
-      - ./Agent/knowledge_base/multimodal_indexes:/app/Agent/knowledge_base/multimodal_indexes:ro
+      - kb_multimodal_indexes_prod:/app/Agent/knowledge_base/multimodal_indexes
       - ./Agent/knowledge_base/multimodal_runtime:/app/Agent/knowledge_base/multimodal_runtime:ro
       - ./Agent/knowledge_base/multimodal_assets:/app/Agent/knowledge_base/multimodal_assets:ro
       - ./Agent/knowledge_base/rag/runtime:/app/Agent/knowledge_base/rag/runtime:ro
@@ -390,6 +392,8 @@ services:
         condition: service_completed_successfully
       causal-mcp:
         condition: service_healthy
+      kb-indexes-sync:
+        condition: service_completed_successfully
     networks:
       - causalagent_network_prod
     restart: unless-stopped
@@ -615,6 +619,24 @@ services:
     networks:
       - causalagent_network_prod
 
+  kb-indexes-sync:
+    image: python:3.11-slim
+    container_name: causalagent_kb_indexes_sync_prod
+    volumes:
+      - ./Agent/knowledge_base/multimodal_indexes:/src:ro
+      - kb_multimodal_indexes_prod:/app/Agent/knowledge_base/multimodal_indexes
+    command:
+      - sh
+      - -c
+      - cp -a /src/. /app/Agent/knowledge_base/multimodal_indexes/
+    networks:
+      - causalagent_network_prod
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 networks:
   causalagent_network_prod:
     driver: bridge
@@ -624,6 +646,9 @@ networks:
     # - 设置为internal（无外网访问）
 
 volumes:
+  kb_multimodal_indexes_prod:
+    driver: local
+
   mysql_data_prod:
     driver: local
     # 生产环境的数据备份策略：

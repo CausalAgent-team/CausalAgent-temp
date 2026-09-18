@@ -65,7 +65,7 @@ services:
     command: ["sh", "-c", "python scripts/staging_environment_guard.py && exec python -m Database.bootstrap"]
     environment: &app_environment
       COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME is required}
-      STAGING_VOLUME_NAMES: rag_eval_staging_mysql_primary,rag_eval_staging_mysql_replica,rag_eval_staging_postgres_checkpoint,rag_eval_staging_runs,rag_eval_staging_sources,rag_eval_staging_datasets,rag_eval_staging_gateway_logs
+      STAGING_VOLUME_NAMES: rag_eval_staging_mysql_primary,rag_eval_staging_mysql_replica,rag_eval_staging_postgres_checkpoint,rag_eval_staging_runs,rag_eval_staging_sources,rag_eval_staging_datasets,rag_eval_staging_gateway_logs,kb_multimodal_indexes_staging
       MYSQL_HOST: mysql-primary
       MYSQL_WRITE_HOST: mysql-primary
       MYSQL_READ_HOSTS: mysql-replica
@@ -165,7 +165,7 @@ services:
       - rag_eval_staging_reports:/app/tmp/rag_eval/reports
       - ./Agent/knowledge_base/models:/app/Agent/knowledge_base/models:ro
       - ./Agent/knowledge_base/db:/app/Agent/knowledge_base/db
-      - ./Agent/knowledge_base/multimodal_indexes:/app/Agent/knowledge_base/multimodal_indexes:ro
+      - kb_multimodal_indexes_staging:/app/Agent/knowledge_base/multimodal_indexes
       - ./Agent/knowledge_base/multimodal_runtime:/app/Agent/knowledge_base/multimodal_runtime:ro
       - ./Agent/knowledge_base/multimodal_assets:/app/Agent/knowledge_base/multimodal_assets:ro
       - ./Agent/knowledge_base/rag/runtime:/app/Agent/knowledge_base/rag/runtime:ro
@@ -173,6 +173,7 @@ services:
     depends_on:
       mysql-replica: {condition: service_healthy}
       db-bootstrap: {condition: service_completed_successfully}
+      kb-indexes-sync: {condition: service_completed_successfully}
     logging: &bounded_logging
       driver: json-file
       options: {max-size: 10m, max-file: "3"}
@@ -203,7 +204,7 @@ services:
     volumes:
       - ./Agent/knowledge_base/models:/app/Agent/knowledge_base/models:ro
       - ./Agent/knowledge_base/db:/app/Agent/knowledge_base/db
-      - ./Agent/knowledge_base/multimodal_indexes:/app/Agent/knowledge_base/multimodal_indexes:ro
+      - kb_multimodal_indexes_staging:/app/Agent/knowledge_base/multimodal_indexes
       - ./Agent/knowledge_base/multimodal_runtime:/app/Agent/knowledge_base/multimodal_runtime:ro
       - ./Agent/knowledge_base/multimodal_assets:/app/Agent/knowledge_base/multimodal_assets:ro
       - ./Agent/knowledge_base/rag/runtime:/app/Agent/knowledge_base/rag/runtime:ro
@@ -211,6 +212,7 @@ services:
     depends_on:
       db-bootstrap: {condition: service_completed_successfully}
       causal-mcp: {condition: service_healthy}
+      kb-indexes-sync: {condition: service_completed_successfully}
     stop_grace_period: 75s
     logging: *bounded_logging
 
@@ -265,10 +267,24 @@ services:
       app: {condition: service_started}
     logging: *bounded_logging
 
+  kb-indexes-sync:
+    image: python:3.11-slim
+    container_name: causalagent_kb_indexes_sync_staging
+    volumes:
+      - ./Agent/knowledge_base/multimodal_indexes:/src:ro
+      - kb_multimodal_indexes_staging:/app/Agent/knowledge_base/multimodal_indexes
+    command:
+      - sh
+      - -c
+      - cp -a /src/. /app/Agent/knowledge_base/multimodal_indexes/
+    networks: [rag_eval_staging]
+    logging: *bounded_logging
+
 networks:
   rag_eval_staging: {driver: bridge}
 
 volumes:
+  kb_multimodal_indexes_staging: {driver: local}
   rag_eval_staging_mysql_primary: {driver: local}
   rag_eval_staging_mysql_replica: {driver: local}
   rag_eval_staging_postgres_checkpoint: {driver: local}
