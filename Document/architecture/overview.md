@@ -8,7 +8,7 @@
 
 CausalAgent 的 Web 入口是 `CausalAgent.py`，它调用 `app/__init__.py` 的 `create_app()`。应用启动时先执行数据库就绪检查，再注册 `auth`、`chat`、`files`、`agent`、`main`、`admin` 和 `admin_page` 七个 blueprint。Web 进程只负责认证、短请求、Job 入队和 SSE 推送，不在请求线程中执行 Agent、MCP 或 RAG 长任务。
 
-桌面入口 `Run_causal.py` 委托给 `windows-client/causalagent_desktop/`，只创建 Windows WebView2（Edge Chromium）壳并加载已经配置的 CausalAgent origin。开发默认地址是 `http://127.0.0.1:5001/`，Release 包嵌入正式 HTTPS origin；桌面端不包含 Flask、MySQL、worker、模型或第二套前端，服务器仍必须先提供现有 Web 页面、Cookie Session、API、SSE 和文件能力。普通用户前端是 Flask 静态资源；管理员前端是独立的 Vue 3 + TypeScript 工程，但生产运行时由 Flask 提供构建后的同源静态文件。
+桌面入口 `Run_causal.py` 委托给 `windows-client/causalagent_desktop/`，只创建 Windows WebView2（Edge Chromium）壳并加载已经配置的 CausalAgent origin。开发默认地址是 `http://127.0.0.1:5001/`，Release 包嵌入正式 HTTPS origin；桌面端不包含 Flask、MySQL、worker、模型或第二套前端，服务器仍必须先提供现有 Web 页面、Cookie Session、API、SSE 和文件能力。普通用户前端只使用 `chat-frontend/` 构建后的 Vue 同源静态资源：`/` 是正式入口，`/chat-next` 是兼容别名。管理员前端是独立的 Vue 3 + TypeScript 工程，生产运行时同样由 Flask 提供构建后的同源静态文件。
 
 ## 进程与职责
 
@@ -71,6 +71,7 @@ MySQL replica、SearXNG/Valkey、Loki/Alloy/Grafana 或自动故障切换。部�
 - `Agent/` 负责 LangGraph 图、结构化输出、MCP/RAG 工具节点和因果工具。
 - `Database/` 负责连接、迁移、bootstrap、monitor、checkpoint setup 和 Agent 持久化清理 worker。
 - `admin-frontend/` 只负责管理员页面与 API 消费，不替代 Flask 后端，也不直接连接数据库。
+- `chat-frontend/` 只负责普通用户页面、API schema、Pinia 领域状态、Job SSE 传输和声明式渲染；其 SSE 传输使用 `fetch()` + `ReadableStream`，不改变 Flask SSE 路径和内容。
 - `Document/admin/` 只描述管理员如何消费系统能力；数据库内部机制归 `Document/database/`。
 
 修改这些边界时，必须同时核对对应目录的局部 `AGENTS.md` 和本页链接的权威文档。

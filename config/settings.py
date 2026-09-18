@@ -127,6 +127,16 @@ class AppConfig:
             "DB_MONITOR_INTEGRITY_INTERVAL_SECONDS",
             default=86400,
         )
+        self.CHAT_FRONTEND_DIST_DIR = self._get_config(
+            "CHAT_FRONTEND_DIST_DIR",
+            required=False,
+            default="",
+        )
+        self.CHAT_VITE_DEV_SERVER_URL = self._get_config(
+            "CHAT_VITE_DEV_SERVER_URL",
+            required=False,
+            default="",
+        ).rstrip("/")
         self.ADMIN_VITE_DEV_SERVER_URL = self._get_config(
             "ADMIN_VITE_DEV_SERVER_URL",
             required=False,

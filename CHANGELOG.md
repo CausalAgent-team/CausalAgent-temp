@@ -1332,6 +1332,14 @@
 - 【工具生命周期与 RAG】：算法、RAG、Web Tool 在真实外部调用前后通过 worker `OrderedEventWriter` 写入有序 lifecycle start/result，并用稳定 `event_key` 支持重放幂等；RAG readiness、release id 和输入快照绑定已传入实际 RAG Tool，未就绪或 release 不匹配时调用前短路。新增取消事件同键 payload 一致性回归，避免 sink 与 stream 产生幂等冲突。
 - 【Ledger 归属补强与最终验证】：FinalizationGate 现在先对 Ledger 中指向当前 Job 的所有 invocation 统一校验 identity 与所有权字段，再仅纳入当前 attempt、lease、worker 和输入 hash 的算法记录；缺失、跨 Job 污染和当前 Job 的非法 invocation identity 均 fail-closed。新增相关回归后 Docker Agent unit/integration 共 `368 passed`；LangSmith 外部上报因测试环境 DNS 不可达产生告警，但不影响测试结果。
 
+- 【普通端 Vue 并行迁移】
+  - 【工程与传输层】：新增独立 `chat-frontend/` Vue 3 + TypeScript 工程，按 API schema、Pinia、Job runtime、组件和渲染器分域；普通端 SSE 改用 `fetch()` + `ReadableStream`，手工解析 `id/event/data`，保留 Flask SSE 路径和公共内容，增加未知事件游标、协议坏包和有界重连处理。
+  - 【入口与构建】：增加 `/chat-next`、`/chat-legacy`、`/chat-assets/` 和 `CHAT_FRONTEND_ENTRY`/`CHAT_FRONTEND_DIST_DIR`/`CHAT_VITE_DEV_SERVER_URL`；Docker 通过 Node 24 `chat-builder` 构建 Vue 产物，最终 runtime 不包含 Node/npm。迁移期根入口默认仍为旧版。
+  - 【文档与验证】：同步 `Document/`、`tests/README.md` 和普通端基线，明确启动配置错误以 `web.startup.failed` 日志加非零进程退出为失败证据。前端 Lint、类型检查、23 项 unit/contract、3 项组件、1 项 Mock E2E 和生产构建已通过；真实 Flask/数据库/worker/模型、Chrome/Edge、桌面壳等人工等价验收尚未完成，未切换根入口或删除旧版。
+- 【普通端 Vue 视觉等价修复】
+  - 【布局骨架】：以旧版 HTML/CSS/JS 为事实基线，恢复默认收起的 300px 抽屉侧栏、无顶部标题栏的主内容区，以及欢迎区与输入卡居中、会话输入卡置底的双状态 880px 内容列。
+  - 【视觉语义】：恢复浅绿用户气泡、无卡片 AI 与思考文本流、旧版输入卡/按钮/文件草稿、认证遮罩、设置弹窗、用户信息弹窗、报告和因果图样式，并把语言切换入口放回设置菜单。
+
 ---
 2026.9.16
 - 【问题修复】
@@ -1359,6 +1367,11 @@
   - 【稳定分类】：`worker.job.failed` 新增 `error_category` 字段，取值为 `provider_error/protocol_error/checkpoint_error/runtime_contract_error/internal_error`，只按异常类名（含基类）判定、不读取异常文本；`reason_code` 由固定 `node_error` 改为按异常映射到既有 `REASON_CODES`，未识别异常仍保留 `node_error`。
   - 【日志产出】：`worker.job.failed` 现在带上非 null 的 `exception_type` 与清理后的 `stack`，可定位到具体堆栈帧。
   - 【同步更新】：`Document/development/observability.md` 的事件表与关联链路补充 `error_category` 取值和内部诊断边界。
+
+- 【普通端 Vue 单架构收敛】
+  - 【布局与任务交互】：侧栏内容区改为占满剩余高度，使设置与用户入口固定在底部；Thinking 标题和执行步骤统一左对齐；移除独立取消按钮，运行时发送键显示旋转进度环与中心停止方块，再次点击沿用 Job 取消接口。
+  - 【入口与部署】：根路由固定提供 Vue 构建产物，`/chat-next` 仅保留兼容别名，移除 `/chat-legacy` 和 `CHAT_FRONTEND_ENTRY` 的路由、配置及三个 Compose 引用；缺少 Vue dist 时继续返回带 request ID 的稳定 503。
+  - 【旧文件边界】：旧普通端静态文件已经退出运行时引用；受仓库禁止 agent 删除重要文件的规则限制，物理文件仍保留并在普通端文档中列出人工删除清单，独立 RAG 工作台不在清理范围内。
 
 ---
 2026.9.17
@@ -1390,3 +1403,13 @@
   - 【载荷投影】：`process_final_result` 在展示层把 Agent 内部标准化图（节点名列表与 `source`/`target` 边）投影为前端 vis-network 的 `{id,label}` 节点与 `{from,to}` 边，边类型映射为箭头与虚线，权重按 `.6g` 作为边标签，`graph_semantics` 等内部字段不再进入公开载荷。
   - 【历史会话】：`/api/load_session` 读取 `causal_graph` 附件时执行同一投影，早期版本按内部格式写入的附件不需要重跑分析即可恢复显示。
   - 【失败可见】：前端 `renderCausalGraph` 把节点/边建表与网络创建一起纳入异常处理，数据格式不符合 vis-network 要求时在图上直接给出说明文本，同时更新聊天页脚本缓存版本号。
+
+---
+2026.9.18
+- 【普通端 Vue 合并 develop 的 Deep Agent 变更】
+  - 【合并】：在 `refactor(Frontend)/refactor-fronten` 上合并 `origin/develop`（PR #74 合入的 Deep Agent 后端与公共事件契约）；文本冲突只出现在 `CHANGELOG.md` 与 `Document/README.md`，自动合并的 `Dockerfile`、`config/settings.py`、三个 Compose、`tests/README.md` 和 `Document/` 页面逐项核对后同时保留双方内容。
+  - 【阶段明细】：Vue 端补齐 `decision_delta` 增量、`decision_kind` 公开前缀、同一工具生命周期事件的挂起与放行、明细早于父 `node_start` 时的暂存补绘，以及 `node_retry`/`node_end` 的错误与重试文案。
+  - 【展示】：新增草稿与公开决策的逐字展示（40 字/秒、25ms 步进）；终态校正同一草稿，报告布局同样复用；`prefers-reduced-motion` 和终态直接展示完整文本。聊天区新增 80px 阈值滚动跟随，用户主动上滑后停止跟随。
+  - 【验证】：`npm ci` 与 `npm run check`（Lint、`vue-tsc -b` 类型检查、35 项 unit/contract、9 项组件、1 项 Mock E2E、生产构建）通过；`python -m pytest tests/integration/deployment/test_chat_frontend.py` 8 项通过；`docker compose -f docker-compose.yml config --quiet` 通过；遗留静态脚本的 19 项 Node 测试继续通过。
+  - 【计划外修正】：`chat-frontend` 的 `typecheck` 原本是 `vue-tsc --noEmit`，在 solution 配置下不检查任何文件，改为 `vue-tsc -b` 后才暴露并修正事件适配器的一处类型错误；`Document/development/deployment.md` 的镜像阶段数量和依赖锁定说明按当前 `Dockerfile` 更新。
+  - 【边界】：真实 Flask、数据库、worker、模型和浏览器人工验收未执行；`app/static/` 旧静态文件及其配套 Node 测试仍按 `Document/development/chat-frontend.md` 的清单由用户自行删除。

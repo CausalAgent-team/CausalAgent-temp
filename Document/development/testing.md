@@ -13,11 +13,47 @@
 | RAG/多模态与隔离评测 | `tests/test_multimodal_*.py`、`tests/test_rag_eval_*.py`、`tests/acceptance/` | 来源/索引/release 契约、隔离队列与评测矩阵的分层检查 |
 | 管理员 Vue unit | `admin-frontend/tests/*.spec.ts` | API DTO、组件、看板/设置语义和 SQL digest 展示 |
 | 管理员 Mock E2E | `admin-frontend` `test:e2e:mock` | 无真实数据库的页面导航、鉴权和交互 |
+| 普通端 Vue unit/contract | `chat-frontend/tests/unit`、`tests/contract` | SSE parser、游标、Job reducer、公开决策与明细补绘、展示推进纯函数、幂等和 Flask JSON schema |
+| 普通端 Vue component/Mock E2E | `chat-frontend/tests/components`、`tests/e2e-mock` | 认证、Composer、消息时间线、假流式草稿与公开决策展示，以及模拟后端的登录/创建 Job/SSE 终态 |
+| 普通端 Flask 部署契约 | `tests/integration/deployment/test_chat_frontend.py` | 唯一 Vue 入口、dist 缺失 fail-closed、缓存头、Docker builder/runtime 和 Compose 变量 |
 | Windows 桌面逻辑 | `windows-client/tests/test_config.py`、`test_navigation_policy.py`、`test_runtime.py`、`test_launcher.py` | 配置优先级、URL/origin 白名单、运行时错误和 Edge 事件策略，不创建真实窗口 |
 | Windows 壳层 smoke | `windows-client/tests/run_windows_smoke.py`、`test_windows_smoke.py` | 隔离 HTTP stub、真实 WebView2 Edge Chromium 页面加载和窗口退出；只在 Windows 桌面会话执行 |
 | 隔离 E2E | `tests/run_admin_31_e2e.ps1` / `run_admin_32_e2e.ps1` | 空库升级、migration 往返、主从、PostgreSQL checkpoint、受控写入/删除和普通用户回归 |
 
 `tests/README.md` 是后端测试目录和 Docker 单元测试环境的补充入口；新增测试时先判断是否需要真实跨模块依赖，再选择 unit 或 integration。
+
+## 普通用户 Vue 前端
+
+在仓库根目录执行：
+
+```powershell
+Push-Location chat-frontend
+npm ci
+npm run lint
+npm run typecheck
+npm run test:unit
+npm run test:components
+npm run test:e2e:mock
+npm run build
+npm run check
+Pop-Location
+```
+
+`npm run check` 是普通端代码级门槛；当前实现覆盖 Lint、类型检查、unit/contract、组件测试、Mock Playwright E2E 和 Vite 生产构建。Mock E2E 不证明真实 Flask、Cookie Session、MySQL/PostgreSQL、worker、文件上传、模型、Chrome/Edge 双浏览器或桌面壳。
+
+Flask 入口和 Docker 静态契约由本地/发布前手工执行，不接入现有 CI：
+
+```powershell
+python -m pytest -p no:cacheprovider tests/integration/deployment/test_chat_frontend.py
+python -m py_compile app/main/routes.py config/settings.py tests/integration/deployment/test_chat_frontend.py
+docker compose -f docker-compose.yml config --quiet
+docker compose -f docker-compose.staging.yml config --quiet
+docker compose -f docker-compose.prod.yml config --quiet
+```
+
+真实验收必须在可用的 Flask、数据库、worker 和合成/授权模型环境中另行完成。至少要记录唯一 Vue 入口的认证、Session/文件、普通 Job、Thinking/图/Markdown、断线恢复、active Job、waiting_input/resume、运行态停止对账、错误路径、快速切换、Chrome/Edge、四视口和桌面壳结果。根入口切换是当前代码事实，但不能由自动化测试推导为真实生产验收通过。
+
+Vue dist 缺失需验证稳定的 503、`chat_frontend_missing` 和 request ID；`/chat-legacy` 应返回 404，三个 Compose 文件中不得再出现 `CHAT_FRONTEND_ENTRY`。
 
 ## Windows 桌面客户端
 

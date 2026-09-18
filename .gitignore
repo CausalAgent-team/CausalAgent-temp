@@ -231,6 +231,11 @@ admin-frontend/test-results/
 admin-frontend/playwright-report/
 .playwright-cli/
 app/rag_eval/frontend/node_modules/
+chat-frontend/node_modules/
+chat-frontend/dist/
+chat-frontend/*.tsbuildinfo
+chat-frontend/test-results/
+chat-frontend/playwright-report/
 app/static/rag_eval_app/
 !app/static/rag_eval_app/
 !app/static/rag_eval_app/assets/
