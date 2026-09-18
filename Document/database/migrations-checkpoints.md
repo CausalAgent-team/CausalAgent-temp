@@ -17,7 +17,7 @@ Docker Compose 中 `db-bootstrap` 是一次性服务，`app`、worker、monitor 
 
 ## 当前迁移链
 
-当前唯一 head 是 `u7a8b9c0d1e2`。develop 的 migration 作为主体链路，RAG 评测 DDL 使用独立且全仓唯一的 revision ID，最终由无 DDL 合流点统一；最终链路和 down revision 以文件内容为准：
+当前唯一 head 是 `v8b9c0d1e2f3`。develop 的 migration 作为主体链路，RAG 评测 DDL 使用独立且全仓唯一的 revision ID，最终由无 DDL 合流点统一；最终链路和 down revision 以文件内容为准：
 
 | Revision | 当前作用 |
 | --- | --- |
@@ -37,14 +37,16 @@ Docker Compose 中 `db-bootstrap` 是一次性服务，`app`、worker、monitor 
 | `s4d5e6f7a8b9` | develop `a0b1c2d3e4f5` 与 RAG 最终 head 的统一无 DDL head |
 | `t5e6f7a8b9c0` | 用户长期记忆清理 outbox，不处理或激活历史数据 |
 | `u7a8b9c0d1e2` | 把 database_monitor_snapshots.snapshot_key 扩展到 64 字符 |
+| `v8b9c0d1e2f3` | 为 chat_attachments.attachment_type 增加结构化报告附件类型 |
 
-`f8b9c0d1e2f3` 的 `down_revision` 声明为 `e4f5a6b7c8d9` 与 `e7a9b2c3d4f5`；develop 主链随后经 `f9a0b1c2d3e4`、`a1b2c3d4e5f6`、`b2c3d4e5f6a7`、`c3d4e5f6a7b8` 和 `a0b1c2d3e4f5` 继续，RAG 分支经 `r1...`、`r2...`、`r3...`、`g7...`、`h8...`、`i9...` 继续，最终由 `s4d5e6f7a8b9` 合流，再由 `t5e6f7a8b9c0` 线性追加记忆清理 outbox、由 `u7a8b9c0d1e2` 扩展快照键长度。回退这类合并迁移必须指定明确目标 revision，不能用 `alembic downgrade -1` 代替。
+`f8b9c0d1e2f3` 的 `down_revision` 声明为 `e4f5a6b7c8d9` 与 `e7a9b2c3d4f5`；develop 主链随后经 `f9a0b1c2d3e4`、`a1b2c3d4e5f6`、`b2c3d4e5f6a7`、`c3d4e5f6a7b8` 和 `a0b1c2d3e4f5` 继续，RAG 分支经 `r1...`、`r2...`、`r3...`、`g7...`、`h8...`、`i9...` 继续，最终由 `s4d5e6f7a8b9` 合流，再由 `t5e6f7a8b9c0` 线性追加记忆清理 outbox、由 `u7a8b9c0d1e2` 扩展快照键长度、由 `v8b9c0d1e2f3` 增加结构化报告附件类型。回退这类合并迁移必须指定明确目标 revision，不能用 `alembic downgrade -1` 代替。
 
 ## 破坏性事实
 
 - `f8b9c0d1e2f3` 建立 `checkpoint_cleanup_outbox` 后直接删除 MySQL `checkpoint_writes` 和 `checkpoints` 表及其数据；PostgreSQL 才是运行时 checkpoint 真相。downgrade 只重建空的兼容表结构，不恢复数据。
 - `t5e6f7a8b9c0` 只创建 `user_memory_cleanup_outbox`，不读取、不回填也不激活任何历史记忆数据。downgrade 只删除这张新表，不触碰 PostgreSQL Store 数据。
 - `u7a8b9c0d1e2` 只放宽 `database_monitor_snapshots.snapshot_key` 的字符上限，不改写现有快照内容。downgrade 恢复 32 字符上限；若此时仍存在超长快照键，MySQL 会拒绝执行而不是静默截断。
+- `v8b9c0d1e2f3` 只在 `chat_attachments.attachment_type` 枚举尾部追加 `report_document`，不删除或改写既有枚举值和历史附件。downgrade 先删除 `report_document` 附件行，再收缩枚举；被删除的结构化报告不能从已有消息正文恢复。
 - `a1b2c3d4e5f6` 直接 `DROP TABLE IF EXISTS uploaded_files`，创建 `file_objects`、`user_files` 和 Job 输入结构；不回填旧数据、不提供旧数据 fallback，也不增加旧数据拒绝迁移逻辑。downgrade 只恢复空的旧 `uploaded_files` 表结构。
 - 迁移脚本属于高风险历史事实，不应为了让本地旧库“看起来能升级”而静默删除、回填或修改历史 migration。
 

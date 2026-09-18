@@ -591,6 +591,7 @@
 
 .ai-message > .markdown-content,
 .ai-message > .report-content,
+.ai-message > .report-document,
 .ai-message > .unknown-message {
   width: 100%;
   min-width: 0;
@@ -668,6 +669,25 @@
   background: #fff;
   border: 1px solid #ddd;
   border-radius: 5px;
+}
+
+/* 结构化报告主题变量：报告块只消费这些变量，不各自决定颜色和间距。 */
+.report-document {
+  --report-background: #f7f8fa;
+  --report-surface: #ffffff;
+  --report-border: #e2e5e9;
+  --report-muted-background: #eef1f4;
+  --report-code-background: #eef1f4;
+  --report-accent: #0067c0;
+  --report-chart-color: #0067c0;
+  --report-text: #1f2937;
+  --report-title-size: 22px;
+  --report-section-title-size: 18px;
+  --report-chart-title-size: 15px;
+  --report-text-size: 15px;
+  --report-block-gap: 16px;
+  --report-radius: 10px;
+  --report-card-radius: 8px;
 }
 
 .thinking-block {

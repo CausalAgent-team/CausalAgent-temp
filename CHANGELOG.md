@@ -1420,3 +1420,20 @@
   - 【契约与接线】：默认 Algorithm Registry 新增 `causal.cdfm`/`causal_cdfm`，工具只公开 `threshold`；新增连续数值输入边界、CPU CDFM runner、`directed_graph` 语义和独立矩阵方向转换。
   - 【结果与部署】：通过私有 `AlgorithmExecutionResponse` 保存 logits、probabilities、threshold 到 raw artifact，标准结果和公共事件不携带 raw 字段；causal-mcp 镜像固定 `cdfm-base==0.1.0`、CPU Torch 与 `CDFM_MODEL_PATH` 配置。
   - 【验收边界】：新增单元契约和独立 `CDFM_MCP_ENGINEERING_SMOKE` 入口；本轮不扩展算法路由、共识、准确率、模型常驻化或生产图环路修复承诺。
+- 【报告模块：结构化报告文档】
+  - 【数据结构】：新增 `Agent/Report/document.py` 与 `Agent/Report/assets.py`，定义 `ReportDraft`、`ReportDocument`、四种报告块（`section`、`markdown`、`chart`、`causal_graph`）、图表资源、因果图业务模型、来源与证据模型，并提供块 ID 唯一性、块类型、资源引用和证据引用校验；因果图节点 ID 由变量名生成（如 `node_age`），边 ID 由端点变量名生成（如 `edge_age_income`），来源和证据 ID 使用前缀加随机 UUID，`markdown.content` 是新报告中唯一允许 Markdown 的字段。
+  - 【报告节点】：`report_node` 改为通过统一结构化输出入口生成 `ReportDraft`，图表资源、因果图模型、来源和证据由后端注入；块 ID 重复、块类型未知、`asset_key` 不存在或类型不匹配、`evidence_id` 不存在时进入受控错误路径并生成降级报告文档，不保存部分报告。提示词中的数据概览改为按列压缩后的 JSON 文本，只保留数据规模、列清单和每列的类型与质量标记，去掉每列的取值分布；资源清单和证据清单同样以 JSON 文本传入，避免字典字面量表示和提示词长度随取值数量增长。
+  - 【移除旧格式依赖】：新报告不再使用 `visualization_mapping`、Base64 图片、HTML 图片标签和 `[[CHART:...]]` 占位符；预处理阶段改为生成直方图、分类柱状图和相关性热力图的结构化数据（`bins`/`counts`、`categories`/`counts`、`variables`/`matrix`），不再生成 Base64 图表。
+  - 【State 与追问】：`CausalAgentState` 用 `chart_assets` 保存结构化图表资源、用 `report_document` 保存结构化报告文档，移除 `final_report` 与 `visualization_mapping`；路由判断和报告追问只读取报告摘要、资源说明、来源说明和证据说明。
+- 【报告终态与持久化】
+  - 【SSE】：`process_final_result` 报告分支返回 `{type: "report", layout: "report", render_mode: "structured", document}`，保留 `finalization_status` 与联网搜索 `references` 附加字段，不新增 SSE 事件类型；结构化报告不产生文字增量，`final_result` 到达后整份渲染为结构化报告组件。
+  - 【附件与迁移】：新增迁移 `v8b9c0d1e2f3` 为 `chat_attachments.attachment_type` 增加 `report_document`，只追加枚举值并保留历史附件；`prepare_ai_response_for_storage` 把完整报告文档写入 `report_document` 附件，`chat_messages.content` 只保存报告标题预览，新报告不再写入 `visualization` 附件。
+  - 【历史恢复】：`/api/load_session` 读取 `report_document` 附件后重新通过后端 schema 校验，再包装成与 SSE 一致的结构化报告载荷；附件损坏或 schema 非法时记录 `chat.attachment.degraded` 并回退到消息预览正文。
+  - 【就绪检查】：数据库 readiness 的附件类型枚举检查同步要求 `report_document`。
+- 【普通端报告渲染】
+  - 【渲染器】：新增 `ReportRenderer.vue`、`ReportSection.vue`、`ReportBlockView.vue`、`MarkdownBlock.vue`、`ChartBlock.vue` 和 `CausalGraphBlock.vue`；`MessageBody.vue` 按 `type=report` 与 `render_mode=structured` 分发到报告渲染器，普通聊天消息继续使用 Markdown。
+  - 【防御性解析】：新增 `renderers/report-document.ts`，用 Zod 校验报告文档与资源；未知块类型降级为占位块，非法图表或因果图资源引用显示受控提示，顶层载荷不合法时显示报告不可用提示，都不影响页面其余部分。
+  - 【图表与因果图】：直方图和分类柱状图使用 SVG、相关性热力图使用 CSS 网格绘制，支持响应式宽度、数值提示与空数据提示，不引入第三方图表库；`graph-renderer.ts` 增加业务模型到 vis-network 的投影函数、`view`/`select` 模式和实例更新/销毁接口，`CausalGraph.vue` 支持图数据变化时原地更新并向上抛出 `selectNode`/`selectEdge`，图形库仍按需动态加载。
+  - 【样式】：报告主题变量集中在 `.report-document`，报告背景、标题层级、章节间距、Markdown 表格、证据提示和移动端布局由组件作用域样式控制，模型不返回类名或样式。
+- 【文档：结构化报告契约】
+  - 【API、架构与数据库】：更新 `Document/api/agent-jobs.md`、`Document/api/chat-files.md`、`Document/architecture/agent-runtime.md`、`Document/database/migrations-checkpoints.md` 和 `Document/development/chat-frontend.md`，写入报告文档结构、`report_document` 附件、历史恢复与降级行为、迁移 head 和前端渲染边界。

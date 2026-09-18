@@ -10,6 +10,7 @@ from typing_extensions import NotRequired
 
 from langchain_core.messages import BaseMessage, ToolMessage
 
+from Agent.Report.document import ReportDocument
 from Agent.deep_agent_tools.models import (
     AlgorithmResult,
     DataProfile,
@@ -49,9 +50,8 @@ class CausalAgentState(TypedDict):
         knowledge_base_result: 结构化RAG结果，包含问题、证据链和汇总摘要。
         preprocess_summary: 预处理阶段的自然语言总结。
         postprocess_result: 后处理补充结果。
-        final_report: 最终报告内容。
-        visualization_mapping: 图表占位符映射。
-        visualizations: 可视化原始结果。
+        chart_assets: 预处理阶段生成的结构化图表资源。
+        report_document: 后端装配完成的结构化报告文档。
     """
 
     messages: Annotated[List[BaseMessage], add]
@@ -79,10 +79,8 @@ class CausalAgentState(TypedDict):
     preprocess_summary: Optional[str]
     postprocess_result: Optional[dict]
 
-    final_report: Optional[str]
-    visualization_mapping: Optional[dict]
-
-    visualizations: Optional[dict]
+    chart_assets: NotRequired[Optional[dict]]
+    report_document: NotRequired[Optional[ReportDocument]]
 
     # 新 Deep Agent 路径的父子 State 投影；这些字段不包含 runtime-only 对象。
     deep_agent_algorithm_results: NotRequired[dict[str, AlgorithmResult]]

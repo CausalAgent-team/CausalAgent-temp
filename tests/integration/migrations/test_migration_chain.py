@@ -442,5 +442,49 @@ class MonitorSnapshotKeyWidthMigrationTests(unittest.TestCase):
         )
 
 
+class ReportDocumentMigrationTests(unittest.TestCase):
+    """静态验证结构化报告附件枚举 migration 与就绪检查。"""
+
+    MIGRATION_PATH = Path(
+        "Database/migrations/versions/"
+        "v8b9c0d1e2f3_add_report_document_to_attachment_type.py"
+    )
+
+    def test_migration_extends_current_head(self):
+        """新 revision 直接承接当前唯一 head。"""
+        text = self.MIGRATION_PATH.read_text(encoding="utf-8")
+        self.assertIn('revision: str = "v8b9c0d1e2f3"', text)
+        self.assertIn(
+            'down_revision: Union[str, Sequence[str], None] = "u7a8b9c0d1e2"',
+            text,
+        )
+
+    def test_upgrade_only_adds_report_document_enum_value(self):
+        """升级只放宽 attachment_type 枚举，不删除历史附件数据。"""
+        text = self.MIGRATION_PATH.read_text(encoding="utf-8")
+        upgrade = text.split("def downgrade()", 1)[0]
+        self.assertIn("'web_search_references', 'report_document'", upgrade)
+        self.assertIn(
+            "'causal_graph', 'analysis_result', 'file_content', 'other', 'visualization'",
+            upgrade,
+        )
+        self.assertNotIn("DELETE", upgrade)
+        self.assertNotIn("DROP", upgrade)
+
+    def test_downgrade_deletes_only_report_document_rows(self):
+        """回滚只能移除本次新增枚举值对应的附件。"""
+        text = self.MIGRATION_PATH.read_text(encoding="utf-8")
+        downgrade = text.split("def downgrade()", 1)[1]
+        self.assertIn("DELETE FROM chat_attachments", downgrade)
+        self.assertIn("WHERE attachment_type = 'report_document'", downgrade)
+        self.assertNotIn("DROP TABLE", downgrade)
+        self.assertNotIn("DROP COLUMN", downgrade)
+
+    def test_readiness_requires_report_document_enum(self):
+        """应用启动检查必须能发现未执行报告附件 migration 的数据库。"""
+        text = Path("Database/inspection.py").read_text(encoding="utf-8")
+        self.assertIn("report_document", text)
+
+
 if __name__ == "__main__":
     unittest.main()
