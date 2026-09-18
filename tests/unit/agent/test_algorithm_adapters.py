@@ -8,7 +8,12 @@ from Agent.deep_agent.context import AgentRunContext
 from Agent.deep_agent_tools import DataProfile, FakeAlgorithmExecutor, build_default_registry
 from Agent.deep_agent_tools.algorithm_tools import build_algorithm_tools
 from Agent.deep_agent_tools.adapters import build_default_adapters
-from Agent.deep_agent_tools.adapters import DirectLiNGAMAdapter, OlcAdapter, PcAdapter
+from Agent.deep_agent_tools.adapters import (
+    CDFMAdapter,
+    DirectLiNGAMAdapter,
+    OlcAdapter,
+    PcAdapter,
+)
 from Agent.deep_agent_tools.adapters.normalization import standardize_runner_graph
 from Agent.deep_agent_tools.error_codes import SafeErrorCode
 from Agent.deep_agent_tools.models import (
@@ -274,6 +279,58 @@ def test_olc_and_lingam_reject_non_continuous_or_small_inputs_before_executor() 
     )
     assert olc_result.status == "not_applicable"
     assert lingam_result.status == "invalid_input"
+    assert executor.calls == []
+
+
+def test_cdfm_adapter_preserves_missing_values_without_adapter_imputation() -> None:
+    from Agent.deep_agent_tools.adapters.base import AdapterInput
+
+    executor = FakeAlgorithmExecutor()
+    result = asyncio.run(
+        CDFMAdapter(executor=executor).run(
+            parameters={"threshold": 0.5},
+            adapter_input=AdapterInput(
+                data_profile=_profile(rows=2),
+                input_identity="input-sha",
+                dataset_csv="x,y\n1,2\n,3\n",
+                missing_values_present=True,
+            ),
+            trusted_context=IDENTITY,
+            provider_call_id="cdfm-call",
+            response_identity="response-cdfm",
+        )
+    )
+
+    assert result.status == "valid"
+    assert len(executor.calls) == 1
+
+
+def test_cdfm_adapter_rejects_categorical_and_untrusted_inputs() -> None:
+    from Agent.deep_agent_tools.adapters.base import AdapterInput
+
+    executor = FakeAlgorithmExecutor()
+    adapter = CDFMAdapter(executor=executor)
+    for adapter_input in (
+        AdapterInput(
+            data_profile=_profile(rows=2, categorical=("x",), numeric=("y",)),
+            input_identity="input-sha",
+            dataset_csv="x,y\na,1\nb,2\n",
+        ),
+        AdapterInput(
+            data_profile=_profile(rows=2),
+            input_identity="input-sha",
+        ),
+    ):
+        result = asyncio.run(
+            adapter.run(
+                parameters={},
+                adapter_input=adapter_input,
+                trusted_context=IDENTITY,
+                provider_call_id="cdfm-invalid-call",
+                response_identity="response-cdfm-invalid",
+            )
+        )
+        assert result.status == "invalid_input"
     assert executor.calls == []
 
 
