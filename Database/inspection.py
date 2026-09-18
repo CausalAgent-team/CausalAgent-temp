@@ -789,10 +789,10 @@ def _operational_integrity_definitions(timeout_ms: int) -> list[dict[str, Any]]:
             "healthy_when": "one",
             "description": (
                 "确认 chat_attachments.attachment_type 为 ENUM，"
-                "且包含 visualization 与 web_search_references 类型。"
+                "且包含 visualization、web_search_references 与 report_document 类型。"
             ),
             "failure_warning": (
-                "chat_attachments.attachment_type 不是包含 visualization 与 web_search_references 的 ENUM"
+                "chat_attachments.attachment_type 不是包含 visualization、web_search_references 与 report_document 的 ENUM"
             ),
             "sql": f"""SELECT {hint} COUNT(*) AS count_value
                 FROM information_schema.columns
@@ -801,7 +801,8 @@ def _operational_integrity_definitions(timeout_ms: int) -> list[dict[str, Any]]:
                   AND column_name = 'attachment_type'
                   AND data_type = 'enum'
                   AND column_type LIKE '%''visualization''%'
-                  AND column_type LIKE '%''web_search_references''%'""",
+                  AND column_type LIKE '%''web_search_references''%'
+                  AND column_type LIKE '%''report_document''%'""",
         },
         {
             "key": "constraint_checkpoint_cleanup_outbox_claim",

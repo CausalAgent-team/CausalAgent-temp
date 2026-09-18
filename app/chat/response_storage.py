@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from Agent.Report.Metadata_sum import replace_placeholders
+from Agent.Report.document import ReportDocument, parse_report_document
 
 
 def render_summary_for_display(summary: str | None, visualization_mapping: dict | None) -> str | None:
@@ -123,10 +124,36 @@ def project_causal_graph(graph: Any) -> dict[str, list[dict[str, Any]]] | None:
 
 
 def prepare_ai_response_for_storage(ai_response: Any) -> tuple[str, list[dict[str, str]]]:
-    """把 AI 响应转换为聊天主表内容和附件列表，报告正文入库时保留原始占位符。"""
+    """把 AI 响应转换为聊天主表内容和附件列表。
+
+    结构化报告只写入 ``report_document`` 附件，主表保存报告标题作为会话预览；
+    新报告不再写入 ``visualization`` 附件，也不把完整报告 JSON 放进主表正文。
+    旧报告附件格式仍由历史读取路径兼容。
+    """
     attachment_to_save: list[dict[str, str]] = []
 
     if isinstance(ai_response, dict):
+        if ai_response.get("type") == "report" and "document" in ai_response:
+            document = ai_response["document"]
+            if isinstance(document, ReportDocument):
+                payload = document.model_dump(mode="json")
+            else:
+                payload = parse_report_document(document)
+            attachment_to_save.append({
+                "type": "report_document",
+                "content": json.dumps(payload, ensure_ascii=False),
+            })
+            if ai_response.get("references"):
+                attachment_to_save.append({
+                    "type": "web_search_references",
+                    "content": json.dumps(ai_response["references"], ensure_ascii=False),
+                })
+            preview = payload.get("title")
+            return (
+                preview if isinstance(preview, str) and preview.strip() else "因果分析报告",
+                attachment_to_save,
+            )
+
         raw_summary = ai_response.get("raw_summary") or ai_response.get("summary")
         ai_content = raw_summary
 
