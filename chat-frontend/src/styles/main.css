@@ -269,17 +269,18 @@
 .sidebar-item-main {
   display: flex;
   min-width: 0;
-  padding: 20px;
+  /* 右侧给会话的编辑与删除按钮留出位置，标题不会被按钮压住。 */
+  padding: 20px 74px 20px 20px;
   flex-direction: column;
   gap: 4px;
   text-align: left;
-  background: #fff;
+  background: transparent;
   border: 0;
   flex: 1;
   transition: background-color 200ms ease;
 }
 
-.sidebar-item-main:hover {
+.sidebar-item:hover:not(.selected) {
   background: #f9f9f9;
 }
 
@@ -305,7 +306,7 @@
   padding: 0 6px;
   align-items: center;
   gap: 2px;
-  background: linear-gradient(90deg, rgb(255 255 255 / 25%), #fff 28%);
+  background: transparent;
   opacity: 0;
   transition: opacity 150ms ease;
 }
@@ -577,7 +578,7 @@
 .user-message > .markdown-content {
   width: fit-content;
   max-width: 80%;
-  padding: 7px 15px;
+  padding: 12px 15px;
   line-height: 1.4;
   background: #dcf8c6;
   border-radius: 10px;

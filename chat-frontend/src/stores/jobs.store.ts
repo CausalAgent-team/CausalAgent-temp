@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import type { DecodedSseEvent } from '../api/events.schemas'
 import type { ActiveJobResponse } from '../api/jobs.schemas'
 import type { BackendJobStatus, JobConnectionState, JobRecord } from '../types/domain'
-import { createJobRecord, reduceJobEvent, seedJobFromPhase } from '../runtime/jobs/event-reducer'
+import { createJobRecord, reduceJobEvent, seedJobFromPhase, settleDecision as settleDecisionState } from '../runtime/jobs/event-reducer'
 import { observeActiveEventId } from '../runtime/jobs/event-cursor'
 
 interface JobsState {
@@ -85,6 +85,11 @@ export const useJobsStore = defineStore('jobs', {
       const result = reduceJobEvent(existing, event)
       this.records[jobId] = result.state
       return result
+    },
+    settleDecision(jobId: string, stepId: string, key: string): void {
+      const existing = this.records[jobId]
+      if (!existing) return
+      this.records[jobId] = settleDecisionState(existing, stepId, key)
     },
     markSubscriptionError(jobId: string, message: string, code: string, generation: number): void {
       const record = this.records[jobId]

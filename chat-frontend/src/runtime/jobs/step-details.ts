@@ -69,6 +69,7 @@ export function decisionDetail(
     streamId: stringField(data, 'stream_id') || null,
     text,
     complete: false,
+    released: false,
     pending: [],
   }
 }
@@ -80,15 +81,30 @@ export function findDecisionDetail(step: ThinkingStep, key: string): StepDecisio
   return null
 }
 
-/** 同一工具尚未放行生命周期事件的公开决策。 */
+/** 同一工具尚未完成展示的公开决策；命中时后续工具事件必须等待。 */
 export function openDecisionForTool(step: ThinkingStep, toolName: string): StepDecisionDetail | null {
   for (const detail of step.details) {
-    if (detail.kind !== 'decision' || detail.complete) continue
+    if (detail.kind !== 'decision' || detail.released) continue
     if (detail.toolName !== toolName) continue
     if (detail.decisionKind !== 'algorithm' && detail.decisionKind !== 'evidence') continue
     return detail
   }
   return null
+}
+
+/** 放行一条公开决策：标记展示结束，并把被挂起的工具事件按到达顺序补在它后面。 */
+export function releaseDecisionDetail(
+  step: ThinkingStep,
+  entry: StepDecisionDetail,
+): void {
+  const released = entry.pending.map((data) => textDetail(stepDetailText(data)))
+  replaceDecisionDetail(step, entry, {
+    ...entry,
+    complete: true,
+    released: true,
+    pending: [],
+  })
+  appendDetails(step, released)
 }
 
 export function replaceDecisionDetail(

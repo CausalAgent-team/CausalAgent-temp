@@ -14,7 +14,7 @@
 | 任务 | `JobController` | `/api/agent/jobs`、`active`、`resume`、`cancel` | reducer、contract、Mock E2E |
 | SSE | `JobSseTransport` | `/api/agent/jobs/<job_id>/events`；`fetch()` + `ReadableStream`；不使用 EventSource | 分块/未知事件/坏包/游标/重连单元测试 |
 | 阶段明细 | `ThinkingStepDetails` | `progress`、`decision`、`tool_call_start`、`tool_call_result`、`node_retry`、`node_end` 落在同一 `step_id`；明细早于父 `node_start` 时先暂存，父阶段出现后补绘一次 | reducer 单测、组件测试 |
-| 公开决策 | `ThinkingStepDetails` | `decision_delta` 按 `stream_id` 与批次序号增量推进，`decision_kind` 映射`算法决策：`/`检索决策：`/`最终决策：`；完整 `decision` 只结束该决策流，不重复插入文本 | reducer 单测、组件测试、Mock E2E |
+| 公开决策 | `ThinkingStepDetails` | `decision_delta` 按 `stream_id` 与批次序号增量推进，`decision_kind` 映射`算法决策：`/`检索决策：`/`最终决策：`；完整 `decision` 只结束该决策流，同一工具的工具事件等展示追平后按顺序出现，异常与终态强制放行 | reducer 单测、组件测试、Mock E2E |
 | 假流式 | `StreamingDraft` | 40 字/秒、25ms 步进；终态校正同一草稿（报告布局同样复用）；`prefers-reduced-motion` 直接展示完整文本 | 纯函数单测、组件测试 |
 | 滚动跟随 | `ChatWorkspace` | 80px 阈值；用户主动上滑后停止自动跟随，回到底部恢复；发送、加载会话、创建会话和新增内容后跟随最新 | 纯函数单测；浏览器人工验收待执行 |
 | 设置 | `SettingsDialog` | `/api/setting?topic=userAgreement|userManual` | API client/schema；真实内容验收待后续阶段 |

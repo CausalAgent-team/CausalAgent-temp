@@ -89,7 +89,10 @@ export interface StepDecisionDetail {
   toolName: string
   streamId: string | null
   text: string
+  /** 已收到完整 decision 或该决策流已经结束。 */
   complete: boolean
+  /** 展示已经追平或被强制放行，之后的工具事件不再等待这条决策。 */
+  released: boolean
   pending: Array<Record<string, unknown>>
 }
 
