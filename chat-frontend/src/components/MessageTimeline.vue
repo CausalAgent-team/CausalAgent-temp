@@ -13,6 +13,11 @@ const props = defineProps<{ messages: ChatMessage[] }>()
 const jobs = useJobsStore()
 const scrollFollow = useChatScrollFollow()
 
+function onDecisionSettled(jobId: string | undefined, payload: { stepId: string; key: string }): void {
+  if (!jobId) return
+  jobs.settleDecision(jobId, payload.stepId, payload.key)
+}
+
 /** 只有已持久化的历史阶段事件会走到这里；公开决策在历史中本来就是完整文本。 */
 function phaseThinking(phase: ExecutionPhase): ThinkingProjection {
   const job = phase.analysisJobId ? jobs.byId(phase.analysisJobId) : undefined
@@ -92,7 +97,11 @@ watch(() => props.messages.length, () => scrollFollow.keepLatest())
     <article class="message" :class="`${row.message.sender}-message`">
       <MessageBody :text="row.message.text" />
     </article>
-    <ThinkingTimeline v-if="row.thinking" :thinking="row.thinking" />
+    <ThinkingTimeline
+      v-if="row.thinking"
+      :thinking="row.thinking"
+      @decision-settled="onDecisionSettled(row.message.analysisJobId, $event)"
+    />
     <StreamingDraft v-if="row.thinking?.draftText" :text="row.thinking.draftText" :animate="isPresentationActive(row.thinking.status)" />
     <article v-if="row.thinking?.finalResult" class="message ai-message">
       <MessageBody :text="row.thinking.finalResult" />

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type { DecodedSseEvent } from '../../src/api/events.schemas'
 import { useJobsStore } from '../../src/stores/jobs.store'
-import { createJobRecord, reduceJobEvent } from '../../src/runtime/jobs/event-reducer'
+import { createJobRecord, reduceJobEvent, settleDecision } from '../../src/runtime/jobs/event-reducer'
 
 function event(type: string, id: number, fields: Record<string, unknown> = {}, known = true): DecodedSseEvent {
   return { event: type, id, data: { type, ...fields }, known }
@@ -91,6 +91,7 @@ describe('job reducer and cursor semantics', () => {
       streamId: 'decision-1',
       text: '选择 PC，因为样本充足',
       complete: false,
+      released: false,
       pending: [],
     }])
 
@@ -103,7 +104,7 @@ describe('job reducer and cursor semantics', () => {
     expect(details[0]).toMatchObject({ kind: 'decision', complete: true })
   })
 
-  it('holds tool lifecycle events until the owning decision finishes, then releases them in order', () => {
+  it('holds tool lifecycle events until the decision text is fully revealed, then releases them in order', () => {
     let state = createJobRecord('job-1', 'session-1', 'running')
     state = reduceJobEvent(state, event('node_start', 1, { step_id: 's1', node_name: 'deep_agent', title: 'Deep Agent' })).state
     state = reduceJobEvent(state, event('decision_delta', 2, {
@@ -120,10 +121,38 @@ describe('job reducer and cursor semantics', () => {
       step_id: 's1', node_name: 'deep_agent', title: 'Deep Agent',
       summary: '选择 PC', decision_kind: 'algorithm', tool_name: 'pc',
     })).state
+    expect(state.thinking.steps.s1?.details ?? []).toHaveLength(1)
+    expect(state.thinking.steps.s1?.details[0]).toMatchObject({ kind: 'decision', complete: true, released: false })
+
+    state = settleDecision(state, 's1', 's1:algorithm:pc')
     const labels = (state.thinking.steps.s1?.details ?? []).map((detail) => (
       detail.kind === 'text' ? detail.text : `decision:${detail.key}`
     ))
     expect(labels).toEqual(['decision:s1:algorithm:pc', '调用工具：pc（参数字段：data）'])
+
+    const repeated = settleDecision(state, 's1', 's1:algorithm:pc')
+    expect(repeated.thinking.steps.s1?.details ?? []).toHaveLength(2)
+  })
+
+  it('flushes unsettled decisions and their held tool events on a terminal result', () => {
+    let state = createJobRecord('job-1', 'session-1', 'running')
+    state = reduceJobEvent(state, event('node_start', 1, { step_id: 's1', node_name: 'deep_agent', title: 'Deep Agent' })).state
+    state = reduceJobEvent(state, event('decision_delta', 2, {
+      step_id: 's1', node_name: 'deep_agent', title: 'Deep Agent',
+      stream_id: 'decision-1', sequence: 1, delta: '选择 PC', decision_kind: 'algorithm', tool_name: 'pc',
+    })).state
+    state = reduceJobEvent(state, event('tool_call_start', 3, {
+      step_id: 's1', node_name: 'deep_agent', title: 'Deep Agent',
+      tool_name: 'pc', argument_keys: ['data'],
+    })).state
+
+    const finished = reduceJobEvent(state, event('final_result', 4, { data: { type: 'text', summary: 'done' } }))
+    const details = finished.state.thinking.steps.s1?.details ?? []
+    expect(details[0]).toMatchObject({ kind: 'decision', released: true })
+    expect(details.map((detail) => (detail.kind === 'text' ? detail.text : 'decision'))).toEqual([
+      'decision',
+      '调用工具：pc（参数字段：data）',
+    ])
   })
 
   it('releases a held tool result when no full decision follows', () => {

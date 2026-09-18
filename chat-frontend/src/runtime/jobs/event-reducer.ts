@@ -17,6 +17,7 @@ import {
   findDecisionDetail,
   numberField,
   openDecisionForTool,
+  releaseDecisionDetail,
   replaceDecisionDetail,
   stepDetailText,
   stringField,
@@ -162,11 +163,18 @@ function takeDeferredStepEvents(thinking: ThinkingProjection, stepId: string): A
   return pending
 }
 
-/** 公开决策结束：标记完成后放行同一工具被挂起的生命周期事件。 */
+/** 收到完整 decision 只结束该决策流，工具事件仍等展示追平后再放行。 */
 function completeDecision(step: ThinkingStep, entry: StepDecisionDetail): void {
-  const released = entry.pending.map((data) => textDetail(stepDetailText(data)))
-  replaceDecisionDetail(step, entry, { ...entry, complete: true, pending: [] })
-  appendDetails(step, released)
+  replaceDecisionDetail(step, entry, { ...entry, complete: true })
+}
+
+/** 终态或异常兜底：不再等待展示，直接放行所有未结束的公开决策。 */
+function releaseAllDecisions(thinking: ThinkingProjection): void {
+  for (const step of Object.values(thinking.steps)) {
+    for (const detail of [...step.details]) {
+      if (detail.kind === 'decision' && !detail.released) releaseDecisionDetail(step, detail)
+    }
+  }
 }
 
 function applyStepDetail(thinking: ThinkingProjection, data: Record<string, unknown>): void {
@@ -195,7 +203,7 @@ function applyStepDetail(thinking: ThinkingProjection, data: Record<string, unkn
       replaceDecisionDetail(step, held, next)
       if (data.type === 'tool_call_result') {
         // 异常或旧端点没有完整 decision 结束事件时，不能永久挂起工具结果。
-        completeDecision(step, next)
+        releaseDecisionDetail(step, next)
       }
       return
     }
@@ -315,6 +323,7 @@ function applyKnownEvent(state: JobRecord, event: DecodedSseEvent): { state: Job
     case 'final_result': {
       const result = structuredResult(data.data)
       thinking.status = 'completed'
+      releaseAllDecisions(thinking)
       if (thinking.draftStreamId !== null && result.type === 'text') {
         // 公开文字流的终态只校正已有草稿；报告布局同样复用草稿，不做第二次渲染。
         thinking.draftText = typeof result.summary === 'string' ? result.summary : ''
@@ -338,6 +347,7 @@ function applyKnownEvent(state: JobRecord, event: DecodedSseEvent): { state: Job
       break
     case 'error':
       thinking.status = 'failed'
+      releaseAllDecisions(thinking)
       thinking.errorMessage = stringField(data, 'message')
       next.errorMessage = thinking.errorMessage
       next.errorCode = 'job_error'
@@ -348,6 +358,7 @@ function applyKnownEvent(state: JobRecord, event: DecodedSseEvent): { state: Job
       break
     case 'canceled':
       thinking.status = 'canceled'
+      releaseAllDecisions(thinking)
       next.backendStatus = 'canceled'
       next.uiState = 'canceled'
       releaseTextBuffers(next)
@@ -374,6 +385,20 @@ export function reduceJobEvent(state: JobRecord, event: DecodedSseEvent): Reduce
   next = result.state
   if (result.visible && event.id !== null) next = { ...next, ...markRendered(next, event.id) }
   return { state: next, applied: result.visible, duplicate: false, unknown: false, terminal: result.terminal }
+}
+
+/**
+ * 展示层报告某条公开决策的逐字展示已经追平：放行它挂起的工具事件。
+ * 重复报告或未收到完整 decision 时保持原状态，保证同一次调用只放行一次。
+ */
+export function settleDecision(state: JobRecord, stepId: string, key: string): JobRecord {
+  const thinking = cloneThinking(state.thinking)
+  const step = thinking.steps[stepId]
+  if (!step) return state
+  const entry = findDecisionDetail(step, key)
+  if (!entry || entry.released || !entry.complete) return state
+  releaseDecisionDetail(step, entry)
+  return { ...state, thinking }
 }
 
 export function seedJobFromPhase(
