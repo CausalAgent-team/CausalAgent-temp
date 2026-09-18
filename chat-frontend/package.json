@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "lint": "eslint . --max-warnings=0",
-    "typecheck": "vue-tsc --noEmit",
+    "typecheck": "vue-tsc -b",
     "test:unit": "vitest run tests/unit tests/contract",
     "test:components": "vitest run tests/components",
     "test:e2e:mock": "playwright test -c playwright.mock.config.ts",

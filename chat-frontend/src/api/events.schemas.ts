@@ -22,6 +22,21 @@ export const decisionEventSchema = z.object({
   type: z.literal('decision'),
   ...phaseEventBase,
   summary: z.string(),
+  // 公共决策的类型、工具名和置信度是后端新增的可选字段；这里只做字符串校验，
+  // 未知取值按普通说明展示，避免后端新增枚举值时整条事件流进入协议错误。
+  decision_kind: z.string().optional(),
+  tool_name: z.string().optional(),
+  confidence: z.string().optional(),
+}).passthrough()
+
+export const decisionDeltaEventSchema = z.object({
+  type: z.literal('decision_delta'),
+  ...phaseEventBase,
+  stream_id: z.string().min(1),
+  sequence: z.number().int().positive(),
+  delta: z.string(),
+  decision_kind: z.string().min(1),
+  tool_name: z.string(),
 }).passthrough()
 
 export const toolCallStartEventSchema = z.object({
@@ -91,6 +106,7 @@ export const publicEventSchema = z.union([
   nodeStartEventSchema,
   progressEventSchema,
   decisionEventSchema,
+  decisionDeltaEventSchema,
   toolCallStartEventSchema,
   toolCallResultEventSchema,
   nodeRetryEventSchema,
@@ -110,7 +126,7 @@ export const unknownPublicEventSchema = z.object({
 export const publicEventTypes = new Set([
   'node_start', 'progress', 'decision', 'tool_call_start',
   'tool_call_result', 'node_retry', 'node_end', 'text_delta',
-  'final_result', 'interrupt', 'error', 'canceled', 'heartbeat',
+  'decision_delta', 'final_result', 'interrupt', 'error', 'canceled', 'heartbeat',
 ])
 
 export type KnownPublicEvent = z.infer<typeof publicEventSchema>

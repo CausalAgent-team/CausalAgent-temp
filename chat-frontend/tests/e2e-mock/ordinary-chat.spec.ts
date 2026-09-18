@@ -45,9 +45,14 @@ test('mock ordinary chat login, job creation and fetch SSE terminal event', asyn
         status: 200,
         contentType: 'text/event-stream',
         body: [
-          'id: 1\nevent: node_start\ndata: {"type":"node_start","step_id":"s1","node_name":"mock","title":"Mock step"}\n\n',
-          'id: 2\nevent: node_end\ndata: {"type":"node_end","step_id":"s1","node_name":"mock","title":"Mock step","duration":0.1,"status":"completed"}\n\n',
-          'id: 3\nevent: final_result\ndata: {"type":"final_result","data":{"type":"text","summary":"done from mock"}}\n\n',
+          'id: 1\nevent: node_start\ndata: {"type":"node_start","step_id":"s1","node_name":"deep_agent","title":"执行 Deep Agent 分析"}\n\n',
+          'id: 2\nevent: decision_delta\ndata: {"type":"decision_delta","step_id":"s1","node_name":"deep_agent","title":"执行 Deep Agent 分析","stream_id":"decision-1","sequence":1,"delta":"选择 PC","decision_kind":"algorithm","tool_name":"pc"}\n\n',
+          'id: 3\nevent: decision\ndata: {"type":"decision","step_id":"s1","node_name":"deep_agent","title":"执行 Deep Agent 分析","summary":"选择 PC","decision_kind":"algorithm","tool_name":"pc"}\n\n',
+          'id: 4\nevent: tool_call_start\ndata: {"type":"tool_call_start","step_id":"s1","node_name":"deep_agent","title":"执行 Deep Agent 分析","tool_name":"pc","argument_keys":["data"]}\n\n',
+          'id: 5\nevent: tool_call_result\ndata: {"type":"tool_call_result","step_id":"s1","node_name":"deep_agent","title":"执行 Deep Agent 分析","tool_name":"pc","summary":"算法执行完成","status":"succeeded"}\n\n',
+          'id: 6\nevent: text_delta\ndata: {"type":"text_delta","step_id":"s1","stream_id":"answer","sequence":1,"delta":"正在生成报告"}\n\n',
+          'id: 7\nevent: node_end\ndata: {"type":"node_end","step_id":"s1","node_name":"deep_agent","title":"执行 Deep Agent 分析","duration":0.1,"status":"completed"}\n\n',
+          'id: 8\nevent: final_result\ndata: {"type":"final_result","data":{"type":"text","summary":"done from mock"}}\n\n',
         ].join(''),
       })
       return
@@ -71,4 +76,9 @@ test('mock ordinary chat login, job creation and fetch SSE terminal event', asyn
 
   await expect(page.getByText('请分析这个数据')).toBeVisible()
   await expect(page.getByText('done from mock')).toBeVisible()
+
+  await page.getByRole('button', { name: /执行 Deep Agent 分析/ }).click()
+  await expect(page.getByText('算法决策：选择 PC')).toBeVisible()
+  await expect(page.getByText('调用工具：pc（参数字段：data）')).toBeVisible()
+  await expect(page.getByText('pc：算法执行完成')).toBeVisible()
 })

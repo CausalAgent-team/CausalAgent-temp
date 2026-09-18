@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref } from 'vue'
 import { api } from '../api/client'
 import { isApiError } from '../api/errors'
 import { useLocale } from '../i18n/use-locale'
+import { chatScrollFollowKey, createChatScrollFollow } from '../runtime/chat/scroll-follow'
 import { createIdempotencyKey, retryIdempotent } from '../runtime/jobs/idempotency'
 import { JobController } from '../runtime/jobs/job-controller'
 import { useAuthStore } from '../stores/auth.store'
@@ -29,7 +30,19 @@ const userMenuOpen = ref(false)
 const settingsOpen = ref(false)
 const editingSessionId = ref<string | null>(null)
 const editingTitle = ref('')
+const conversationArea = ref<HTMLElement | null>(null)
+const scrollFollow = createChatScrollFollow()
 const activeJob = computed<JobRecord | null>(() => sessions.currentId ? jobs.activeForSession(sessions.currentId) : null)
+
+provide(chatScrollFollowKey, scrollFollow)
+
+async function jumpToLatest(): Promise<void> {
+  await nextTick()
+  scrollFollow.resetToLatest()
+}
+
+onMounted(() => scrollFollow.attach(conversationArea.value))
+onBeforeUnmount(() => scrollFollow.detach())
 
 function report(error: unknown, fallback: string): void {
   if (isApiError(error) && error.status === 401) {
@@ -53,6 +66,7 @@ async function selectSession(sessionId: string): Promise<void> {
       const record = jobs.observeActive(job)
       if (record.uiState !== 'waiting_input') void props.controller.subscribe(record.jobId).catch((error: unknown) => report(error, '恢复任务订阅失败。'))
     }
+    await jumpToLatest()
   } catch (error) {
     report(error, '加载会话失败。')
   }
@@ -64,6 +78,7 @@ async function createNewSession(): Promise<void> {
     composer.clearAfterSend()
     files.clearSelection()
     sidebarOpen.value = false
+    await jumpToLatest()
   } catch (error) {
     report(error, '创建新对话失败。')
   }
@@ -234,7 +249,7 @@ function openAdmin(): void {
       </div>
     </aside>
     <main class="main-container" :class="sessions.messages.length ? 'is-conversation' : 'is-new-chat'">
-      <section class="conversation-area">
+      <section ref="conversationArea" class="conversation-area" @scroll.passive="scrollFollow.handleScroll()">
         <MessageTimeline :messages="sessions.messages" />
       </section>
       <div class="new-chat-stage">

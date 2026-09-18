@@ -2,12 +2,26 @@ import type {
   BackendJobStatus,
   JobRecord,
   PublicEvent,
+  StepDecisionDetail,
+  StepDetail,
   StructuredMessage,
   ThinkingProjection,
   ThinkingStep,
 } from '../../types/domain'
 import type { DecodedSseEvent } from '../../api/events.schemas'
 import { acceptEventId, createEventCursor, markRendered } from './event-cursor'
+import {
+  appendDetails,
+  decisionDetail,
+  decisionStreamKey,
+  findDecisionDetail,
+  numberField,
+  openDecisionForTool,
+  replaceDecisionDetail,
+  stepDetailText,
+  stringField,
+  textDetail,
+} from './step-details'
 
 export interface ReducerResult {
   state: JobRecord
@@ -24,6 +38,7 @@ function createThinking(status: ThinkingProjection['status'] = 'active', elapsed
     elapsedSeconds: Math.max(0, elapsedSeconds),
     steps: {},
     stepOrder: [],
+    pendingStepEvents: {},
     draftStreamId: null,
     draftText: '',
     finalResult: null,
@@ -32,15 +47,32 @@ function createThinking(status: ThinkingProjection['status'] = 'active', elapsed
   }
 }
 
+function cloneDetail(detail: StepDetail): StepDetail {
+  return detail.kind === 'decision'
+    ? { ...detail, pending: [...detail.pending] }
+    : { ...detail }
+}
+
+function clonePendingStepEvents(
+  events: ThinkingProjection['pendingStepEvents'],
+): ThinkingProjection['pendingStepEvents'] {
+  const pending: ThinkingProjection['pendingStepEvents'] = {}
+  for (const [stepId, list] of Object.entries(events)) {
+    pending[stepId] = list.map((data) => ({ ...data }))
+  }
+  return pending
+}
+
 function cloneThinking(thinking: ThinkingProjection): ThinkingProjection {
   const steps: Record<string, ThinkingStep> = {}
   for (const [key, step] of Object.entries(thinking.steps)) {
-    steps[key] = { ...step, details: [...step.details] }
+    steps[key] = { ...step, details: step.details.map(cloneDetail) }
   }
   return {
     ...thinking,
     steps,
     stepOrder: [...thinking.stepOrder],
+    pendingStepEvents: clonePendingStepEvents(thinking.pendingStepEvents),
     waitingInput: thinking.waitingInput ? { ...thinking.waitingInput } : null,
     finalResult: thinking.finalResult ? { ...thinking.finalResult } : null,
   }
@@ -73,16 +105,6 @@ export function createJobRecord(
   }
 }
 
-function stringField(data: PublicEvent, name: string): string {
-  const value = data[name]
-  return typeof value === 'string' ? value : ''
-}
-
-function numberField(data: PublicEvent, name: string): number | null {
-  const value = data[name]
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
-}
-
 function structuredResult(value: unknown): StructuredMessage {
   if (typeof value === 'object' && value !== null && 'type' in value) {
     const candidate = value as Record<string, unknown>
@@ -92,12 +114,6 @@ function structuredResult(value: unknown): StructuredMessage {
     type: 'text',
     summary: typeof value === 'string' ? value : JSON.stringify(value),
   }
-}
-
-function appendDetail(thinking: ThinkingProjection, stepId: string, detail: string): void {
-  if (!stepId || !detail) return
-  const step = thinking.steps[stepId]
-  if (step) step.details.push(detail)
 }
 
 function releaseTextBuffers(state: JobRecord): void {
@@ -123,6 +139,84 @@ function ensureStep(thinking: ThinkingProjection, data: PublicEvent): ThinkingSt
   return step
 }
 
+function findStep(thinking: ThinkingProjection, data: Record<string, unknown>): ThinkingStep | null {
+  const stepId = stringField(data, 'step_id')
+  if (!stepId) return null
+  return thinking.steps[stepId] ?? null
+}
+
+/** 父阶段尚未到达时暂存明细，等同一 step_id 出现后按到达顺序补绘一次。 */
+function deferStepEvent(thinking: ThinkingProjection, data: Record<string, unknown>): void {
+  const stepId = stringField(data, 'step_id')
+  if (!stepId) return
+  const pending = thinking.pendingStepEvents[stepId] ?? []
+  thinking.pendingStepEvents[stepId] = [...pending, { ...data }]
+}
+
+function takeDeferredStepEvents(thinking: ThinkingProjection, stepId: string): Array<Record<string, unknown>> {
+  const pending = thinking.pendingStepEvents[stepId]
+  if (!pending || pending.length === 0) return []
+  const rest: ThinkingProjection['pendingStepEvents'] = { ...thinking.pendingStepEvents }
+  delete rest[stepId]
+  thinking.pendingStepEvents = rest
+  return pending
+}
+
+/** 公开决策结束：标记完成后放行同一工具被挂起的生命周期事件。 */
+function completeDecision(step: ThinkingStep, entry: StepDecisionDetail): void {
+  const released = entry.pending.map((data) => textDetail(stepDetailText(data)))
+  replaceDecisionDetail(step, entry, { ...entry, complete: true, pending: [] })
+  appendDetails(step, released)
+}
+
+function applyStepDetail(thinking: ThinkingProjection, data: Record<string, unknown>): void {
+  const step = findStep(thinking, data)
+  if (!step) {
+    deferStepEvent(thinking, data)
+    return
+  }
+  if (data.type === 'decision') {
+    const decisionKind = stringField(data, 'decision_kind')
+    const toolName = stringField(data, 'tool_name')
+    if (decisionKind !== 'final' && toolName) {
+      const entry = findDecisionDetail(step, decisionStreamKey(step.stepId, decisionKind, toolName))
+      if (entry) {
+        completeDecision(step, entry)
+        return
+      }
+    }
+    appendDetails(step, [textDetail(stepDetailText(data))])
+    return
+  }
+  if (data.type === 'tool_call_start' || data.type === 'tool_call_result') {
+    const held = openDecisionForTool(step, stringField(data, 'tool_name'))
+    if (held) {
+      const next = { ...held, pending: [...held.pending, { ...data }] }
+      replaceDecisionDetail(step, held, next)
+      if (data.type === 'tool_call_result') {
+        // 异常或旧端点没有完整 decision 结束事件时，不能永久挂起工具结果。
+        completeDecision(step, next)
+      }
+      return
+    }
+  }
+  appendDetails(step, [textDetail(stepDetailText(data))])
+}
+
+function appendTextDelta(state: JobRecord, data: PublicEvent): { duplicate: boolean; buffer: string } {
+  const streamId = stringField(data, 'stream_id')
+  const sequence = numberField(data, 'sequence')
+  const stepId = stringField(data, 'step_id')
+  const key = `${stepId}:${streamId}:${sequence ?? ''}`
+  if (state.textSeenKeys.includes(key)) {
+    return { duplicate: true, buffer: state.textStreams[streamId] ?? '' }
+  }
+  state.textSeenKeys = [...state.textSeenKeys, key]
+  const buffer = `${state.textStreams[streamId] ?? ''}${stringField(data, 'delta')}`
+  state.textStreams = { ...state.textStreams, [streamId]: buffer }
+  return { duplicate: false, buffer }
+}
+
 function applyKnownEvent(state: JobRecord, event: DecodedSseEvent): { state: JobRecord; visible: boolean; terminal: boolean } {
   const data = event.data
   const thinking = cloneThinking(state.thinking)
@@ -138,32 +232,53 @@ function applyKnownEvent(state: JobRecord, event: DecodedSseEvent): { state: Job
     case 'heartbeat':
       visible = false
       break
-    case 'node_start':
-      ensureStep(thinking, data)
+    case 'node_start': {
+      const step = ensureStep(thinking, data)
+      if (step) {
+        for (const pending of takeDeferredStepEvents(thinking, step.stepId)) applyStepDetail(thinking, pending)
+      }
       break
+    }
     case 'progress':
-    case 'decision': {
-      const step = ensureStep(thinking, data)
-      if (step) step.details.push(stringField(data, 'summary'))
+    case 'decision':
+    case 'tool_call_start':
+    case 'tool_call_result':
+      applyStepDetail(thinking, data)
       break
-    }
-    case 'tool_call_start': {
-      const step = ensureStep(thinking, data)
-      const fields = Array.isArray(data.argument_keys) ? data.argument_keys.join('、') : ''
-      if (step) step.details.push(`调用工具：${stringField(data, 'tool_name')}${fields ? `（参数字段：${fields}）` : ''}`)
-      break
-    }
-    case 'tool_call_result': {
-      const step = ensureStep(thinking, data)
-      if (step) step.details.push(`${stringField(data, 'tool_name')}：${stringField(data, 'summary')}`)
+    case 'decision_delta': {
+      const step = findStep(thinking, data)
+      if (!step) {
+        deferStepEvent(thinking, data)
+        break
+      }
+      const appended = appendTextDelta(next, data)
+      if (appended.duplicate) {
+        visible = false
+        break
+      }
+      const streamId = stringField(data, 'stream_id')
+      const entry = findDecisionDetail(
+        step,
+        decisionStreamKey(step.stepId, stringField(data, 'decision_kind'), stringField(data, 'tool_name')),
+      )
+      if (!entry) {
+        appendDetails(step, [decisionDetail(step.stepId, data, appended.buffer)])
+      } else if (entry.streamId === streamId) {
+        replaceDecisionDetail(step, entry, { ...entry, text: appended.buffer })
+      } else {
+        // 同一决策键重新开流（重试）时以新流为准，不拼接旧增量。
+        replaceDecisionDetail(step, entry, { ...entry, streamId, text: appended.buffer, complete: false, pending: [] })
+      }
       break
     }
     case 'node_retry': {
       const step = ensureStep(thinking, data)
       if (step) {
         step.status = 'in-progress'
-        step.details.push(`调用失败：${stringField(data, 'message')}`)
-        step.details.push('正在重试')
+        appendDetails(step, [
+          textDetail(`调用失败：${stringField(data, 'message')}`, 'error'),
+          textDetail('正在重试', 'retry'),
+        ])
       }
       const discarded = stringField(data, 'discard_stream_id')
       if (discarded) {
@@ -182,30 +297,32 @@ function applyKnownEvent(state: JobRecord, event: DecodedSseEvent): { state: Job
       if (step) {
         step.status = data.status === 'failed' ? 'failed' : 'completed'
         step.duration = numberField(data, 'duration')
-        if (data.status === 'failed') appendDetail(thinking, step.stepId, stringField(data, 'message'))
+        const message = stringField(data, 'message')
+        if (data.status === 'failed' && message) appendDetails(step, [textDetail(`调用失败：${message}`, 'error')])
       }
       break
     }
     case 'text_delta': {
-      const streamId = stringField(data, 'stream_id')
-      const sequence = numberField(data, 'sequence')
-      const stepId = stringField(data, 'step_id')
-      const key = `${stepId}:${streamId}:${sequence ?? ''}`
-      if (next.textSeenKeys.includes(key)) {
+      const appended = appendTextDelta(next, data)
+      if (appended.duplicate) {
         visible = false
         break
       }
-      next.textSeenKeys = [...next.textSeenKeys, key]
-      next.textStreams = { ...next.textStreams, [streamId]: `${next.textStreams[streamId] ?? ''}${stringField(data, 'delta')}` }
-      thinking.draftStreamId = streamId
-      thinking.draftText = next.textStreams[streamId] ?? ''
+      thinking.draftStreamId = stringField(data, 'stream_id')
+      thinking.draftText = appended.buffer
       break
     }
     case 'final_result': {
+      const result = structuredResult(data.data)
       thinking.status = 'completed'
-      thinking.finalResult = structuredResult(data.data)
-      thinking.draftStreamId = null
-      thinking.draftText = ''
+      if (thinking.draftStreamId !== null && result.type === 'text') {
+        // 公开文字流的终态只校正已有草稿；报告布局同样复用草稿，不做第二次渲染。
+        thinking.draftText = typeof result.summary === 'string' ? result.summary : ''
+      } else {
+        thinking.draftStreamId = null
+        thinking.draftText = ''
+        thinking.finalResult = result
+      }
       next.backendStatus = 'succeeded'
       next.uiState = 'completed'
       releaseTextBuffers(next)

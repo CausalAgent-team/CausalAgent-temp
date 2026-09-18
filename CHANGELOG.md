@@ -1403,3 +1403,13 @@
   - 【载荷投影】：`process_final_result` 在展示层把 Agent 内部标准化图（节点名列表与 `source`/`target` 边）投影为前端 vis-network 的 `{id,label}` 节点与 `{from,to}` 边，边类型映射为箭头与虚线，权重按 `.6g` 作为边标签，`graph_semantics` 等内部字段不再进入公开载荷。
   - 【历史会话】：`/api/load_session` 读取 `causal_graph` 附件时执行同一投影，早期版本按内部格式写入的附件不需要重跑分析即可恢复显示。
   - 【失败可见】：前端 `renderCausalGraph` 把节点/边建表与网络创建一起纳入异常处理，数据格式不符合 vis-network 要求时在图上直接给出说明文本，同时更新聊天页脚本缓存版本号。
+
+---
+2026.9.18
+- 【普通端 Vue 合并 develop 的 Deep Agent 变更】
+  - 【合并】：在 `refactor(Frontend)/refactor-fronten` 上合并 `origin/develop`（PR #74 合入的 Deep Agent 后端与公共事件契约）；文本冲突只出现在 `CHANGELOG.md` 与 `Document/README.md`，自动合并的 `Dockerfile`、`config/settings.py`、三个 Compose、`tests/README.md` 和 `Document/` 页面逐项核对后同时保留双方内容。
+  - 【阶段明细】：Vue 端补齐 `decision_delta` 增量、`decision_kind` 公开前缀、同一工具生命周期事件的挂起与放行、明细早于父 `node_start` 时的暂存补绘，以及 `node_retry`/`node_end` 的错误与重试文案。
+  - 【展示】：新增草稿与公开决策的逐字展示（40 字/秒、25ms 步进）；终态校正同一草稿，报告布局同样复用；`prefers-reduced-motion` 和终态直接展示完整文本。聊天区新增 80px 阈值滚动跟随，用户主动上滑后停止跟随。
+  - 【验证】：`npm ci` 与 `npm run check`（Lint、`vue-tsc -b` 类型检查、35 项 unit/contract、9 项组件、1 项 Mock E2E、生产构建）通过；`python -m pytest tests/integration/deployment/test_chat_frontend.py` 8 项通过；`docker compose -f docker-compose.yml config --quiet` 通过；遗留静态脚本的 19 项 Node 测试继续通过。
+  - 【计划外修正】：`chat-frontend` 的 `typecheck` 原本是 `vue-tsc --noEmit`，在 solution 配置下不检查任何文件，改为 `vue-tsc -b` 后才暴露并修正事件适配器的一处类型错误；`Document/development/deployment.md` 的镜像阶段数量和依赖锁定说明按当前 `Dockerfile` 更新。
+  - 【边界】：真实 Flask、数据库、worker、模型和浏览器人工验收未执行；`app/static/` 旧静态文件及其配套 Node 测试仍按 `Document/development/chat-frontend.md` 的清单由用户自行删除。

@@ -70,13 +70,38 @@ export interface WaitingInput {
   prompt: string
 }
 
+export type DetailTone = 'default' | 'error' | 'retry'
+
+export interface StepTextDetail {
+  kind: 'text'
+  text: string
+  tone: DetailTone
+}
+
+/**
+ * 一次工具调用的公开决策。`text` 是已经接收的完整公开说明（不含前缀），
+ * 展示层按码点逐步推进；`pending` 保存同一工具尚未放行的生命周期事件。
+ */
+export interface StepDecisionDetail {
+  kind: 'decision'
+  key: string
+  decisionKind: string
+  toolName: string
+  streamId: string | null
+  text: string
+  complete: boolean
+  pending: Array<Record<string, unknown>>
+}
+
+export type StepDetail = StepTextDetail | StepDecisionDetail
+
 export interface ThinkingStep {
   stepId: string
   nodeName: string
   title: string
   status: 'in-progress' | 'completed' | 'failed' | 'canceled'
   duration: number | null
-  details: string[]
+  details: StepDetail[]
 }
 
 export interface ThinkingProjection {
@@ -85,6 +110,7 @@ export interface ThinkingProjection {
   elapsedSeconds: number
   steps: Record<string, ThinkingStep>
   stepOrder: string[]
+  pendingStepEvents: Record<string, Array<Record<string, unknown>>>
   draftStreamId: string | null
   draftText: string
   finalResult: StructuredMessage | null

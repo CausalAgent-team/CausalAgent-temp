@@ -25,6 +25,16 @@ Vue 的 Job 传输层使用 `fetch()` 和 `ReadableStream`，不使用原生 `Ev
 
 JobController 为每个 Job 管理订阅 generation，切换 Session、取消、登出或卸载时使旧回调失效。`waiting_input` 是可恢复暂停态；`final_result`、`error` 和 `canceled` 进入终态并停止订阅，终态保留已渲染结果但释放原始文本拼接和语义去重缓冲。创建、恢复、取消分别使用独立幂等键，取消的 409 终态冲突按后端状态对账。运行态不显示独立取消按钮；发送键变为带旋转进度环和中心方块的停止键，再次点击调用相同的取消 API。
 
+## 阶段明细、公开决策与展示节奏
+
+阶段明细只挂在同一个 `step_id` 下：`node_start` 创建阶段，`progress`、`decision`、`tool_call_start`、`tool_call_result` 和 `decision_delta` 作为明细追加，`node_end` 结束阶段。明细早于父 `node_start` 到达时先按 `step_id` 暂存，父阶段出现后按原顺序补绘一次，避免把明细挂到错误的阶段或改变阶段顺序。
+
+公开决策由两类事件表达。`decision_delta` 只携带同一 `stream_id` 的批次增量和 `decision_kind`，页面按 `decision_kind` 显示`算法决策：`、`检索决策：`或`最终决策：`前缀，并按码点逐字推进；完整 `decision` 到达时只结束该决策流并放行被挂起的工具事件，不会重复插入文本。同一工具的 `tool_call_start`/`tool_call_result` 在该决策完成前只能暂存；如果缺少完整 `decision` 结束事件，工具结果会强制放行，不允许永久挂起。历史回放只有完整 `decision`，因此直接显示带前缀的完整文本。
+
+聊天草稿和公开决策共用同一套展示节奏：40 字/秒、25ms 步进推进展示游标，完整缓冲区始终以服务端内容为准，展示速度不影响工具执行。`final_result` 到达时如果已有文字草稿，终态文本校正到同一草稿，报告布局同样复用草稿而不做第二次渲染；没有草稿或结果不是文字时才新增一条结果消息。`prefers-reduced-motion` 和所有终态直接展示完整文本。
+
+聊天区滚动按 80px 阈值跟随最新内容：用户在阈值外主动上滑后停止自动跟随，回到底部后恢复；发送、切换或创建会话、新增消息和展示推进都会在跟随状态下滚动到最新内容。逐字推进、定时器和滚动容器由组件或 runtime controller 持有，不进入 Pinia。
+
 ## 开发与构建
 
 在仓库根目录执行：
@@ -64,7 +74,7 @@ Vue 构建缺失属于运行期请求边界：`/`、`/chat-next` 和 `/chat-asse
 
 ## 旧文件清理边界
 
-下列文件已无运行时引用，但仍属于重要回滚文件，agent 不得直接删除。用户确认当前代码、构建产物和人工验收记录均可接受后，应自行删除：
+下列文件已无运行时引用，但仍属于重要回滚文件，agent 不得直接删除。`app/static/js/` 中的脚本还包含 develop 在旧版普通聊天页面上新增的公开决策、假流式展示和滚动跟随改动，这些行为已经在本 Vue 工程按等价语义重新实现。用户确认当前代码、构建产物和人工验收记录均可接受后，应自行删除：
 
 - `app/static/chat.html`
 - `app/static/css/style.css`
@@ -74,5 +84,12 @@ Vue 构建缺失属于运行期请求边界：`/`、`/chat-next` 和 `/chat-asse
 - `app/static/js/job_subscription_state.js`
 - `app/static/js/stream_state.js`
 - `app/static/js/marked.min.js`
+
+配套的 Node 测试只验证上述静态文件，需要和它们一起删除，否则测试会指向不存在的文件：
+
+- `tests/unit/frontend/chat_layout_state.test.cjs`
+- `tests/unit/frontend/chat_stream_state.test.cjs`
+- `tests/unit/frontend/execution_phase_state.test.cjs`
+- `tests/unit/frontend/job_subscription_state.test.cjs`
 
 不得删除 `app/static/rag_eval_app/`，它是独立的 RAG 工作台静态产物。物理删除完成后，应重新执行 `rg` 失效引用检查、普通端部署契约测试和 `git diff --check`；在用户实际删除前，变更日志和验收报告只能写“运行时已移除、物理文件待用户清理”。

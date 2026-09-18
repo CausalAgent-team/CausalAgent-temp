@@ -13,8 +13,8 @@
 | RAG/多模态与隔离评测 | `tests/test_multimodal_*.py`、`tests/test_rag_eval_*.py`、`tests/acceptance/` | 来源/索引/release 契约、隔离队列与评测矩阵的分层检查 |
 | 管理员 Vue unit | `admin-frontend/tests/*.spec.ts` | API DTO、组件、看板/设置语义和 SQL digest 展示 |
 | 管理员 Mock E2E | `admin-frontend` `test:e2e:mock` | 无真实数据库的页面导航、鉴权和交互 |
-| 普通端 Vue unit/contract | `chat-frontend/tests/unit`、`tests/contract` | SSE parser、游标、Job reducer、幂等和 Flask JSON schema |
-| 普通端 Vue component/Mock E2E | `chat-frontend/tests/components`、`tests/e2e-mock` | 认证、Composer、消息时间线以及模拟后端的登录/创建 Job/SSE 终态 |
+| 普通端 Vue unit/contract | `chat-frontend/tests/unit`、`tests/contract` | SSE parser、游标、Job reducer、公开决策与明细补绘、展示推进纯函数、幂等和 Flask JSON schema |
+| 普通端 Vue component/Mock E2E | `chat-frontend/tests/components`、`tests/e2e-mock` | 认证、Composer、消息时间线、假流式草稿与公开决策展示，以及模拟后端的登录/创建 Job/SSE 终态 |
 | 普通端 Flask 部署契约 | `tests/integration/deployment/test_chat_frontend.py` | 唯一 Vue 入口、dist 缺失 fail-closed、缓存头、Docker builder/runtime 和 Compose 变量 |
 | Windows 桌面逻辑 | `windows-client/tests/test_config.py`、`test_navigation_policy.py`、`test_runtime.py`、`test_launcher.py` | 配置优先级、URL/origin 白名单、运行时错误和 Edge 事件策略，不创建真实窗口 |
 | Windows 壳层 smoke | `windows-client/tests/run_windows_smoke.py`、`test_windows_smoke.py` | 隔离 HTTP stub、真实 WebView2 Edge Chromium 页面加载和窗口退出；只在 Windows 桌面会话执行 |

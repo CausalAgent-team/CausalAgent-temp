@@ -827,6 +827,15 @@
   overflow-wrap: anywhere;
 }
 
+.step-details p.step-detail.error {
+  color: #b42318;
+}
+
+.step-details p.step-detail.retry {
+  color: #6b7280;
+  font-weight: 500;
+}
+
 @keyframes timeline-spin {
   to { transform: rotate(360deg); }
 }
