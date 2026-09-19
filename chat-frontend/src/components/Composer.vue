@@ -9,6 +9,8 @@ const props = defineProps<{
   selectedFile: UserFile | null
   activeJob: JobRecord | null
   sending: boolean
+  /** 未登录预览下，发送和上传只请求登录，不执行真实请求。 */
+  authRequired?: boolean
 }>()
 const emit = defineEmits<{
   'update:draft': [value: string]
@@ -17,6 +19,7 @@ const emit = defineEmits<{
   'cancel': []
   'upload': [file: File]
   'clear-file': []
+  'request-auth': [action: 'send' | 'upload']
 }>()
 
 const { text } = useLocale()
@@ -58,7 +61,7 @@ function onFileChange(event: Event): void {
 function onKeydown(event: KeyboardEvent): void {
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault()
-    emit('send')
+    requestSend()
   }
 }
 
@@ -67,7 +70,23 @@ function onPrimaryAction(): void {
     emit('cancel')
     return
   }
+  requestSend()
+}
+
+function requestSend(): void {
+  if (props.authRequired) {
+    emit('request-auth', 'send')
+    return
+  }
   emit('send')
+}
+
+function onUploadClick(): void {
+  if (props.authRequired) {
+    emit('request-auth', 'upload')
+    return
+  }
+  triggerUpload()
 }
 
 watch(() => props.draft, () => { void nextTick(resize) })
@@ -99,7 +118,7 @@ watch(() => props.draft, () => { void nextTick(resize) })
       <button class="secondary-button web-search-button" :class="{ active: webSearchEnabled }" type="button" :aria-pressed="webSearchEnabled" @click="emit('update:web-search', !webSearchEnabled)">
         {{ webSearchEnabled ? text.webSearchOn : text.webSearchOff }}
       </button>
-      <button class="secondary-button upload-button" type="button" :disabled="sending || Boolean(isRunning)" @click="triggerUpload">{{ text.upload }}</button>
+      <button class="secondary-button upload-button" type="button" :disabled="sending || Boolean(isRunning)" @click="onUploadClick">{{ text.upload }}</button>
       <button
         class="primary-button send-button"
         :class="{ 'is-running': isRunning }"
