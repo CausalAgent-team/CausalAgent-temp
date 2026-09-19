@@ -82,6 +82,11 @@ EXPECTED_CODES = {
     "agent.persistence.cleanup.failed",
     "agent.persistence.cleanup.runtime.degraded",
     "agent.persistence.cleanup.runtime.recovered",
+    "analytics.public_preview.view",
+    "analytics.public_preview.demo_open",
+    "analytics.public_preview.send_click",
+    "analytics.auth.panel_open",
+    "analytics.auth.login_success",
 }
 EXPECTED_CODES.update(
     f"{service}.startup.{outcome}"
@@ -101,6 +106,8 @@ def _sample_value(field: str, rule):
         return 500
     if field == "statement_digest":
         return "a" * 64
+    if field == "visitor_hash":
+        return "b" * 64
     if field == "phases":
         return ["writer_abort"]
     if field == "reason_code":

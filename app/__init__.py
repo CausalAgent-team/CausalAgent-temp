@@ -25,6 +25,7 @@ def create_app():
     from app.agent.routes import agent_bp
     from app.main.routes import main_bp
     from app.admin.routes import admin_bp, admin_page_bp
+    from app.analytics.routes import analytics_bp
     from app.request_context import register_request_context
     from app.rag_eval.routes import rag_eval_bp
 
@@ -42,6 +43,7 @@ def create_app():
     app.register_blueprint(admin_bp)
     app.register_blueprint(admin_page_bp)
     app.register_blueprint(rag_eval_bp)
+    app.register_blueprint(analytics_bp)
     return app
 
 

@@ -217,6 +217,13 @@ ERROR_CATEGORY = DetailRule(
     max_bytes=32,
 )
 
+# 公开预览统计的固定取值：页面标识和示例标识由前端静态数据与后端接口共同使用，
+# 目录是唯一来源，客户端只能上报这里登记过的值。
+ANALYTICS_PAGE_IDS = frozenset({"home"})
+ANALYTICS_DEMO_KEYS = frozenset({"overview", "report", "graph"})
+PAGE_ID = DetailRule((str,), choices=ANALYTICS_PAGE_IDS, max_bytes=32)
+DEMO_KEY = DetailRule((str,), choices=ANALYTICS_DEMO_KEYS, max_bytes=32)
+
 
 def _details(**rules: DetailRule) -> Mapping[str, DetailRule]:
     return MappingProxyType(dict(rules))
@@ -720,6 +727,42 @@ _events: dict[str, EventSpec] = {
         downtime_ms=DURATION,
         failure_count=POSITIVE_COUNT,
     ),
+    "analytics.public_preview.view": _spec(
+        logging.INFO,
+        "request",
+        "公开预览已展示",
+        visitor_hash=SHA256,
+        page=PAGE_ID,
+        demo_key=DEMO_KEY,
+    ),
+    "analytics.public_preview.demo_open": _spec(
+        logging.INFO,
+        "request",
+        "公开预览示例已打开",
+        visitor_hash=SHA256,
+        page=PAGE_ID,
+        demo_key=DEMO_KEY,
+    ),
+    "analytics.public_preview.send_click": _spec(
+        logging.INFO,
+        "request",
+        "未登录访客点击发送",
+        visitor_hash=SHA256,
+        page=PAGE_ID,
+        demo_key=DEMO_KEY,
+    ),
+    "analytics.auth.panel_open": _spec(
+        logging.INFO,
+        "request",
+        "登录面板已打开",
+        visitor_hash=SHA256,
+        page=PAGE_ID,
+    ),
+    "analytics.auth.login_success": _spec(
+        logging.INFO,
+        "request",
+        "用户登录成功",
+    ),
 }
 
 for _service in ("web", "worker", "monitor", "mcp", "maintenance"):
@@ -815,6 +858,8 @@ def validate_event_details(
 
 
 __all__ = [
+    "ANALYTICS_DEMO_KEYS",
+    "ANALYTICS_PAGE_IDS",
     "CONTRACT_VIOLATIONS",
     "DetailRule",
     "EVENT_SPECS",
