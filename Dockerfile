@@ -53,14 +53,40 @@ COPY chat-frontend/ ./
 RUN npm run build
 
 
+FROM node:24-alpine AS website-builder
+
+WORKDIR /frontend
+
+COPY website-frontend/package.json website-frontend/package-lock.json website-frontend/.npmrc ./
+RUN npm ci
+
+COPY website-frontend/ ./
+RUN npm run build
+
+
+FROM node:24-alpine AS rag-eval-builder
+
+WORKDIR /workspace/app/rag_eval/frontend
+
+COPY app/rag_eval/frontend/package.json app/rag_eval/frontend/package-lock.json ./
+RUN npm ci
+
+COPY app/rag_eval/frontend/ ./
+RUN npm run build
+
+
 FROM python-deps AS runtime
 
 COPY . .
 COPY --from=admin-builder /frontend/dist /opt/causalagent-admin
 COPY --from=chat-builder /frontend/dist /opt/causalagent-chat
+COPY --from=website-builder /frontend/dist /opt/causalagent-website
+COPY --from=rag-eval-builder /workspace/app/rag_eval/frontend_dist /opt/causalagent-rag-eval
 
 ENV ADMIN_FRONTEND_DIST_DIR=/opt/causalagent-admin \
-    CHAT_FRONTEND_DIST_DIR=/opt/causalagent-chat
+    CHAT_FRONTEND_DIST_DIR=/opt/causalagent-chat \
+    WEBSITE_FRONTEND_DIST_DIR=/opt/causalagent-website \
+    RAG_EVAL_FRONTEND_DIST_DIR=/opt/causalagent-rag-eval
 
 EXPOSE 5001
 

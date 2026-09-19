@@ -208,7 +208,8 @@ test('完整看板和在线配置在 Vue 生产路由语义下可交互', async 
   await expect(page.getByRole('heading', { name: '数据库状态看板' })).toBeVisible()
   await expect(page.getByRole('link', { name: '进入 Grafana' }))
     .toHaveAttribute('href', 'http://127.0.0.1:3000/')
-  await expect(page.getByRole('link', { name: '进入聊天' })).toHaveAttribute('href', '/')
+  await expect(page.getByRole('link', { name: '进入聊天' })).toHaveAttribute('href', '/dashboard')
+  await expect(page.getByRole('link', { name: 'RAG 评测台' })).toHaveAttribute('href', '/rag-eval')
   for (const text of ['Revision', '主库', '第一从库', '阻塞项', '连接使用率']) {
     await expect(page.getByText(text, { exact: true })).toBeVisible()
   }
