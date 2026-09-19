@@ -9,6 +9,7 @@ interface AuthState {
   phase: AuthPhase
   username: string | null
   role: string | null
+  permissions: string[]
   csrfToken: string | null
   warningCode: string | null
   error: string | null
@@ -23,12 +24,14 @@ export const useAuthStore = defineStore('auth', {
     phase: 'checking',
     username: null,
     role: null,
+    permissions: [],
     csrfToken: null,
     warningCode: null,
     error: null,
   }),
   getters: {
     isAuthenticated: (state) => state.phase === 'authenticated',
+    hasPermission: (state) => (permissionKey: string) => state.permissions.includes(permissionKey),
     locale: (): Locale => (localStorage.getItem('language') === 'en' ? 'en' : 'zh'),
   },
   actions: {
@@ -40,6 +43,7 @@ export const useAuthStore = defineStore('auth', {
           this.phase = 'authenticated'
           this.username = response.username
           this.role = response.role ?? 'user'
+          this.permissions = response.permissions ?? []
           this.csrfToken = response.csrf_token ?? null
           this.error = null
           return true
@@ -65,6 +69,7 @@ export const useAuthStore = defineStore('auth', {
       this.phase = 'authenticated'
       this.username = response.username
       this.role = response.role ?? 'user'
+      this.permissions = response.permissions ?? []
       this.csrfToken = response.csrf_token ?? null
       this.warningCode = response.warning_code ?? null
       this.error = null
@@ -81,6 +86,7 @@ export const useAuthStore = defineStore('auth', {
       this.phase = 'anonymous'
       this.username = null
       this.role = null
+      this.permissions = []
       this.csrfToken = null
       this.warningCode = null
     },

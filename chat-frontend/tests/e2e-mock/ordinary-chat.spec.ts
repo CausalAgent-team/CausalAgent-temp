@@ -7,16 +7,22 @@ function json(payload: unknown, status = 200): { status: number; contentType: st
 
 interface RecordedTraffic {
   businessPaths: string[]
-  analyticsEvents: Array<Record<string, unknown>>
 }
 
-async function installApiMocks(page: Page): Promise<RecordedTraffic> {
-  const traffic: RecordedTraffic = { businessPaths: [], analyticsEvents: [] }
+interface MockOptions {
+  loggedIn?: boolean
+  sessions?: ReadonlyArray<[string, { preview: string; last_time: string }]>
+  sessionMessages?: ReadonlyArray<Record<string, unknown>>
+}
+
+async function installApiMocks(page: Page, options: MockOptions = {}): Promise<RecordedTraffic> {
+  const loggedIn = options.loggedIn ?? true
+  const traffic: RecordedTraffic = { businessPaths: [] }
 
   page.on('request', (request) => {
     const pathname = new URL(request.url()).pathname
     if (!pathname.startsWith('/api/')) return
-    if (pathname === '/api/analytics/events' || pathname === '/api/check_auth') return
+    if (pathname === '/api/check_auth') return
     traffic.businessPaths.push(pathname)
   })
 
@@ -27,22 +33,26 @@ async function installApiMocks(page: Page): Promise<RecordedTraffic> {
       await route.fallback()
       return
     }
-    if (url.pathname === '/api/analytics/events') {
-      const body = request.postDataJSON() as { events?: Array<Record<string, unknown>> }
-      traffic.analyticsEvents.push(...(body.events ?? []))
-      await route.fulfill({ ...json({ success: true, accepted: body.events?.length ?? 0 }, 202) })
-      return
-    }
     if (url.pathname === '/api/check_auth') {
-      await route.fulfill({ ...json({ isLoggedIn: false }) })
-      return
-    }
-    if (url.pathname === '/api/login') {
-      await route.fulfill({ ...json({ success: true, username: 'alice', role: 'user', csrf_token: 'csrf-token' }) })
+      await route.fulfill({
+        ...(loggedIn
+          ? json({
+              isLoggedIn: true,
+              username: 'alice',
+              role: 'admin',
+              permissions: ['dashboard.access', 'admin.access', 'rag_eval.access'],
+              csrf_token: 'csrf-token',
+            })
+          : json({ isLoggedIn: false })),
+      })
       return
     }
     if (url.pathname === '/api/sessions') {
-      await route.fulfill({ ...json([]) })
+      await route.fulfill({ ...json(options.sessions ?? []) })
+      return
+    }
+    if (url.pathname === '/api/load_session') {
+      await route.fulfill({ ...json({ success: true, messages: options.sessionMessages ?? [] }) })
       return
     }
     if (url.pathname === '/api/files') {
@@ -88,62 +98,73 @@ async function installApiMocks(page: Page): Promise<RecordedTraffic> {
   return traffic
 }
 
-test('anonymous visitors see the public preview without creating any business data', async ({ page }) => {
-  const traffic = await installApiMocks(page)
+test('未登录访客被送到统一登录页，且不创建任何业务数据', async ({ page }) => {
+  const traffic = await installApiMocks(page, { loggedIn: false })
+  await page.route('**/auth/sign-in**', (route) =>
+    route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>sign-in</title><h1>登录</h1>' }),
+  )
 
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: '把数据交给 Agent，得到可追溯的因果分析' })).toBeVisible()
-  await expect(page.locator('.preview-session-item')).toHaveCount(3)
-  await expect(page.locator('.auth-card')).toHaveCount(0)
 
-  await page.locator('textarea[placeholder="输入消息..."]').fill('请分析这个数据')
-  await page.reload()
-  await expect(page.locator('textarea[placeholder="输入消息..."]')).toHaveValue('请分析这个数据')
-
-  await page.getByRole('button', { name: '发送' }).click()
-
-  await expect(page.locator('.auth-card').getByRole('heading', { name: '登录' })).toBeVisible()
-  await expect(page.locator('textarea[placeholder="输入消息..."]')).toHaveValue('请分析这个数据')
+  await expect(page).toHaveURL(/\/auth\/sign-in\?next=%2Fdashboard/)
   expect(traffic.businessPaths).toEqual([])
-
-  const localKeys = await page.evaluate(() => Object.keys(localStorage))
-  const sessionKeys = await page.evaluate(() => Object.keys(sessionStorage))
-  expect(localKeys).toEqual(['causalagent.analytics.visitor'])
-  expect(sessionKeys).toContain('causalagent.preview.draft')
-
-  await expect.poll(() => traffic.analyticsEvents.map((event) => event.event)).toContain('analytics.auth.panel_open')
-  const reported = traffic.analyticsEvents.map((event) => event.event)
-  expect(reported.filter((name) => name === 'analytics.public_preview.view')).toHaveLength(1)
-  expect(reported).toContain('analytics.public_preview.send_click')
 })
 
-test('mock ordinary chat login, job creation and fetch SSE terminal event', async ({ page }) => {
+test('登录用户在工作区创建任务并看到终态事件', async ({ page }) => {
   const traffic = await installApiMocks(page)
 
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: '把数据交给 Agent，得到可追溯的因果分析' })).toBeVisible()
-  await page.locator('textarea[placeholder="输入消息..."]').fill('请分析这个数据')
-  await page.getByRole('button', { name: '发送' }).click()
-
-  const authCard = page.locator('.auth-card')
-  await expect(authCard.getByRole('heading', { name: '登录' })).toBeVisible()
-  expect(traffic.businessPaths).toEqual([])
-  await authCard.getByLabel('用户名').fill('alice')
-  await authCard.getByLabel('密码', { exact: true }).fill('secret')
-  await authCard.getByRole('button', { name: '登录' }).click()
-
   await expect(page.getByRole('button', { name: '新建对话' })).toBeVisible()
-  await expect(page.locator('textarea[placeholder="输入消息..."]')).toHaveValue('请分析这个数据')
 
+  await page.locator('textarea[placeholder="输入消息..."]').fill('请分析这个数据')
   await page.getByRole('button', { name: '发送' }).click()
 
   await expect(page.getByText('请分析这个数据')).toBeVisible()
   await expect(page.getByText('done from mock')).toBeVisible()
   expect(traffic.businessPaths).toContain('/api/new_chat')
   expect(traffic.businessPaths).toContain('/api/agent/jobs')
+  await expect(page).toHaveURL(/dashboard-assets\/session\/session-1/)
 
   await page.getByRole('button', { name: /执行 Deep Agent 分析/ }).click()
   await expect(page.getByText('算法决策：选择 PC')).toBeVisible()
   await expect(page.getByText('调用工具：pc（参数字段：data）')).toBeVisible()
   await expect(page.getByText('pc：算法执行完成')).toBeVisible()
+})
+
+test('设置页由地址决定，关闭后回到工作区', async ({ page }) => {
+  await installApiMocks(page)
+
+  await page.goto('/dashboard-assets/settings')
+  await expect(page.getByRole('dialog', { name: '设置' })).toBeVisible()
+
+  await page.getByRole('button', { name: '关闭', exact: true }).click()
+
+  await expect(page.getByRole('dialog', { name: '设置' })).toHaveCount(0)
+  await expect(page).toHaveURL(/dashboard-assets\/$/)
+})
+
+test('会话详情地址会加载对应会话', async ({ page }) => {
+  await installApiMocks(page, {
+    sessions: [['session-9', { preview: '历史会话', last_time: '2026-09-18 09:00:00' }]],
+    sessionMessages: [{ sender: 'user', text: '历史消息正文' }],
+  })
+
+  await page.goto('/dashboard-assets/session/session-9')
+
+  await expect(page.getByText('历史消息正文')).toBeVisible()
+  await expect(page.locator('.session-item.selected')).toContainText('历史会话')
+})
+
+test('退出登录后回到官网首页', async ({ page }) => {
+  const traffic = await installApiMocks(page)
+
+  await page.setViewportSize({ width: 1600, height: 1000 })
+  await page.goto('/')
+  await page.getByRole('button', { name: '打开菜单' }).click()
+  await page.getByRole('button', { name: /^[A-Z]$/ }).click()
+  const homeNavigation = page.waitForRequest((request) => new URL(request.url()).pathname === '/')
+  await page.getByRole('button', { name: '退出登录' }).click()
+
+  await homeNavigation
+  expect(traffic.businessPaths).toContain('/api/logout')
 })

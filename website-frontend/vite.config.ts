@@ -2,10 +2,10 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
 export default defineConfig({
-  base: '/dashboard-assets/',
+  base: '/site-assets/',
   plugins: [vue()],
   server: {
-    port: 5174,
+    port: 5175,
     strictPort: true,
     proxy: {
       '/api': {
@@ -15,14 +15,14 @@ export default defineConfig({
     },
   },
   build: {
-    manifest: true,
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes('node_modules/vue') || id.includes('node_modules/pinia')) return 'vue'
+          if (id.includes('node_modules/vue')) return 'vue'
           return undefined
         },
       },
     },
   },
 })
+

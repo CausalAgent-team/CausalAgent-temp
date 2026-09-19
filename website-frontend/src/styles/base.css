@@ -1,0 +1,86 @@
+:root {
+  color-scheme: light;
+  --ink-900: #10192b;
+  --ink-700: #2c3a52;
+  --ink-500: #5b6b85;
+  --ink-300: #97a3b8;
+  --line: #e2e7f0;
+  --surface: #ffffff;
+  --surface-muted: #f5f7fb;
+  --accent: #2f6df6;
+  --accent-strong: #1f52c8;
+  --accent-soft: #e8f0ff;
+  --danger: #c8322f;
+  --radius-large: 20px;
+  --radius-medium: 14px;
+  --radius-small: 10px;
+  --shadow-soft: 0 18px 40px rgba(16, 25, 43, 0.08);
+  --content-width: 1120px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--surface);
+  color: var(--ink-900);
+  font-family: 'Inter', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.3;
+  margin: 0 0 12px;
+  letter-spacing: -0.01em;
+}
+
+h1 {
+  font-size: 2.6rem;
+}
+
+h2 {
+  font-size: 1.7rem;
+}
+
+h3 {
+  font-size: 1.1rem;
+}
+
+p {
+  margin: 0 0 12px;
+}
+
+ul,
+ol {
+  margin: 0 0 12px;
+  padding-left: 20px;
+}
+
+li {
+  margin-bottom: 6px;
+}
+
+button {
+  font: inherit;
+}
+
+input {
+  font: inherit;
+}
+
