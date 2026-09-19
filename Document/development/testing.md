@@ -39,7 +39,9 @@ npm run check
 Pop-Location
 ```
 
-`npm run check` 是普通端代码级门槛；当前实现覆盖 Lint、类型检查、unit/contract、组件测试、Mock Playwright E2E 和 Vite 生产构建。Mock E2E 不证明真实 Flask、Cookie Session、MySQL/PostgreSQL、worker、文件上传、模型、Chrome/Edge 双浏览器或桌面壳。
+`npm run check` 是普通端代码级门槛；当前实现覆盖 Lint、类型检查、unit/contract、组件测试、Mock Playwright E2E 和 Vite 生产构建。Mock E2E 覆盖未登录公开预览、点击发送的登录拦截、登录后的草稿恢复与真实 Job 流程，以及匿名统计只上报固定事件；统计接口本身的合同由 `tests/unit/analytics/` 覆盖。Mock E2E 不证明真实 Flask、Cookie Session、MySQL/PostgreSQL、worker、文件上传、模型、Chrome/Edge 双浏览器或桌面壳。
+
+`playwright.mock.config.ts` 在本地默认复用 5174 端口上已有的开发服务器（`reuseExistingServer`），运行前必须确认该端口服务的是当前工作区；若该端口被其他检出占用，应在确认后改用临时端口的等价配置，或停止占用该端口的进程。
 
 Flask 入口和 Docker 静态契约由本地/发布前手工执行，不接入现有 CI：
 
@@ -213,7 +215,7 @@ powershell -ExecutionPolicy Bypass -File tests/run_searxng_docker_validation.ps1
 
 ## 日志与可观测性验证
 
-日志第二阶段的重点回归位于 `tests/unit/test_event_catalog.py`、`tests/unit/test_request_context_contract.py`、`tests/unit/agent/` 和 `tests/integration/test_logging_policy.py`。它们覆盖事件目录和固定消息、请求/线程/异步任务/worker slot 上下文隔离、Job 终态、node 最终降级、RAG 计数日志、MCP 可信参数及 stdout/stderr、数据库/monitor/cleanup 转移，以及运行路径普通 logging 调用和敏感详情键的 AST 政策。
+日志第二阶段的重点回归位于 `tests/unit/test_event_catalog.py`、`tests/unit/test_request_logging.py`、`tests/unit/agent/`、`tests/unit/analytics/test_public_analytics_events.py` 和 `tests/integration/test_logging_policy.py`。它们覆盖事件目录和固定消息、请求/线程/异步任务/worker slot 上下文隔离、Job 终态、node 最终降级、RAG 计数日志、MCP 可信参数及 stdout/stderr、数据库/monitor/cleanup 转移、公开预览匿名事件的请求边界与访客标识脱敏，以及运行路径普通 logging 调用和敏感详情键的 AST 政策。
 
 MCP 日志、60 秒慢调用、Job/invocation 关联、控制面取消、目标进程终止和 sibling 隔离集中由 `tests/unit/agent/test_mcp_v2_contract.py`、`tests/unit/agent/test_execution_guard.py`、`tests/unit/test_event_catalog.py` 与 `tests/integration/test_observability_compose.py` 覆盖。可先运行定向回归：
 

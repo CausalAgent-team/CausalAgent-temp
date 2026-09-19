@@ -1441,3 +1441,11 @@
   - 【样式】：报告主题变量集中在 `.report-document`，报告背景、标题层级、章节间距、Markdown 表格、证据提示和移动端布局由组件作用域样式控制，模型不返回类名或样式。
 - 【文档：结构化报告契约】
   - 【API、架构与数据库】：更新 `Document/api/agent-jobs.md`、`Document/api/chat-files.md`、`Document/architecture/agent-runtime.md`、`Document/database/migrations-checkpoints.md` 和 `Document/development/chat-frontend.md`，写入报告文档结构、`report_document` 附件、历史恢复与降级行为、迁移 head 和前端渲染边界。
+- 【公开预览、登录拦截与匿名访问日志】
+  - 【公开预览】：普通端入口区分 `checking`、匿名和已登录三种状态，未登录访客先看到公开预览，包含产品说明、静态示例会话、结构化示例报告和示例因果图；示例数据放在 `chat-frontend/src/preview/public-preview-data.ts`，只在前端渲染，不经过任何公开数据接口，也不创建数据库 Session、消息、文件或分析 Job。
+  - 【登录拦截与草稿】：预览中的 Composer 以 `auth-required` 模式渲染，点击发送或上传只打开登录面板，上传按钮不弹出文件选择框；文字草稿保存在共享的 Composer store 并同步写入 `sessionStorage`（键 `causalagent.preview.draft`），登录面板关闭后文字仍在，登录成功后草稿进入正式 Composer 但不自动发送，用户再次点击发送才创建真实 Session 和 Job；文件对象、文件名和文件内容不写入任何存储或统计请求。
+  - 【匿名统计接口】：新增 `POST /api/analytics/events`，不要求登录也不创建任何业务数据，只接受 UUID `visitor_id` 和最多 10 个已登记事件，请求体上限 8 KiB，不接受客户端时间，非法批次整体拒绝且不产生部分日志，成功返回 `202` 和已接受数量。
+  - 【事件与脱敏】：事件目录新增 `analytics.public_preview.view`、`analytics.public_preview.demo_open`、`analytics.public_preview.send_click`、`analytics.auth.panel_open` 和 `analytics.auth.login_success`，详情只允许 `visitor_hash`、`page`、`demo_key` 且页面与示例标识按固定取值登记；浏览器匿名标识经服务端密钥 HMAC-SHA256 后只作为日志正文关联字段，原始标识、消息正文、文件名、文件内容和凭据都不进入日志，也不配置为 Loki 标签。登录成功事件由认证路由直接记录，不依赖前端上报。
+  - 【日志量控制】：同一浏览器会话内公开预览展示、示例打开和登录面板打开按页面与示例去重，发送点击每次真实点击上报一次；前端使用 `sendBeacon` 或 `keepalive` `fetch` 发送，不等待响应、失败不重试，统计异常不影响浏览、登录和真实业务接口。
+  - 【测试】：新增 `tests/unit/analytics/test_public_analytics_events.py`，覆盖接口边界、整体拒绝、访客标识脱敏、业务隔离和登录侧事件写入；`tests/unit/test_event_catalog.py` 与 `tests/integration/test_logging_policy.py` 同步新增事件；`chat-frontend` 新增匿名统计客户端单元测试、公开预览组件测试，并把 Mock E2E 改为未登录公开预览到登录后真实 Job 的完整流程。
+  - 【文档同步】：更新 `Document/api/conventions.md`、`Document/development/chat-frontend.md` 和 `Document/development/observability.md`，登记公开预览状态、登录拦截、草稿与文件边界、匿名事件合同、脱敏和日志量控制；同时修正日志事件目录表缺失的 `rag.runtime.ready`/`rag.sparse.ready` 行、`mcp.client.reconnected` 的 `pool_lane` 字段，以及测试文档引用失效测试文件路径的问题。
