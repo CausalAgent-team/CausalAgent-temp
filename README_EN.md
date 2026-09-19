@@ -283,12 +283,15 @@ Runtime events are controlled by the event catalog and correlated with request, 
 
 Four standalone Vue 3 + TypeScript projects run on the same origin and none of them belongs to a root npm workspace. Flask serves each build output from its own path prefix: the website in `website-frontend/` (`/site-assets/`), the user workspace in `chat-frontend/` (`/dashboard-assets/`), the RAG workbench in `app/rag_eval/frontend/` (`/rag-eval/`), and the admin console in `admin-frontend/` (`/admin/`). When a build output is missing, that frontend's page entry returns 503 with a request ID instead of falling back to another frontend or serving partial assets.
 
-Start the local development servers from the repository root:
+Start the local development servers from the repository root with a single command; the script opens one window per selected frontend and runs Vite there:
 
 ```powershell
-Push-Location website-frontend; npm ci; npm run dev; Pop-Location
-Push-Location chat-frontend; npm ci; npm run dev; Pop-Location
+.\scripts\dev_frontends.ps1                          # all four frontends
+.\scripts\dev_frontends.ps1 -Frontends website,chat  # website and chat only
+.\scripts\dev_frontends.ps1 -Frontends rag -Install  # run npm ci first
 ```
+
+The script uses PowerShell and npm only. `-WhatIf` prints the planned operations, `-Install` runs `npm ci` first, and single-frontend work can still use `npm ci` and `npm run dev` inside that directory. Ports, development URLs, and skip conditions are documented in [`Document/development/setup.md`](Document/development/setup.md).
 
 `npm run dev` only starts Vite on port 5174 and proxies API calls to `http://127.0.0.1:5001`. Setting `CHAT_VITE_DEV_SERVER_URL=http://127.0.0.1:5174` makes Flask redirect `/` to Vite while keeping the `next` query parameter. Quality gates and the production build run `npm run lint`, `npm run typecheck`, `npm run test:unit`, `npm run test:components`, `npm run test:e2e:mock`, and `npm run build`, or all of them through `npm run check`. Mock E2E uses simulated APIs only and is not evidence of real Flask, worker, or model acceptance.
 
@@ -377,7 +380,7 @@ Supported keywords include `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `
 ├── windows-client/             # Windows client, build, and smoke tests
 ├── config/                     # Application and RAG path configuration
 ├── deploy/                     # Staging and production resources
-├── scripts/                    # Release, acceptance, and diagnostics
+├── scripts/                    # Development, release, acceptance, and diagnostics
 ├── Document/                   # Current technical documentation
 ├── tests/                      # Unit, integration, E2E, and smoke tests
 ├── docker-compose*.yml         # Development, test, staging, and production stacks

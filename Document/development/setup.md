@@ -1,6 +1,6 @@
 # 开发环境
 
-文档职责：记录当前仓库的本地、Docker、管理员前端和数据库初始化入口。
+文档职责：记录当前仓库的本地、Docker、四个前端开发服务器和数据库初始化入口。
 
 适用范围：首次配置开发环境、切换运行方式或修改启动入口时使用；服务拓扑与镜像发布见 [`deployment.md`](deployment.md)，测试命令见 [`testing.md`](testing.md)。
 
@@ -97,6 +97,28 @@ $env:CAUSALAGENT_DESKTOP_URL = "http://127.0.0.1:5001/dashboard"
 
 配置优先级为命令行 `--url` > `CAUSALAGENT_DESKTOP_URL` > 模式默认值。Release 包使用构建时嵌入的 HTTPS origin，强制关闭 debug 和开发者工具；它不能通过桌面壳切换到任意外部页面。WebView2 的 Cookie/localStorage 数据目录是 `%LOCALAPPDATA%\CausalAgent\WebView`，用于按服务器 Session 策略跨重启保存登录状态。
 
+## 四个前端开发服务器一键启动
+
+四个前端工程互相独立，逐个启动要在四个目录分别执行 `npm ci` 和 `npm run dev`。`scripts/dev_frontends.ps1` 用 `Start-Process` 为选中的前端各开一个窗口运行 Vite；脚本只使用 PowerShell 内置命令和本机 npm，不引入任何 npm 依赖，端口和资源前缀直接从各工程的 `vite.config.ts` 读取，不会与前端配置出现偏差：
+
+```powershell
+.\scripts\dev_frontends.ps1                          # 启动全部四个前端
+.\scripts\dev_frontends.ps1 -Frontends website,chat  # 只启动官网和普通端
+.\scripts\dev_frontends.ps1 -Frontends rag -Install  # 先执行 npm ci 再启动
+.\scripts\dev_frontends.ps1 -WhatIf                  # 只打印将要执行的操作
+```
+
+`-Frontends` 可用值为 `website`、`chat`、`admin`、`rag`，也可以写工程目录名（如 `chat-frontend`），默认四个全部启动。各前端的端口与开发地址如下：
+
+| 前端 | 工程目录 | 端口 | 开发地址 |
+| --- | --- | --- | --- |
+| `website` | `website-frontend/` | 5175 | `http://localhost:5175/site-assets/` |
+| `chat` | `chat-frontend/` | 5174 | `http://localhost:5174/dashboard-assets/` |
+| `admin` | `admin-frontend/` | 5173 | `http://localhost:5173/admin/` |
+| `rag` | `app/rag_eval/frontend/` | 5176 | `http://localhost:5176/rag-eval/` |
+
+端口上已经有服务在监听时，该前端会被跳过；工程缺少 `node_modules` 时会提示先安装依赖并跳过；脚本结束时打印已启动的地址与进程号，以及被跳过的前端和原因。脚本不设置 `*_VITE_DEV_SERVER_URL`，Flask 是否把页面交给 Vite 仍由 `.env` 决定。PowerShell 执行策略阻止运行脚本时，改用 `powershell -ExecutionPolicy Bypass -File scripts\dev_frontends.ps1 <参数>`。
+
 ## 普通用户应用前端开发
 
 普通用户应用工程位于 `chat-frontend/`，开发服务器默认使用 5174 端口和 `/dashboard-assets/` base：
@@ -136,7 +158,7 @@ npm run dev
 Pop-Location
 ```
 
-页面本身仍由 Flask 在 `/rag-eval` 提供并要求 `rag_eval.access`；开发时直接访问 `http://127.0.0.1:5176/rag-eval/` 获取热重载，Vite 把 `/api` 代理到 `http://127.0.0.1:5001`。页面写请求需要 Session 绑定的 CSRF 令牌，前端在挂载时从 `/api/check_auth` 读取并附加 `X-CSRF-Token`。
+页面本身仍由 Flask 在 `/rag-eval` 提供并要求 `rag_eval.access`；开发时直接访问 `http://localhost:5176/rag-eval/` 获取热重载，Vite 把 `/api` 代理到 `http://127.0.0.1:5001`。这个工程的 `vite` 没有指定 `host`，只监听 IPv6 的 `::1`，因此用 `localhost` 而不是 `127.0.0.1` 访问。页面写请求需要 Session 绑定的 CSRF 令牌，前端在挂载时从 `/api/check_auth` 读取并附加 `X-CSRF-Token`。
 
 ## 管理员前端开发
 

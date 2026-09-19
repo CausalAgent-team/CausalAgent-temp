@@ -1485,3 +1485,6 @@
   - 【README 与局部规则】：同步中文与英文 README 的可访问入口、前端章节和目录树；`chat-frontend/AGENTS.md` 与 `chat-frontend/BASELINE.md` 登记 `/dashboard` 入口、地址来源和已删除的预览与登录面板；`windows-client/README.md` 的默认地址改为 `/dashboard`。
   - 【删除预览与登录面板】：删除 `chat-frontend/src/components/PublicPreview.vue`、`AuthPanel.vue`、`src/preview/public-preview-data.ts`、`src/runtime/analytics/analytics-client.ts` 及其组件/单元测试，移除只在预览中使用的 i18n 文案，并清理样式表中已无引用的登录面板与公开预览规则；登录与注册职责由官网前端承担。
   - 【构建产物不入库】：管理员前端产物不再作为发布文件跟踪，`.gitignore` 移除 `!admin-frontend/dist/index.html` 例外，`git rm --cached admin-frontend/dist/index.html` 停止跟踪但保留本地文件；`tests/integration/admin/test_admin_deployment.py` 的用例改为断言四个前端产物都被忽略，`Document/admin/system-overview.md` 改为说明源码变更必须重新构建、未构建时 `/admin/` 返回带 request ID 的 503。
+- 【开发脚本：前端 Vite 一键启动】
+  - 【新增脚本】：新增 `scripts/dev_frontends.ps1`，用 `Start-Process` 按 `-Frontends` 参数在独立窗口启动 `website-frontend/`、`chat-frontend/`、`admin-frontend/` 和 `app/rag_eval/frontend/` 的 Vite 开发服务器；端口和资源前缀从各工程的 `vite.config.ts` 读取，支持 `-Install` 先执行 `npm ci`、`-WhatIf` 只打印将要执行的操作，端口已被占用或缺少 `node_modules` 的前端会跳过并打印原因，脚本只依赖 PowerShell 内置命令和本机 npm。
+  - 【文档】：`Document/development/setup.md` 新增四个前端开发服务器一键启动章节和端口表，并把 RAG 评测台的开发地址由 `http://127.0.0.1:5176/rag-eval/` 更正为 `http://localhost:5176/rag-eval/`（该工程的 `vite` 未指定 `host`，只监听 IPv6 的 `::1`）；`README.md` 与 `README_EN.md` 的前端开发章节改用这个入口，目录树补充 `scripts/` 的开发用途。

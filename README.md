@@ -403,12 +403,15 @@ flowchart LR
 
 同源下运行四个互相独立的 Vue 3 + TypeScript 工程，都不加入根级 npm workspace，构建产物都由 Flask 在同源路径提供：官网 `website-frontend/`（`/site-assets/`）、用户工作区 `chat-frontend/`（`/dashboard-assets/`）、RAG 评测台 `app/rag_eval/frontend/`（`/rag-eval/`）和管理员前端 `admin-frontend/`（`/admin/`）。缺少任一构建产物时，对应该前端的页面入口返回 503 和 request ID，既不回退到其它前端，也不返回半成品资源。
 
-本地开发在仓库根目录执行：
+本地开发在仓库根目录执行一条命令，脚本会为选中的前端各开一个窗口运行 Vite：
 
 ```powershell
-Push-Location website-frontend; npm ci; npm run dev; Pop-Location
-Push-Location chat-frontend; npm ci; npm run dev; Pop-Location
+.\scripts\dev_frontends.ps1                          # 四个前端全部启动
+.\scripts\dev_frontends.ps1 -Frontends website,chat  # 只启动官网和普通端
+.\scripts\dev_frontends.ps1 -Frontends rag -Install  # 先执行 npm ci 再启动
 ```
+
+脚本只使用 PowerShell 和 npm，`-WhatIf` 只打印将要执行的操作，`-Install` 先执行 `npm ci`；单独开发某个前端时仍可直接进入该目录执行 `npm ci` 和 `npm run dev`。端口、开发地址和跳过条件见 [`Document/development/setup.md`](Document/development/setup.md)。
 
 官网开发服务器使用 5175 端口和 `/site-assets/` base，用户工作区使用 5174 端口和 `/dashboard-assets/` base，两者的 Vite 都把 `/api` 代理到 `http://127.0.0.1:5001`。在 `.env` 设置 `WEBSITE_VITE_DEV_SERVER_URL=http://127.0.0.1:5175` 或 `CHAT_VITE_DEV_SERVER_URL=http://127.0.0.1:5174` 后，Flask 会把对应页面交给 Vite；未登录访问 `/dashboard` 会跳到 `/auth/sign-in`。官网和用户工作区的代码检查与生产构建都用 `npm run check`，RAG 评测台前端使用 `npm run typecheck`、`npm test` 和 `npm run build`。
 
@@ -529,7 +532,7 @@ Release 包在构建时嵌入正式 HTTPS origin，强制关闭 debug 和开发�
 ├── windows-client/             # Windows 客户端、构建与 smoke 测试
 ├── config/                     # 应用与 RAG 路径配置
 ├── deploy/                     # staging/production 部署资源
-├── scripts/                    # 发布、验收与诊断脚本
+├── scripts/                    # 开发、发布、验收与诊断脚本
 ├── Document/                   # 当前技术事实库
 ├── tests/                      # unit、integration、e2e 与 smoke
 ├── docker-compose*.yml         # 开发、测试、预发和生产拓扑
