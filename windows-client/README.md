@@ -57,9 +57,9 @@ python -m venv .venv-desktop
 
 URL 优先级为：命令行 `--url`，然后是 `CAUSALAGENT_DESKTOP_URL`，最后是模式默认值。
 
-开发模式默认加载 `http://127.0.0.1:5001/`，并允许 `http://localhost:5001/`；为运行隔离 stub，也允许显式配置的本地回环端口。开发模式可使用 `--debug` 或 `CAUSALAGENT_DESKTOP_DEBUG=true`。
+开发模式默认加载 `http://127.0.0.1:5001/dashboard`，并允许 `http://localhost:5001/dashboard`；为运行隔离 stub，也允许显式配置的本地回环端口。开发模式可使用 `--debug` 或 `CAUSALAGENT_DESKTOP_DEBUG=true`。
 
-Developer Preview 是面向开发者的冻结发行通道。它默认加载 `http://127.0.0.1:5001/`，只接受 HTTP loopback origin（`localhost`、IPv4/IPv6 loopback），并始终关闭 debug；命令行或环境变量即使尝试指定公网、局域网或其他 HTTPS origin 也会被拒绝。Developer Preview 不包含后端，使用前仍需在本机启动 CausalAgent 服务。
+Developer Preview 是面向开发者的冻结发行通道。它默认加载 `http://127.0.0.1:5001/dashboard`，只接受 HTTP loopback origin（`localhost`、IPv4/IPv6 loopback），并始终关闭 debug；命令行或环境变量即使尝试指定公网、局域网或其他 HTTPS origin 也会被拒绝。Developer Preview 不包含后端，使用前仍需在本机启动 CausalAgent 服务。
 
 Release 模式必须使用预先配置的 HTTPS origin：
 
@@ -124,7 +124,7 @@ powershell -ExecutionPolicy Bypass -File .\windows-client\build.ps1 `
   -PackageMode onefile
 ```
 
-输出为 `dist\CausalAgent.exe`。构建脚本会将 `developer-preview` 通道标记嵌入 PyInstaller 包；冻结后的程序默认连接 `http://127.0.0.1:5001/`，不会接受环境变量或命令行传入的非 loopback 地址，也不会开启 debug。若本地服务使用其他 loopback 端口，可以显式传入 `--url http://127.0.0.1:<port>/`。
+输出为 `dist\CausalAgent.exe`。构建脚本会将 `developer-preview` 通道标记嵌入 PyInstaller 包；冻结后的程序默认连接 `http://127.0.0.1:5001/dashboard`，不会接受环境变量或命令行传入的非 loopback 地址，也不会开启 debug。若本地服务使用其他 loopback 地址或端口，可以显式传入 `--url http://127.0.0.1:<port>/dashboard`。
 
 `CAUSALAGENT_DESKTOP_TEST_AUTOCLOSE_SECONDS` 只对 source development 运行生效，用于真实 smoke 的自动退出；冻结的 Developer Preview 和 Release 包会忽略该测试变量，避免继承开发环境变量后意外自动关闭。
 

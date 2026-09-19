@@ -13,9 +13,11 @@
 | RAG/多模态与隔离评测 | `tests/test_multimodal_*.py`、`tests/test_rag_eval_*.py`、`tests/acceptance/` | 来源/索引/release 契约、隔离队列与评测矩阵的分层检查 |
 | 管理员 Vue unit | `admin-frontend/tests/*.spec.ts` | API DTO、组件、看板/设置语义和 SQL digest 展示 |
 | 管理员 Mock E2E | `admin-frontend` `test:e2e:mock` | 无真实数据库的页面导航、鉴权和交互 |
-| 普通端 Vue unit/contract | `chat-frontend/tests/unit`、`tests/contract` | SSE parser、游标、Job reducer、公开决策与明细补绘、展示推进纯函数、幂等和 Flask JSON schema |
-| 普通端 Vue component/Mock E2E | `chat-frontend/tests/components`、`tests/e2e-mock` | 认证、Composer、消息时间线、假流式草稿与公开决策展示，以及模拟后端的登录/创建 Job/SSE 终态 |
-| 普通端 Flask 部署契约 | `tests/integration/deployment/test_chat_frontend.py` | 唯一 Vue 入口、dist 缺失 fail-closed、缓存头、Docker builder/runtime 和 Compose 变量 |
+| 普通用户应用 Vue unit/contract | `chat-frontend/tests/unit`、`tests/contract` | SSE parser、游标、Job reducer、公开决策与明细补绘、展示推进纯函数、地址路由、幂等和 Flask JSON schema |
+| 普通用户应用 Vue component/Mock E2E | `chat-frontend/tests/components`、`tests/e2e-mock` | Composer、消息时间线、假流式草稿与公开决策展示，以及未登录跳转、已登录创建 Job/SSE 终态、会话地址、设置页和退出登录 |
+| 官网 Vue unit | `website-frontend/tests/unit` | 路由解析、登录回跳白名单、认证客户端和登录表单交互 |
+| RAG 评测台前端 | `app/rag_eval/frontend/test` | 审核工作流纯函数（`npm test`）、类型检查与生产构建 |
+| 前端页面入口 Flask 契约 | `tests/integration/deployment/test_frontend_entrypoints.py` | 四套入口与资源前缀、未登录跳转、权限拒绝、dist 缺失 fail-closed、缓存头、Docker builder/runtime、Compose 变量和忽略规则 |
 | Windows 桌面逻辑 | `windows-client/tests/test_config.py`、`test_navigation_policy.py`、`test_runtime.py`、`test_launcher.py` | 配置优先级、URL/origin 白名单、运行时错误和 Edge 事件策略，不创建真实窗口 |
 | Windows 壳层 smoke | `windows-client/tests/run_windows_smoke.py`、`test_windows_smoke.py` | 隔离 HTTP stub、真实 WebView2 Edge Chromium 页面加载和窗口退出；只在 Windows 桌面会话执行 |
 | 隔离 E2E | `tests/run_admin_31_e2e.ps1` / `run_admin_32_e2e.ps1` | 空库升级、migration 往返、主从、PostgreSQL checkpoint、受控写入/删除和普通用户回归 |
@@ -39,23 +41,23 @@ npm run check
 Pop-Location
 ```
 
-`npm run check` 是普通端代码级门槛；当前实现覆盖 Lint、类型检查、unit/contract、组件测试、Mock Playwright E2E 和 Vite 生产构建。Mock E2E 覆盖未登录公开预览、点击发送的登录拦截、登录后的草稿恢复与真实 Job 流程，以及匿名统计只上报固定事件；统计接口本身的合同由 `tests/unit/analytics/` 覆盖。Mock E2E 不证明真实 Flask、Cookie Session、MySQL/PostgreSQL、worker、文件上传、模型、Chrome/Edge 双浏览器或桌面壳。
+`npm run check` 是普通用户应用的代码级门槛；当前实现覆盖 Lint、类型检查、unit/contract、组件测试、Mock Playwright E2E 和 Vite 生产构建。Mock E2E 覆盖未登录访客跳转 `/auth/sign-in?next=/dashboard`、登录后的工作区与真实 Job/SSE 终态、`/dashboard/settings` 与 `/dashboard/session/<id>` 地址行为，以及退出登录回到 `/`。官网前端使用 `website-frontend` 目录的 `npm run check`；RAG 评测台使用 `app/rag_eval/frontend` 目录的 `npm run typecheck`、`npm test` 和 `npm run build`；管理员端沿用 [`../admin/testing.md`](../admin/testing.md) 的命令。Mock E2E 不证明真实 Flask、Cookie Session、MySQL/PostgreSQL、worker、文件上传、模型、Chrome/Edge 双浏览器或桌面壳。
 
 `playwright.mock.config.ts` 在本地默认复用 5174 端口上已有的开发服务器（`reuseExistingServer`），运行前必须确认该端口服务的是当前工作区；若该端口被其他检出占用，应在确认后改用临时端口的等价配置，或停止占用该端口的进程。
 
-Flask 入口和 Docker 静态契约由本地/发布前手工执行，不接入现有 CI：
+前端页面入口和 Docker 静态契约由本地/发布前手工执行，不接入现有 CI：
 
 ```powershell
-python -m pytest -p no:cacheprovider tests/integration/deployment/test_chat_frontend.py
-python -m py_compile app/main/routes.py config/settings.py tests/integration/deployment/test_chat_frontend.py
+python -m pytest -p no:cacheprovider tests/integration/deployment/test_frontend_entrypoints.py
+python -m py_compile app/main/routes.py app/chat/page_routes.py app/rag_eval/page_routes.py config/settings.py tests/integration/deployment/test_frontend_entrypoints.py
 docker compose -f docker-compose.yml config --quiet
 docker compose -f docker-compose.staging.yml config --quiet
 docker compose -f docker-compose.prod.yml config --quiet
 ```
 
-真实验收必须在可用的 Flask、数据库、worker 和合成/授权模型环境中另行完成。至少要记录唯一 Vue 入口的认证、Session/文件、普通 Job、Thinking/图/Markdown、断线恢复、active Job、waiting_input/resume、运行态停止对账、错误路径、快速切换、Chrome/Edge、四视口和桌面壳结果。根入口切换是当前代码事实，但不能由自动化测试推导为真实生产验收通过。
+真实验收必须在可用的 Flask、数据库、worker 和合成/授权模型环境中另行完成。至少要记录官网注册登录与回跳、普通用户应用的 Session/文件、普通 Job、Thinking/图/Markdown、断线恢复、active Job、waiting_input/resume、运行态停止对账、错误路径、快速切换、RAG 评测台的管理员与普通用户差异、管理员后台、Chrome/Edge、四视口和桌面壳结果。入口拆分是当前代码事实，但不能由自动化测试推导为真实生产验收通过。
 
-Vue dist 缺失需验证稳定的 503、`chat_frontend_missing` 和 request ID；`/chat-legacy` 应返回 404，三个 Compose 文件中不得再出现 `CHAT_FRONTEND_ENTRY`。
+四个前端 dist 缺失需分别验证稳定的 503、对应的 `*_frontend_missing` 错误码和 request ID；`/chat-next`、`/rag_eval` 和 `/static/rag_eval_app/...` 应返回 404，三套 Compose 文件中不得再出现 `CHAT_FRONTEND_ENTRY`。
 
 ## Windows 桌面客户端
 
@@ -179,7 +181,7 @@ production 层不会摄取资料、调用外部 VLM/模型、运行完整评测�
 
 ## 迁移链验证
 
-空库升级和 migration graph 检查必须确认唯一 head 为 `u7a8b9c0d1e2`：
+空库升级和 migration graph 检查必须确认唯一 head 为 `w9c0d1e2f3a4`：
 
 ```bash
 python -m alembic heads
@@ -215,7 +217,7 @@ powershell -ExecutionPolicy Bypass -File tests/run_searxng_docker_validation.ps1
 
 ## 日志与可观测性验证
 
-日志第二阶段的重点回归位于 `tests/unit/test_event_catalog.py`、`tests/unit/test_request_logging.py`、`tests/unit/agent/`、`tests/unit/analytics/test_public_analytics_events.py` 和 `tests/integration/test_logging_policy.py`。它们覆盖事件目录和固定消息、请求/线程/异步任务/worker slot 上下文隔离、Job 终态、node 最终降级、RAG 计数日志、MCP 可信参数及 stdout/stderr、数据库/monitor/cleanup 转移、公开预览匿名事件的请求边界与访客标识脱敏，以及运行路径普通 logging 调用和敏感详情键的 AST 政策。
+日志第二阶段的重点回归位于 `tests/unit/test_event_catalog.py`、`tests/unit/test_request_logging.py`、`tests/unit/agent/`、`tests/unit/analytics/test_public_analytics_events.py` 和 `tests/integration/test_logging_policy.py`。它们覆盖事件目录和固定消息、请求/线程/异步任务/worker slot 上下文隔离、Job 终态、node 最终降级、RAG 计数日志、MCP 可信参数及 stdout/stderr、数据库/monitor/cleanup 转移、匿名访问事件的请求边界与访客标识脱敏，以及运行路径普通 logging 调用和敏感详情键的 AST 政策。
 
 MCP 日志、60 秒慢调用、Job/invocation 关联、控制面取消、目标进程终止和 sibling 隔离集中由 `tests/unit/agent/test_mcp_v2_contract.py`、`tests/unit/agent/test_execution_guard.py`、`tests/unit/test_event_catalog.py` 与 `tests/integration/test_observability_compose.py` 覆盖。可先运行定向回归：
 

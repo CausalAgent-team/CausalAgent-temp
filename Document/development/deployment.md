@@ -6,16 +6,20 @@
 
 ## 镜像构建
 
-`Dockerfile` 当前有四个重要阶段：
+`Dockerfile` 当前有六个重要阶段：
 
 1. `python-deps` 按 `tests/smoke/requirements-deep-agent-py311-linux.lock` 的 hash 锁定安装全部 Python 依赖（含 CPU PyTorch），不使用 `requirements-base.txt` 与 `requirements.txt` 在线求解。
 2. `test` 在共享依赖上安装 `requirements-test.txt`，默认执行 `tests/unit`。
-3. `admin-builder` 使用 Node 24 Alpine 执行管理员前端构建，产物复制到 `/opt/causalagent-admin`。
-4. `chat-builder` 使用 Node 24 Alpine 执行普通用户 Vue 前端构建，产物复制到 `/opt/causalagent-chat`。
+3. `admin-builder` 构建管理员前端，产物复制到 `/opt/causalagent-admin`。
+4. `chat-builder` 构建普通用户应用，产物复制到 `/opt/causalagent-chat`。
+5. `website-builder` 构建官网前端，产物复制到 `/opt/causalagent-website`。
+6. `rag-eval-builder` 构建 RAG 评测台前端，产物复制到 `/opt/causalagent-rag-eval`。
 
 最终运行镜像不包含 Node、npm，不启动 Vite，不开放 Node 端口；Gunicorn 默认绑定 `0.0.0.0:5001`，由 `WEB_WORKERS`、`WEB_THREADS` 和 `WEB_TIMEOUT` 调整 Web 进程参数。
 
-普通用户 Vue 的运行时目录由 `CHAT_FRONTEND_DIST_DIR` 指定，Compose 默认使用 `/opt/causalagent-chat`；源码卷不能覆盖该目录。根路由 `/` 始终返回 Vue，`/chat-next` 只作为兼容别名。`/chat-assets/` 的入口 HTML 不缓存，带 hash 的 `assets/` 资源使用长期 immutable 缓存；dist 缺失时根入口、兼容别名和资源路径统一返回带 request ID 的 503，不回退到其他前端。
+四个前端各自使用独立的运行时目录，Compose 默认指向镜像内产物，源码卷不能覆盖这些目录：官网 `WEBSITE_FRONTEND_DIST_DIR=/opt/causalagent-website`，普通用户应用 `CHAT_FRONTEND_DIST_DIR=/opt/causalagent-chat`，RAG 评测台 `RAG_EVAL_FRONTEND_DIST_DIR=/opt/causalagent-rag-eval`，管理员系统 `ADMIN_FRONTEND_DIST_DIR=/opt/causalagent-admin`。
+
+四套入口的页面地址与资源前缀是：官网 `/`、`/product`、`/about`、`/docs`、`/changelog`、`/auth/sign-in`、`/auth/sign-up` 与 `/site-assets/`；普通用户应用 `/dashboard*` 与 `/dashboard-assets/`；RAG 评测台 `/rag-eval` 与 `/rag-eval/assets/`；管理员系统 `/admin*` 与 `/admin/assets/`。入口 HTML 不缓存，带 hash 的 `assets/` 资源使用长期 immutable 缓存；任一 dist 缺失时它的页面入口和资源路径统一返回带 request ID 的 503（`website_frontend_missing`、`chat_frontend_missing`、`rag_eval_frontend_missing`），不回退到其他前端。
 
 ## 开发部署
 
@@ -129,10 +133,10 @@ powershell -ExecutionPolicy Bypass -File .\windows-client\build.ps1 `
 
 ## 管理员产物
 
-本地非 Docker 发布前必须在 `admin-frontend/` 执行 typecheck、unit、Mock E2E 和 build。未设置 `ADMIN_VITE_DEV_SERVER_URL` 时，Flask 从 `admin-frontend/dist/`（或 `ADMIN_FRONTEND_DIST_DIR` 指定目录）提供 `/admin/`；Docker 运行镜像从 `/opt/causalagent-admin` 提供构建结果。
+本地非 Docker 发布前必须在 `admin-frontend/` 执行 typecheck、unit、Mock E2E 和 build。未设置 `ADMIN_VITE_DEV_SERVER_URL` 时，Flask 从 `admin-frontend/dist/`（或 `ADMIN_FRONTEND_DIST_DIR` 指定目录）提供 `/admin/`；目录缺少 `index.html` 时返回带 request ID 的 503 和 `admin_frontend_missing`。Docker 运行镜像从 `/opt/causalagent-admin` 提供构建结果。
 
-`.dockerignore` 排除本地产物，镜像构建阶段从当前源代码重新生成。开发热更新才显式启动 Vite，生产不要把 Vite 端口作为后端依赖。
+四个前端的构建产物都不进入版本库：`.gitignore` 与 `.dockerignore` 分别忽略 `admin-frontend/dist/`、`chat-frontend/dist/`、`website-frontend/dist/` 和 `app/rag_eval/frontend_dist/`，镜像构建阶段从当前源代码重新生成。开发热更新才显式启动 Vite，生产不要把 Vite 端口作为后端依赖。
 
 ## 数据库发布顺序
 
-开发/预发空库或数据库环境重建时先启动依赖数据库，再运行 `Database.bootstrap` 完成 Alembic 和 checkpoint setup，确认成功后才启动 app/worker/monitor/agent-persistence-cleanup/rag-eval-worker。当前唯一 Alembic head 是 `u7a8b9c0d1e2`；清理 worker 还要求 Agent worker 至少完成一次启动以初始化官方 Store schema。具有破坏性的 checkpoint/file migration 不会自动回填旧数据，执行 downgrade 必须选择明确 revision，并在隔离环境先验证往返。迁移风险和 preflight 规则见 [`../database/migrations-checkpoints.md`](../database/migrations-checkpoints.md)。
+开发/预发空库或数据库环境重建时先启动依赖数据库，再运行 `Database.bootstrap` 完成 Alembic 和 checkpoint setup，确认成功后才启动 app/worker/monitor/agent-persistence-cleanup/rag-eval-worker。当前唯一 Alembic head 是 `w9c0d1e2f3a4`；清理 worker 还要求 Agent worker 至少完成一次启动以初始化官方 Store schema。具有破坏性的 checkpoint/file migration 不会自动回填旧数据，执行 downgrade 必须选择明确 revision，并在隔离环境先验证往返。迁移风险和 preflight 规则见 [`../database/migrations-checkpoints.md`](../database/migrations-checkpoints.md)。

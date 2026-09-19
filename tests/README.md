@@ -25,20 +25,20 @@ tests/
 
 `integration/deployment/` 只做不启动容器的 Compose 部署契约检查；SearXNG 的 init、healthcheck 和幂等性真实容器验证通过 `tests/run_searxng_docker_validation.ps1` 手工执行，不属于默认 pytest 范围。
 
-## 普通用户 Vue 前端
+## 前端与页面入口
 
-`chat-frontend/` 是独立的 Vue 3 + TypeScript 工程，不加入根级 npm workspace。进入该目录后执行 `npm ci` 安装锁定依赖，`npm run check` 依次执行 Lint、类型检查、unit/contract、组件测试、Mock Playwright E2E 和生产构建。Mock E2E 只使用模拟 API，不等价于真实 Flask、数据库、worker、模型或浏览器验收。
+仓库现在有四个互相独立的 Vue 3 + TypeScript 工程，都不加入根级 npm workspace：官网 `website-frontend/`、普通用户应用 `chat-frontend/`、管理员系统 `admin-frontend/`、RAG 评测台 `app/rag_eval/frontend/`。进入目录后执行 `npm ci` 安装锁定依赖；`website-frontend`、`chat-frontend`、`admin-frontend` 的 `npm run check` 覆盖类型检查、单元或组件测试、Mock Playwright E2E 和生产构建，`app/rag_eval/frontend` 使用 `npm run typecheck`、`npm test` 和 `npm run build`。Mock E2E 只使用模拟 API，不等价于真实 Flask、数据库、worker、模型或浏览器验收。
 
-普通端 Flask 唯一 Vue 入口和 Docker 构建契约由本地/发布前手工检查：
+页面入口与构建产物的 Flask 契约由本地或发布前手工检查：
 
 ```powershell
-python -m pytest -p no:cacheprovider tests/integration/deployment/test_chat_frontend.py
+python -m pytest -p no:cacheprovider tests/integration/deployment/test_frontend_entrypoints.py
 docker compose -f docker-compose.yml config --quiet
 docker compose -f docker-compose.staging.yml config --quiet
 docker compose -f docker-compose.prod.yml config --quiet
 ```
 
-`/` 是普通用户正式 Vue 入口，`/chat-next` 是兼容别名；项目不再读取或向 Compose 传递 `CHAT_FRONTEND_ENTRY`。未执行的真实验收、Docker 镜像构建或运行时检查必须在报告中明确保留。
+`/`、`/product`、`/about`、`/docs`、`/changelog` 以及 `/auth/sign-in`、`/auth/sign-up` 由官网产物提供；`/dashboard` 由普通用户应用提供，未登录访问跳转 `/auth/sign-in`；`/rag-eval` 由 RAG 评测台提供并要求 `rag_eval.access`；`/admin` 继续由管理员前端提供。项目已移除 `/chat-next` 和 `/rag_eval` 兼容别名，也不再读取或向 Compose 传递 `CHAT_FRONTEND_ENTRY`。未执行的真实验收、Docker 镜像构建或运行时检查必须在报告中明确保留。
 
 ## Docker 单元测试环境（推荐）
 

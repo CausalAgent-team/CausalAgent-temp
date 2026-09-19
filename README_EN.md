@@ -202,12 +202,14 @@ After the default development Compose stack starts, use these entry points:
 
 | Function | URL | Purpose |
 | --- | --- | --- |
-| User chat | [http://127.0.0.1:5001/](http://127.0.0.1:5001/) | Upload data, start analyses, and view reports |
-| RAG workbench | [http://127.0.0.1:5001/rag_eval](http://127.0.0.1:5001/rag_eval) | Source ingestion, staged indexes, evaluation, and release management |
+| Website | [http://127.0.0.1:5001/](http://127.0.0.1:5001/) | Product pages, public docs, changelog, and sign-in/sign-up entries |
+| Sign-in | [http://127.0.0.1:5001/auth/sign-in](http://127.0.0.1:5001/auth/sign-in) | Shared sign-in entry that returns each account to its permitted area |
+| User workspace | [http://127.0.0.1:5001/dashboard](http://127.0.0.1:5001/dashboard) | Upload data, start analyses, and view reports after signing in |
+| RAG workbench | [http://127.0.0.1:5001/rag-eval](http://127.0.0.1:5001/rag-eval) | Source ingestion, staged indexes, evaluation, and release management; administrators only |
 | Admin console | [http://127.0.0.1:5001/admin/database](http://127.0.0.1:5001/admin/database) | Default entry for authenticated administrators |
 | Grafana | [http://127.0.0.1:3000](http://127.0.0.1:3000) | Log search and dashboards |
 
-The RAG workbench is an isolated build, evaluation, and release workspace. It is not the same as RAG queries inside the normal chat flow.
+The website, the user workspace, the RAG workbench, and the admin console are four separately built frontends. The RAG workbench is an isolated build, evaluation, and release workspace and requires the `rag_eval.access` permission; it is not the same as RAG queries inside the normal chat flow.
 
 ### Minimum Configuration
 
@@ -277,17 +279,15 @@ app / worker / monitor / MCP / RAG worker
 
 Runtime events are controlled by the event catalog and correlated with request, job, session, and worker-slot fields. Raw prompts, file contents, API keys, tokens, and cookies must not enter logs. See [`Document/development/observability.md`](Document/development/observability.md) for event, noise-control, and privacy rules.
 
-### User Frontend (Vue)
+### Frontends (Vue)
 
-The ordinary-user app is a standalone Vue 3 + TypeScript project in `chat-frontend/` and is not part of a root npm workspace. Flask serves its build output from the same origin: `/` is the primary entry, `/chat-next` is a compatibility alias, and assets are served under `/chat-assets/`. When the build output is missing, the entry returns 503 with a request ID instead of falling back to an older page or serving partial assets.
+Four standalone Vue 3 + TypeScript projects run on the same origin and none of them belongs to a root npm workspace. Flask serves each build output from its own path prefix: the website in `website-frontend/` (`/site-assets/`), the user workspace in `chat-frontend/` (`/dashboard-assets/`), the RAG workbench in `app/rag_eval/frontend/` (`/rag-eval/`), and the admin console in `admin-frontend/` (`/admin/`). When a build output is missing, that frontend's page entry returns 503 with a request ID instead of falling back to another frontend or serving partial assets.
 
-Start the local development server from the repository root:
+Start the local development servers from the repository root:
 
 ```powershell
-Push-Location chat-frontend
-npm ci
-npm run dev
-Pop-Location
+Push-Location website-frontend; npm ci; npm run dev; Pop-Location
+Push-Location chat-frontend; npm ci; npm run dev; Pop-Location
 ```
 
 `npm run dev` only starts Vite on port 5174 and proxies API calls to `http://127.0.0.1:5001`. Setting `CHAT_VITE_DEV_SERVER_URL=http://127.0.0.1:5174` makes Flask redirect `/` to Vite while keeping the `next` query parameter. Quality gates and the production build run `npm run lint`, `npm run typecheck`, `npm run test:unit`, `npm run test:components`, `npm run test:e2e:mock`, and `npm run build`, or all of them through `npm run check`. Mock E2E uses simulated APIs only and is not evidence of real Flask, worker, or model acceptance.
@@ -371,8 +371,9 @@ Supported keywords include `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `
 ├── Database/                   # MySQL, PostgreSQL, migrations, and monitoring
 ├── observability/              # Structured logging, event catalog, and Alloy
 ├── searxng/                    # Web Search configuration and initialization
-├── chat-frontend/              # Vue ordinary-user frontend
-├── admin-frontend/             # Vue administrator frontend
+├── website-frontend/           # Vue website frontend (public pages and auth)
+├── chat-frontend/              # Vue ordinary-user app frontend (/dashboard)
+├── admin-frontend/             # Vue administrator frontend (/admin)
 ├── windows-client/             # Windows client, build, and smoke tests
 ├── config/                     # Application and RAG path configuration
 ├── deploy/                     # Staging and production resources

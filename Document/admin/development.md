@@ -19,7 +19,7 @@ npm run test:e2e:mock
 npm run build
 ```
 
-未设置开发服务器地址时，Flask 默认托管仓库中的 `admin-frontend/dist/`；Docker 镜像通过 `ADMIN_FRONTEND_DIST_DIR=/opt/causalagent-admin` 指向镜像内产物。
+未设置开发服务器地址时，Flask 默认托管仓库中的 `admin-frontend/dist/`（需要先执行 `npm run build`）；目录缺少入口文件时 `/admin/` 返回带 request ID 的 503。Docker 镜像通过 `ADMIN_FRONTEND_DIST_DIR=/opt/causalagent-admin` 指向镜像内产物。
 
 ## 创建初始管理员
 
@@ -80,8 +80,8 @@ ADMIN_VITE_DEV_SERVER_URL=http://127.0.0.1:5173
 
 Flask 仍先完成管理员页面鉴权，再跳转到 Vite。Vite 只代理 `/api` 到 Flask，不替代 Python 后端。普通部署应保持该配置为空。
 
-管理员侧栏页脚在“进入聊天”上方提供“进入 Grafana”入口，浏览器直接跳转到 `http://127.0.0.1:3000/`。该地址对应默认开发 Compose 仅绑定本机的 Grafana，不经过 Flask，也不共享管理员 Session；Grafana 登录和可用性仍由开发环境的 Grafana 服务负责。生产或远程部署不得使用硬编码的 127.0.0.1:3000。
+管理员侧栏页脚提供“进入聊天”（同源 `/dashboard`）和“RAG 评测台”（同源 `/rag-eval`）两个入口，并在“进入聊天”上方提供“进入 Grafana”入口，浏览器直接跳转到 `http://127.0.0.1:3000/`。Grafana 地址对应默认开发 Compose 仅绑定本机的服务，不经过 Flask，也不共享管理员 Session；生产或远程部署不得使用硬编码的 127.0.0.1:3000。
 
 ## 发布产物
 
-`admin-frontend/dist/` 是管理员 Vue 的构建结果。`.dockerignore` 排除本地产物，因为镜像会从当前源码重新构建；最终镜像使用 `/opt/causalagent-admin` 中的构建结果。系统整体部署顺序见 [`../development/deployment.md`](../development/deployment.md)。
+`admin-frontend/dist/` 是管理员 Vue 的构建结果，与其他三个前端一致：源码变更后必须重新构建（`npm run build`），构建产物由 `.gitignore` 和 `.dockerignore` 忽略，不进入版本库，镜像从当前源码重新构建并使用 `/opt/causalagent-admin` 中的结果。目录缺少 `index.html` 时 `/admin/` 返回带 request ID 的 `503` 和 `admin_frontend_missing`。系统整体部署顺序见 [`../development/deployment.md`](../development/deployment.md)。

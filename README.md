@@ -222,12 +222,14 @@ graph TD;
 
 | 功能 | 地址 | 说明 |
 | --- | --- | --- |
-| 用户聊天 | [http://127.0.0.1:5001/](http://127.0.0.1:5001/) | 上传数据、发起分析和查看报告 |
-| RAG 运行台 | [http://127.0.0.1:5001/rag_eval](http://127.0.0.1:5001/rag_eval) | 知识源摄取、staged index、评测与 release 管理 |
+| 官网 | [http://127.0.0.1:5001/](http://127.0.0.1:5001/) | 产品介绍、公开文档、更新日志和登录注册入口 |
+| 登录页 | [http://127.0.0.1:5001/auth/sign-in](http://127.0.0.1:5001/auth/sign-in) | 统一登录入口，按权限回到工作区、评测台或管理后台 |
+| 用户工作区 | [http://127.0.0.1:5001/dashboard](http://127.0.0.1:5001/dashboard) | 登录后上传数据、发起分析和查看报告 |
+| RAG 评测台 | [http://127.0.0.1:5001/rag-eval](http://127.0.0.1:5001/rag-eval) | 知识源摄取、staged index、评测与 release 管理，仅管理员可访问 |
 | 管理后台 | [http://127.0.0.1:5001/admin/database](http://127.0.0.1:5001/admin/database) | 管理员登录后的默认入口 |
 | Grafana | [http://127.0.0.1:3000](http://127.0.0.1:3000) | 日志查询和仪表盘 |
 
-注：RAG 运行台是隔离的知识库构建、评测和发布工作台。
+注：官网、用户工作区、RAG 评测台和管理后台是四个独立构建的前端；RAG 评测台是隔离的知识库构建、评测和发布工作台，只有拥有 `rag_eval.access` 权限的账号能打开。
 
 ### 最小配置
 
@@ -377,7 +379,7 @@ docker compose -f docker-compose.yml logs -f app worker monitor alloy loki grafa
 </p>
 RAG 评测工作台面向管理员和 RAG 维护人员，用于在不影响当前生产知识库的前提下，完成知识源摄取、隔离索引构建、检索试跑、题集治理、Ragas 评测和正式 release 发布。详细文档请看： [`Document/architecture/rag-evaluation.md`](Document/architecture/rag-evaluation.md)
 
-页面主要分为工作索引、候选题集、评测中心、正式发布和报告管理等区域。工作台入口为 [http://127.0.0.1:5001/rag_eval](http://127.0.0.1:5001/rag_eval)。
+页面主要分为工作索引、候选题集、评测中心、正式发布和报告管理等区域。工作台入口为 [http://127.0.0.1:5001/rag-eval](http://127.0.0.1:5001/rag-eval)，页面和 `/api/rag_eval` 接口都要求 `rag_eval.access`，未登录访客会先跳到登录页。
 
 ```mermaid
 flowchart LR
@@ -397,22 +399,20 @@ flowchart LR
     L --> M[生产聊天 RAG 使用新 release]
 ```
 
-### 普通端前端（Vue）
+### 前端（Vue）
 
-普通端主应用是独立的 Vue 3 + TypeScript 工程，位于 `chat-frontend/`，不加入根级 npm workspace。构建产物由 Flask 在同源路径提供：`/` 是正式入口，`/chat-next` 是兼容别名，静态资源走 `/chat-assets/`。缺少构建产物时入口返回 503 和 request ID，既不回退到旧页面，也不返回半成品资源。
+同源下运行四个互相独立的 Vue 3 + TypeScript 工程，都不加入根级 npm workspace，构建产物都由 Flask 在同源路径提供：官网 `website-frontend/`（`/site-assets/`）、用户工作区 `chat-frontend/`（`/dashboard-assets/`）、RAG 评测台 `app/rag_eval/frontend/`（`/rag-eval/`）和管理员前端 `admin-frontend/`（`/admin/`）。缺少任一构建产物时，对应该前端的页面入口返回 503 和 request ID，既不回退到其它前端，也不返回半成品资源。
 
 本地开发在仓库根目录执行：
 
 ```powershell
-Push-Location chat-frontend
-npm ci
-npm run dev
-Pop-Location
+Push-Location website-frontend; npm ci; npm run dev; Pop-Location
+Push-Location chat-frontend; npm ci; npm run dev; Pop-Location
 ```
 
-`npm run dev` 只启动 Vite（5174 端口），API 由 Vite 代理到 `http://127.0.0.1:5001`。在 `.env` 设置 `CHAT_VITE_DEV_SERVER_URL=http://127.0.0.1:5174` 后，Flask 的 `/` 会跳转到 Vite，并保留 `next` 查询参数。代码检查和生产构建依次执行 `npm run lint`、`npm run typecheck`、`npm run test:unit`、`npm run test:components`、`npm run test:e2e:mock` 和 `npm run build`，也可以用 `npm run check` 一次执行。
+官网开发服务器使用 5175 端口和 `/site-assets/` base，用户工作区使用 5174 端口和 `/dashboard-assets/` base，两者的 Vite 都把 `/api` 代理到 `http://127.0.0.1:5001`。在 `.env` 设置 `WEBSITE_VITE_DEV_SERVER_URL=http://127.0.0.1:5175` 或 `CHAT_VITE_DEV_SERVER_URL=http://127.0.0.1:5174` 后，Flask 会把对应页面交给 Vite；未登录访问 `/dashboard` 会跳到 `/auth/sign-in`。官网和用户工作区的代码检查与生产构建都用 `npm run check`，RAG 评测台前端使用 `npm run typecheck`、`npm test` 和 `npm run build`。
 
-详细的状态约束见 [`Document/development/chat-frontend.md`](Document/development/chat-frontend.md)。
+详细的状态约束见 [`Document/development/chat-frontend.md`](Document/development/chat-frontend.md) 和 [`Document/development/website-frontend.md`](Document/development/website-frontend.md)。
 
 ### 后端单元测试
 
@@ -523,8 +523,9 @@ Release 包在构建时嵌入正式 HTTPS origin，强制关闭 debug 和开发�
 ├── Database/                   # MySQL、PostgreSQL、迁移与监控
 ├── observability/              # 结构化日志、事件目录与 Alloy 配置
 ├── searxng/                    # 联网搜索配置与初始化
-├── chat-frontend/              # Vue 普通用户前端
-├── admin-frontend/             # Vue 管理员前端
+├── website-frontend/           # Vue 官网前端（公开页面与登录注册）
+├── chat-frontend/              # Vue 普通用户应用前端（/dashboard）
+├── admin-frontend/             # Vue 管理员前端（/admin）
 ├── windows-client/             # Windows 客户端、构建与 smoke 测试
 ├── config/                     # 应用与 RAG 路径配置
 ├── deploy/                     # staging/production 部署资源
