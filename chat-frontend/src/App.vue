@@ -2,15 +2,11 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { api } from './api/client'
 import { isApiError } from './api/errors'
-import AuthPanel from './components/AuthPanel.vue'
 import ChatWorkspace from './components/ChatWorkspace.vue'
-import PublicPreview from './components/PublicPreview.vue'
-import { PUBLIC_PREVIEW_PAGE_ID } from './preview/public-preview-data'
 import { ensureMarkedLoaded } from './renderers/markdown-adapter'
-import type { PreviewDemoKey } from './runtime/analytics/analytics-client'
-import { trackPublicPreviewEvent } from './runtime/analytics/analytics-client'
 import { JobController } from './runtime/jobs/job-controller'
-import { useLocale } from './i18n/use-locale'
+import { readDashboardRoute, sessionHref, signInUrl } from './runtime/navigation/app-route'
+import type { DashboardRoute } from './runtime/navigation/app-route'
 import { useAuthStore } from './stores/auth.store'
 import { useComposerStore } from './stores/composer.store'
 import { useFilesStore } from './stores/files.store'
@@ -22,19 +18,12 @@ const sessions = useSessionsStore()
 const files = useFilesStore()
 const jobs = useJobsStore()
 const composer = useComposerStore()
-const { text } = useLocale()
 const controller = new JobController(jobs)
-const authBusy = ref(false)
-const authError = ref<string | null>(null)
-const authNotice = ref<string | null>(null)
-const notice = ref('')
+
+const route = ref<DashboardRoute>(readDashboardRoute(globalThis.location.pathname))
 const appReady = ref(false)
-const next = new URLSearchParams(globalThis.location.search).get('next')
-const authPanelOpen = ref(false)
-const activeDemoKey = ref<PreviewDemoKey>('overview')
-const DRAFT_STORAGE_KEY = 'causalagent.preview.draft'
+const notice = ref('')
 let noticeTimer: number | null = null
-let redirectTimer: number | null = null
 
 function showNotice(message: string, duration = 3000): void {
   notice.value = message
@@ -50,62 +39,20 @@ function showError(error: unknown, fallback: string): void {
   showNotice(error instanceof Error ? error.message : fallback)
 }
 
-/* 未登录时的草稿只保存在浏览器：内存里的 Composer store 加会话存储，不写入后端。 */
-function persistDraft(value: string): void {
-  composer.setDraft(value)
-  try {
-    if (value) globalThis.sessionStorage.setItem(DRAFT_STORAGE_KEY, value)
-    else globalThis.sessionStorage.removeItem(DRAFT_STORAGE_KEY)
-  } catch {
-    // 浏览器禁用会话存储时只保留内存草稿。
+function syncRoute(): void {
+  route.value = readDashboardRoute(globalThis.location.pathname)
+}
+
+function navigate(target: string): void {
+  if (target === globalThis.location.pathname) {
+    syncRoute()
+    return
   }
+  globalThis.history.pushState({}, '', target)
+  syncRoute()
 }
 
-function restoreDraft(): void {
-  if (composer.draft.trim()) return
-  try {
-    const stored = globalThis.sessionStorage.getItem(DRAFT_STORAGE_KEY)
-    if (stored) composer.setDraft(stored)
-  } catch {
-    // 读不到会话存储时保持空草稿。
-  }
-}
-
-function clearStoredDraft(): void {
-  try {
-    globalThis.sessionStorage.removeItem(DRAFT_STORAGE_KEY)
-  } catch {
-    // 没有可清理的会话存储时不需要处理。
-  }
-}
-
-function openAuthPanel(): void {
-  trackPublicPreviewEvent({ event: 'analytics.auth.panel_open', page: PUBLIC_PREVIEW_PAGE_ID })
-  authError.value = null
-  authNotice.value = null
-  authPanelOpen.value = true
-}
-
-function requestAuth(action: 'login' | 'register' | 'send' | 'upload' | 'new-chat'): void {
-  if (action === 'send') {
-    trackPublicPreviewEvent({
-      event: 'analytics.public_preview.send_click',
-      page: PUBLIC_PREVIEW_PAGE_ID,
-      demo_key: activeDemoKey.value,
-    })
-  }
-  openAuthPanel()
-}
-
-function openPreviewDemo(key: PreviewDemoKey): void {
-  activeDemoKey.value = key
-  trackPublicPreviewEvent({
-    event: 'analytics.public_preview.demo_open',
-    page: PUBLIC_PREVIEW_PAGE_ID,
-    demo_key: key,
-  })
-}
-
+/* 工作区只服务已登录用户：先加载列表与文件，再恢复仍在运行的任务。 */
 async function loadWorkspace(): Promise<void> {
   await Promise.all([
     sessions.loadList().catch((error: unknown) => showError(error, '加载历史记录失败。')),
@@ -114,65 +61,17 @@ async function loadWorkspace(): Promise<void> {
   try {
     const active = await api.activeJobs()
     const latest = active.jobs?.at(-1)
-    if (latest && !sessions.currentId) {
-      await sessions.select(latest.session_id)
-      for (const message of sessions.messages) if (message.thinkingAfter) jobs.seedPhase(latest.session_id, message.thinkingAfter)
+    if (latest && !route.value.sessionId) {
+      navigate(sessionHref(latest.session_id, globalThis.location.pathname))
     }
     for (const job of active.jobs ?? []) {
       const record = jobs.observeActive(job)
-      if (record.uiState !== 'waiting_input') void controller.subscribe(record.jobId).catch((error: unknown) => showError(error, '恢复任务订阅失败。'))
+      if (record.uiState !== 'waiting_input') {
+        void controller.subscribe(record.jobId).catch((error: unknown) => showError(error, '恢复任务订阅失败。'))
+      }
     }
   } catch (error) {
     showError(error, '恢复活动任务失败。')
-  }
-}
-
-async function login(username: string, password: string): Promise<void> {
-  authBusy.value = true
-  authError.value = null
-  authNotice.value = null
-  try {
-    const redirectTo = await auth.login(username, password, next)
-    const hasLoginWarning = auth.warningCode === 'last_login_record_failed'
-    if (hasLoginWarning) showNotice(textForWarning())
-    authPanelOpen.value = false
-    // 草稿已经回到正式 Composer，会话存储里的副本不再需要。
-    clearStoredDraft()
-    if (redirectTo) {
-      if (hasLoginWarning) {
-        redirectTimer = globalThis.setTimeout(() => globalThis.location.assign(redirectTo), 3000)
-      } else {
-        globalThis.location.assign(redirectTo)
-      }
-      return
-    }
-    await loadWorkspace()
-  } catch (error) {
-    authError.value = error instanceof Error ? error.message : '登录失败，请稍后再试。'
-  } finally {
-    authBusy.value = false
-  }
-}
-
-function textForWarning(): string {
-  return text.value.lastLoginWarning
-}
-
-async function register(username: string, password: string, confirmPassword: string): Promise<void> {
-  if (password !== confirmPassword) {
-    authError.value = '两次输入的密码不匹配。'
-    return
-  }
-  authBusy.value = true
-  authError.value = null
-  authNotice.value = null
-  try {
-    await auth.register(username, password)
-    authNotice.value = text.value.registerSuccess
-  } catch (error) {
-    authError.value = error instanceof Error ? error.message : '注册失败，请稍后再试。'
-  } finally {
-    authBusy.value = false
   }
 }
 
@@ -188,54 +87,36 @@ async function logout(): Promise<void> {
   files.reset()
   jobs.reset()
   composer.reset()
-  authPanelOpen.value = false
+  globalThis.location.assign('/')
 }
 
 onMounted(async () => {
   await ensureMarkedLoaded()
   const loggedIn = await auth.check()
-  if (loggedIn) {
-    await loadWorkspace()
-  } else {
-    restoreDraft()
-    trackPublicPreviewEvent({
-      event: 'analytics.public_preview.view',
-      page: PUBLIC_PREVIEW_PAGE_ID,
-      demo_key: activeDemoKey.value,
-    })
+  if (!loggedIn) {
+    globalThis.location.replace(signInUrl(route.value.path))
+    return
   }
+  globalThis.addEventListener('popstate', syncRoute)
+  await loadWorkspace()
   appReady.value = true
 })
 
 onBeforeUnmount(() => {
+  globalThis.removeEventListener('popstate', syncRoute)
   if (noticeTimer !== null) globalThis.clearTimeout(noticeTimer)
-  if (redirectTimer !== null) globalThis.clearTimeout(redirectTimer)
 })
 </script>
 
 <template>
   <div v-if="!appReady || auth.phase === 'checking'" class="app-loading">加载中...</div>
-  <template v-else-if="!auth.isAuthenticated">
-    <PublicPreview
-      :draft="composer.draft"
-      :web-search-enabled="composer.webSearchEnabled"
-      :demo-key="activeDemoKey"
-      @update:draft="persistDraft"
-      @update:web-search="composer.setWebSearch"
-      @request-auth="requestAuth"
-      @demo-open="openPreviewDemo"
-    />
-    <AuthPanel
-      v-if="authPanelOpen"
-      closeable
-      :busy="authBusy"
-      :error="authError || auth.error"
-      :notice="authNotice"
-      @login="login"
-      @register="register"
-      @close="authPanelOpen = false"
-    />
-  </template>
-  <ChatWorkspace v-else :controller="controller" @error="showError" @logout="logout" />
+  <ChatWorkspace
+    v-else
+    :controller="controller"
+    :route="route"
+    @error="showError"
+    @logout="logout"
+    @navigate="navigate"
+  />
   <div v-if="notice" class="toast" role="alert" @click="notice = ''">{{ notice }}</div>
 </template>

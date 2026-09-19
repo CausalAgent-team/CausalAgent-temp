@@ -486,5 +486,96 @@ class ReportDocumentMigrationTests(unittest.TestCase):
         self.assertIn("report_document", text)
 
 
+class RbacTablesMigrationTests(unittest.TestCase):
+    """静态验证 RBAC 关系表、初始授权关系与启动就绪检查。"""
+
+    MIGRATION_PATH = Path(
+        "Database/migrations/versions/w9c0d1e2f3a4_add_rbac_tables.py"
+    )
+
+    FIRST_PHASE_PERMISSIONS = (
+        "dashboard.access",
+        "rag_eval.access",
+        "rag_eval.read",
+        "rag_eval.run",
+        "rag_eval.publish",
+        "rag_eval.rollback",
+        "rag_eval.governance",
+        "admin.access",
+        "admin.users.read",
+        "admin.users.write",
+        "admin.database.read",
+        "admin.database.write",
+        "admin.sensitive.read",
+    )
+
+    def test_migration_extends_the_current_head(self):
+        """新 revision 直接承接报告附件枚举 revision。"""
+        text = self.MIGRATION_PATH.read_text(encoding="utf-8")
+        self.assertIn('revision: str = "w9c0d1e2f3a4"', text)
+        self.assertIn(
+            'down_revision: Union[str, Sequence[str], None] = "v8b9c0d1e2f3"',
+            text,
+        )
+
+    def test_migration_creates_the_four_relation_tables(self):
+        """角色、权限与两张关系表必须一次建立，并用联合主键去重。"""
+        text = self.MIGRATION_PATH.read_text(encoding="utf-8")
+        for table in ("roles", "permissions", "user_roles", "role_permissions"):
+            self.assertIn(f"CREATE TABLE {table} (", text)
+        self.assertIn("PRIMARY KEY (user_id, role_id)", text)
+        self.assertIn("PRIMARY KEY (role_id, permission_id)", text)
+        self.assertIn("UNIQUE KEY uq_roles_role_key (role_key)", text)
+        self.assertIn("UNIQUE KEY uq_permissions_permission_key (permission_key)", text)
+        self.assertIn("FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE", text)
+
+    def test_migration_seeds_two_roles_and_first_phase_permissions(self):
+        """第一阶段只初始化 user 与 admin，并登记全部权限键。"""
+        text = self.MIGRATION_PATH.read_text(encoding="utf-8")
+        self.assertIn('("user", "普通用户"', text)
+        self.assertIn('("admin", "管理员"', text)
+        for permission_key in self.FIRST_PHASE_PERMISSIONS:
+            with self.subTest(permission_key=permission_key):
+                self.assertIn(f'("{permission_key}"', text)
+
+    def test_normal_user_keeps_only_dashboard_and_admin_keeps_everything(self):
+        """普通角色只拥有普通应用权限，管理员拥有第一阶段全部权限。"""
+        text = self.MIGRATION_PATH.read_text(encoding="utf-8")
+        self.assertIn('"user": ("dashboard.access",)', text)
+        self.assertIn(
+            '"admin": tuple(permission_key for permission_key, _, _ in PERMISSION_SEEDS)',
+            text,
+        )
+
+    def test_migration_backfills_relations_from_the_compatibility_column(self):
+        """回填只按现有 users.role 建立关系，不修改兼容字段本身。"""
+        text = self.MIGRATION_PATH.read_text(encoding="utf-8")
+        self.assertIn("JOIN roles ON roles.role_key = users.role", text)
+        self.assertIn("INSERT INTO user_roles (user_id, role_id)", text)
+        self.assertNotIn("UPDATE users", text)
+
+    def test_downgrade_only_drops_the_new_tables(self):
+        """回滚只删除本次新增的四张表，保留 users.role 与业务数据。"""
+        downgrade = self.MIGRATION_PATH.read_text(encoding="utf-8").split("def downgrade()")[1]
+        for table in ("role_permissions", "user_roles", "permissions", "roles"):
+            self.assertIn(f"DROP TABLE IF EXISTS {table}", downgrade)
+        self.assertNotIn("ALTER TABLE users", downgrade)
+        self.assertNotIn("DROP COLUMN", downgrade)
+
+    def test_readiness_requires_relations_and_seeded_roles(self):
+        """应用启动检查必须同时覆盖新表与已初始化的两个角色。"""
+        text = Path("app/db.py").read_text(encoding="utf-8")
+        for fragment in (
+            '"roles"',
+            '"permissions"',
+            '"user_roles"',
+            '"role_permissions"',
+            'FROM roles',
+            "数据库角色缺失",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, text)
+
+
 if __name__ == "__main__":
     unittest.main()

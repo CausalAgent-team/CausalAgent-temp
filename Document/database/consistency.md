@@ -29,7 +29,7 @@ PostgreSQL checkpoint 使用 `CHECKPOINT_POSTGRES_*` 配置，管理员和 monit
 | 路径 | 一致性要求 | 说明 |
 | --- | --- | --- |
 | Job 创建/领取/心跳/状态、事件和输入写入 | 主库事务 | 这是队列、fencing 和 SSE 事件的权威状态 |
-| 用户登录、会话恢复、角色/启用状态和 `auth_version` | strong 主库 | 不能用副本或 Session 缓存完成授权 |
+| 用户登录、会话恢复、启用状态、`auth_version` 和 `user_roles`/`role_permissions` 权限 | strong 主库 | 不能用副本或 Session 缓存完成授权 |
 | Session 列表等允许短暂延迟的普通读取 | eventual，可回退 | 只读且不影响资源归属判断 |
 | Session/Job/File 所有权校验、删除、文件访问计数 | strong/主库事务 | 防止副本延迟造成越权或错误删除 |
 | 管理员列表和在线配置 | strong 主库或共享快照 | 管理员页面不依赖弱一致授权 |

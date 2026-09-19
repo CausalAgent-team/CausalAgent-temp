@@ -1,25 +1,27 @@
-# 普通用户 Vue 前端
+# 普通用户应用 Vue 前端
 
-文档职责：记录普通用户主应用 Vue 3 工程的目录边界、唯一入口、Session—Job—SSE 状态约束、构建、测试、发布与回退事实。
+文档职责：记录普通用户应用 Vue 3 工程的目录边界、唯一入口、地址与会话的映射、Session—Job—SSE 状态约束、构建、测试、发布与回退事实。
 
-适用范围：`chat-frontend/`、Flask 普通端入口和其 Docker 构建集成；不覆盖管理员前端、RAG 工作台、数据库 schema 或 worker 业务规则。
+适用范围：`chat-frontend/`、Flask 的 `/dashboard` 页面入口及其 Docker 构建集成；不覆盖官网前端、管理员前端、RAG 评测台、数据库 schema 或 worker 业务规则。
 
 ## 当前状态与入口
 
 
-Vue 构建产物由 Flask 在同源路径提供：入口为 `/chat-assets/` 对应的 `index.html`，静态资源使用 `/chat-assets/<path:filename>`。入口 HTML 使用不缓存策略，`assets/` 下的带 hash 资源使用长期 `public, immutable` 缓存。构建目录默认是 `chat-frontend/dist/`；Docker 运行时使用 `/opt/causalagent-chat`，也可由 `CHAT_FRONTEND_DIST_DIR` 指定。缺少 `index.html` 时 Vue 入口返回带 request ID 的 503，不回退到旧版或返回半成品资源。
+普通用户应用由三个地址组成：`/dashboard`、`/dashboard/session/<session_id>` 和 `/dashboard/settings`。`app/chat/page_routes.py` 的页面入口统一要求 `dashboard.access`：未登录访客跳转 `/auth/sign-in?next=<原地址>`，已登录但缺少该权限的请求返回受控 403 页面；页面资源 `/dashboard-assets/<path:filename>` 使用同一权限边界。
 
-本地 Vite 开发服务器使用 5174 端口和 `/chat-assets/` base。设置 `CHAT_VITE_DEV_SERVER_URL=http://127.0.0.1:5174` 后，Flask 的 `/` 或 `/chat-next` 会跳转到 `http://127.0.0.1:5174/chat-assets/`，并保留 `next` 查询参数。
+入口 HTML 使用不缓存策略，`assets/` 下的带 hash 资源使用长期 `public, immutable` 缓存。构建目录默认是 `chat-frontend/dist/`；Docker 运行时使用 `/opt/causalagent-chat`，也可由 `CHAT_FRONTEND_DIST_DIR` 指定。缺少 `index.html` 时页面入口和资源路径统一返回带 request ID 的 503 与 `chat_frontend_missing`，不回退到旧版或返回半成品资源。
 
-## 公开预览与登录拦截
+本地 Vite 开发服务器使用 5174 端口和 `/dashboard-assets/` base。设置 `CHAT_VITE_DEV_SERVER_URL=http://127.0.0.1:5174` 后，Flask 的 `/dashboard*` 会跳转到 `http://127.0.0.1:5174/dashboard-assets<原路径>`。
 
-普通端入口有三种状态：`checking` 期间显示加载占位；`auth.check()` 确认未登录时进入匿名公开预览；确认登录后才进入 `ChatWorkspace`。公开预览展示产品说明、静态示例会话（`src/preview/public-preview-data.ts`）以及示例报告和因果图，示例数据只在前端渲染，不经过任何公开数据接口。
+## 地址、会话与退出
 
-匿名状态下不调用 `/api/new_chat`、`/api/agent/jobs`、`/api/upload_file` 等业务接口：预览中的 Composer 以 `auth-required` 模式渲染，点击发送或上传只打开登录面板 `AuthPanel`，上传按钮不会弹出文件选择框。用户输入的文字保存在共享的 Composer store 中，并同步写入 `sessionStorage`（键 `causalagent.preview.draft`），刷新后恢复；登录面板关闭后文字仍在，登录成功后草稿进入正式 Composer 但不会自动发送，用户再次点击发送才会创建真实 Session 和 Job。文件对象、文件名和文件内容不写入任何存储或统计请求，登录成功后需要重新选择文件。
+地址是当前会话的唯一来源：`src/runtime/navigation/app-route.ts` 从 `location.pathname` 解析工作区、设置页和会话标识，生产路径是 `/dashboard*`，开发服务器 `/dashboard-assets*` 会归一成同一套路径；非法会话标识回落到工作区。选中、创建或删除会话时通过 `history.pushState` 更新地址，浏览器前进后退会重新加载对应会话。
 
-登录面板是覆盖在预览之上的模态卡片：遮罩挡住底层预览的点击，卡片使用不透明表面，打开时自动聚焦用户名输入框。匿名状态下可以按 Esc、点击遮罩或点击“先浏览公开预览”关闭面板，等待接口响应期间不允许关闭。密码输入框提供显示与隐藏切换；注册成功后面板自动回到登录态并提示“注册成功！请登录。”，已经填写的用户名和密码保留，用户只需补一次提交。
+应用不再提供登录与注册界面，也不再展示未登录公开预览：`auth.check()` 确认未登录时，`App.vue` 用 `location.replace` 跳转到 `/auth/sign-in?next=/dashboard`，登录和注册页面由官网前端提供。退出登录调用 `/api/logout`，清空会话、文件、任务与草稿状态后回到官网首页 `/`。
 
-公开预览的交互通过 `src/runtime/analytics/analytics-client.ts` 上报到 `POST /api/analytics/events`（契约见 [`observability.md`](observability.md)）。上报使用 `sendBeacon` 或 `fetch(..., { keepalive: true })`，不等待响应，并在同一浏览器会话内按页面和示例去重；统计请求失败或被拒绝都不影响浏览、登录和真实功能。
+用户菜单按 `/api/check_auth` 返回的权限显示入口：拥有 `admin.access` 显示“管理后台”（`/admin/database`），拥有 `rag_eval.access` 显示“RAG 评测台”（`/rag-eval`）。
+
+公开预览与内部登录面板相关的 `src/components/PublicPreview.vue`、`src/components/AuthPanel.vue`、`src/preview/public-preview-data.ts`、`src/runtime/analytics/analytics-client.ts` 和对应测试已随入口拆分删除，普通应用不再上报匿名预览事件；`POST /api/analytics/events` 的接口与事件目录保持不变，见 [`observability.md`](observability.md)。
 
 ## 工程边界
 
@@ -78,20 +80,20 @@ Pop-Location
 
 ## Docker 与启动失败边界
 
-`Dockerfile` 的 `chat-builder` 使用 Node 24 Alpine 执行 `npm ci` 和 `npm run build`，将产物复制到 `/opt/causalagent-chat`；最终 Python runtime 不包含 Node、npm 或 Vite。三个 Compose 文件只向 `app` 传递 `CHAT_FRONTEND_DIST_DIR` 和 `CHAT_VITE_DEV_SERVER_URL`，不再传递入口选择变量。
+`Dockerfile` 的 `chat-builder` 使用 Node 24 Alpine 执行 `npm ci` 和 `npm run build`，将产物复制到 `/opt/causalagent-chat`；最终 Python runtime 不包含 Node、npm 或 Vite。三套 Compose 向 `app` 传递四个前端的产物目录和开发服务器变量，不再传递入口选择变量。
 
-Vue 构建缺失属于运行期请求边界：`/`、`/chat-next` 和 `/chat-assets/...` 返回 503、`chat_frontend_missing` 与 request ID，不回退到旧静态入口或返回半成品资源。
+构建缺失属于运行期请求边界：`/dashboard*` 和 `/dashboard-assets/...` 返回 503、`chat_frontend_missing` 与 request ID，不回退到旧静态入口或返回半成品资源。
 
 ## 验收、发布与回退
 
-自动化检查只证明代码、协议夹具、组件、Mock 浏览器和部署静态契约；不证明真实 Flask、Cookie Session、MySQL/PostgreSQL、worker、文件上传、模型、Chrome/Edge 双浏览器或桌面壳。发布前必须由人工在 Vue 正式入口完成注册、登录/刷新/登出、管理员重定向、空 Session、消息成功/失败、Session 管理、文件、Web Search、普通 Job、Thinking、图、Markdown/图片、SSE 断线、active Job 恢复、waiting_input/resume、运行态停止对账、错误恢复、快速切换、四视口、Chrome、Edge 和桌面壳检查，并保留记录。
+自动化检查只证明代码、协议夹具、组件、Mock 浏览器和部署静态契约；不证明真实 Flask、Cookie Session、MySQL/PostgreSQL、worker、文件上传、模型、Chrome/Edge 双浏览器或桌面壳。发布前必须由人工在官网登录页与 `/dashboard` 工作区完成注册、登录/刷新/登出、未登录跳转与回跳、会话地址刷新与前进后退、空 Session、消息成功/失败、Session 管理、文件、Web Search、普通 Job、Thinking、图、Markdown/图片、SSE 断线、active Job 恢复、waiting_input/resume、运行态停止对账、错误恢复、快速切换、四视口、Chrome、Edge 和桌面壳检查，并保留记录。
 
 当前部署产物只包含 Vue 构建链。回退通过部署上一份经过验证的代码与镜像完成，不触碰 Session、Job、消息或数据库；不再依赖同一运行版本中的旧前端路由。
 
 ## 旧静态文件清理
 
-旧版普通端静态页面及其样式、脚本已经删除：`app/static/chat.html`、`app/static/css/style.css`，以及 `app/static/js/` 下的 `script.js`、`chat_layout_state.js`、`execution_phase_state.js`、`job_subscription_state.js`、`stream_state.js` 和 `marked.min.js`。这些脚本原先承载 develop 在旧页面上的公开决策、假流式展示和滚动跟随改动，对应行为已经在本 Vue 工程实现，删除后 `/` 与 `/chat-next` 只提供 Vue 构建产物。
+旧版普通端静态页面及其样式、脚本已经删除：`app/static/chat.html`、`app/static/css/style.css`，以及 `app/static/js/` 下的 `script.js`、`chat_layout_state.js`、`execution_phase_state.js`、`job_subscription_state.js`、`stream_state.js` 和 `marked.min.js`。这些脚本原先承载 develop 在旧页面上的公开决策、假流式展示和滚动跟随改动，对应行为已经在本 Vue 工程实现，删除后普通应用只在 `/dashboard` 提供 Vue 构建产物。
 
 只验证这些静态文件的测试随实现一起删除：`tests/unit/frontend/` 的四个 Node 测试，以及 `admin-frontend/tests/e2e-mock/chat-auth.spec.ts`。后者直接读取旧页面文件并用旧页面的元素 id 断言管理员入口与越权提示；管理员端 Mock E2E 仍由 `admin-frontend/tests/e2e-mock/admin-ui.spec.ts` 覆盖，管理员入口与越权回跳的真实浏览器覆盖在 `admin-frontend/tests/e2e/admin.spec.ts`，该文件目前使用的仍是旧页面元素 id，需要按 Vue 普通端选择器更新后才能作为有效证据。
 
-`app/static/rag_eval_app/` 不属于旧页面，它是 RAG 工作台自己的静态产物，继续保留。删除后已用 `rg` 复查，仓库中不再存在指向这些路径的代码、配置或测试引用。
+`app/static/rag_eval_app/` 后来随 RAG 评测台入口拆分移动到 `app/rag_eval/frontend_dist/`，`app/static/` 目录已随之移除，应用不再暴露 Flask 默认的 `/static` 路由。已用 `rg` 复查，仓库中不再存在指向这些路径的代码、配置或测试引用。

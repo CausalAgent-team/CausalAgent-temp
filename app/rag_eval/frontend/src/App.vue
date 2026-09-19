@@ -630,8 +630,33 @@ function statusTone(status?: string): string {
   return "active";
 }
 
+let csrfToken = "";
+
+/* 写请求需要 Session 绑定的 CSRF 令牌，令牌从同源认证接口获取。 */
+async function loadCsrfToken() {
+  try {
+    const response = await fetch("/api/check_auth");
+    const payload = await response.json() as { csrf_token?: string };
+    csrfToken = payload.csrf_token || "";
+  } catch {
+    csrfToken = "";
+  }
+}
+
+function writeHeaders(): Record<string, string> {
+  return csrfToken ? { "X-CSRF-Token": csrfToken } : {};
+}
+
 async function api<T>(url: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(url, { ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) } });
+  const method = (options.method || "GET").toUpperCase();
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+      ...(method === "GET" || method === "HEAD" ? {} : writeHeaders()),
+    },
+  });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || payload.success === false) throw new Error(payload.error || `请求失败 (${response.status})`);
   return payload.data as T;
@@ -655,7 +680,7 @@ async function uploadSource(event: Event) {
   try {
     const formData = new FormData();
     formData.append("file", file);
-    const response = await fetch("/api/rag_eval/isolated/sources", { method: "POST", body: formData });
+    const response = await fetch("/api/rag_eval/isolated/sources", { method: "POST", body: formData, headers: writeHeaders() });
     const payload = await response.json().catch(() => ({})) as { success?: boolean; error?: string; data?: { source?: SourceEntry } };
     if (!response.ok || payload.success === false) throw new Error(payload.error || `上传失败 (${response.status})`);
     await loadCatalog();
@@ -1966,6 +1991,7 @@ watch(strategyProfileId, (profileId, previousProfileId) => {
 onMounted(async () => {
   document.addEventListener("visibilitychange", refreshVisibleRun);
   sidebarCollapsed.value = localStorage.getItem("sidebar_collapsed") === "true" || localStorage.getItem("rag_eval_sidebar_collapsed") === "true";
+  await loadCsrfToken();
   await loadCatalog();
   await loadConfig();
   await loadGoldDatasetStatus();

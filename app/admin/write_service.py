@@ -26,6 +26,7 @@ from app.auth.service import (
     managed_password_error,
     verify_password,
 )
+from app.auth.rbac import replace_user_roles, role_keys_for_primary_role
 from app.agent.persistence_cleanup import (
     enqueue_checkpoint_cleanup_many,
     enqueue_user_memory_cleanup,
@@ -750,6 +751,11 @@ def execute_user_operation(
                         WHERE id = %s
                         """,
                         (value, target["id"]),
+                    )
+                    replace_user_roles(
+                        cursor,
+                        int(target["id"]),
+                        role_keys_for_primary_role(value),
                     )
                 new_values = {
                     **old_values,

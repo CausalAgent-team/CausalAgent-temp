@@ -38,6 +38,7 @@ from app.auth.routes import auth_bp  # noqa: E402
 from app.request_context import register_request_context  # noqa: E402
 from config.settings import settings  # noqa: E402
 from observability.logging_runtime import configure_logging  # noqa: E402
+from tests.support.authorization import patch_login_identity  # noqa: E402
 
 
 VISITOR_ID = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
@@ -305,6 +306,7 @@ def test_login_success_event_is_written_by_the_backend_login_route(monkeypatch):
         with (
             patch.dict(sys.modules, {"app.auth.service": service_module}),
             patch("app.auth.routes.bcrypt.checkpw", return_value=True),
+            patch_login_identity(),
         ):
             with app.test_client() as client:
                 response = client.post(

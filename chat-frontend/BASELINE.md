@@ -8,7 +8,7 @@
 
 | 能力 | 新前端入口 | 当前契约 | 本阶段证据 |
 | --- | --- | --- | --- |
-| 认证 | `/`（正式入口）；`/chat-next`（兼容别名） | `/api/check_auth`、`/api/login`、`/api/register`、`/api/logout` | 组件测试、Mock E2E、Flask 部署契约 |
+| 认证 | `/dashboard`（工作区入口）；未登录跳转 `/auth/sign-in?next=<原地址>`，登录页由官网前端提供 | `/api/check_auth`、`/api/login`、`/api/register`、`/api/logout` | 组件测试、Mock E2E、Flask 页面入口契约 |
 | 会话 | `ChatWorkspace` | `/api/sessions` 返回 `[session_id, info]` 元组；加载/新建/改名/删除沿用旧路径 | API schema、store 单元测试 |
 | 文件 | `ChatWorkspace` / `Composer` | `/api/files`、`/api/upload_file`、`/api/delete_file` | API schema；完整上传 E2E 待后续阶段 |
 | 任务 | `JobController` | `/api/agent/jobs`、`active`、`resume`、`cancel` | reducer、contract、Mock E2E |
@@ -26,6 +26,6 @@
 ## 当前阶段边界
 
 - `npm run check` 是本目录的代码级门槛，Mock Playwright 只证明前端状态机与模拟后端的连接，不证明真实模型、worker、数据库或 Flask 部署。
-- 根入口已收敛为 Vue，`CHAT_FRONTEND_ENTRY` 和 `/chat-legacy` 已退出运行时契约；回退需要恢复上一版本的代码和构建产物，不再通过同一部署中的旧版入口切换。
-- 旧版普通聊天静态文件已经没有运行时引用；develop 在旧脚本里新增的公开决策、假流式与滚动跟随行为已经在本工程按等价语义重新实现。受仓库禁止 agent 删除重要文件的规则限制，物理文件仍保留，必须由用户按文档中的精确清单手工删除，不能把该步骤记为已完成。
-- Vue Router、深链接、真实浏览器认证、真实文件后端、真实模型/worker 和管理员端迁移仍不属于当前已验证范围；普通端文档系统同步记录在 `Document/`。
+- 应用入口收敛为 `/dashboard`、`/dashboard/session/<id>` 和 `/dashboard/settings`，资源前缀是 `/dashboard-assets/`；`CHAT_FRONTEND_ENTRY`、`/chat-next` 和 `/chat-assets/` 已退出运行时契约，回退需要恢复上一版本的代码和构建产物。
+- 公开预览、内部登录面板和匿名预览上报代码已经删除，对应职责由官网前端承担；本工程不再包含登录与注册界面。旧版普通聊天静态文件也已从仓库删除。
+- 地址路由使用 `src/runtime/navigation/app-route.ts` 的轻量路径解析，未引入 vue-router；真实浏览器认证、真实文件后端、真实模型/worker 和管理员端迁移仍不属于当前已验证范围；普通端文档系统同步记录在 `Document/`。

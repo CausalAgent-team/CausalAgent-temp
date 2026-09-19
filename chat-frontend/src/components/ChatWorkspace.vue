@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
 import { api } from '../api/client'
 import { isApiError } from '../api/errors'
 import { useLocale } from '../i18n/use-locale'
 import { chatScrollFollowKey, createChatScrollFollow } from '../runtime/chat/scroll-follow'
 import { createIdempotencyKey, retryIdempotent } from '../runtime/jobs/idempotency'
 import { JobController } from '../runtime/jobs/job-controller'
+import { sessionHref, settingsHref, workspaceHref } from '../runtime/navigation/app-route'
+import type { DashboardRoute } from '../runtime/navigation/app-route'
 import { useAuthStore } from '../stores/auth.store'
 import { useComposerStore } from '../stores/composer.store'
 import { useFilesStore } from '../stores/files.store'
@@ -16,8 +18,12 @@ import Composer from './Composer.vue'
 import MessageTimeline from './MessageTimeline.vue'
 import SettingsDialog from './SettingsDialog.vue'
 
-const props = defineProps<{ controller: JobController }>()
-const emit = defineEmits<{ error: [error: unknown, fallback: string]; logout: [] }>()
+const props = defineProps<{ controller: JobController; route: DashboardRoute }>()
+const emit = defineEmits<{
+  error: [error: unknown, fallback: string]
+  logout: []
+  navigate: [path: string]
+}>()
 const { text } = useLocale()
 const auth = useAuthStore()
 const sessions = useSessionsStore()
@@ -27,14 +33,26 @@ const composer = useComposerStore()
 
 const sidebarOpen = ref(false)
 const userMenuOpen = ref(false)
-const settingsOpen = ref(false)
 const editingSessionId = ref<string | null>(null)
 const editingTitle = ref('')
 const conversationArea = ref<HTMLElement | null>(null)
 const scrollFollow = createChatScrollFollow()
 const activeJob = computed<JobRecord | null>(() => sessions.currentId ? jobs.activeForSession(sessions.currentId) : null)
+const settingsOpen = computed(() => props.route.view === 'settings')
+const canOpenAdmin = computed(() => auth.hasPermission('admin.access'))
+const canOpenRagEval = computed(() => auth.hasPermission('rag_eval.access'))
 
 provide(chatScrollFollowKey, scrollFollow)
+
+/* URL 是当前会话的唯一来源：地址变化时加载对应会话。 */
+watch(
+  () => props.route.sessionId,
+  (sessionId) => {
+    if (!sessionId || sessions.currentId === sessionId) return
+    void loadSession(sessionId)
+  },
+  { immediate: true },
+)
 
 async function jumpToLatest(): Promise<void> {
   await nextTick()
@@ -52,8 +70,7 @@ function report(error: unknown, fallback: string): void {
   emit('error', error, fallback)
 }
 
-async function selectSession(sessionId: string): Promise<void> {
-  sidebarOpen.value = false
+async function loadSession(sessionId: string): Promise<void> {
   try {
     await sessions.select(sessionId)
     if (sessions.currentId !== sessionId) return
@@ -72,9 +89,19 @@ async function selectSession(sessionId: string): Promise<void> {
   }
 }
 
+/* 打开会话时先更新地址，再加载内容，浏览器前进后退都能回到同一会话。 */
+async function openSession(sessionId: string): Promise<void> {
+  sidebarOpen.value = false
+  emit('navigate', sessionHref(sessionId, globalThis.location.pathname))
+  await loadSession(sessionId)
+}
+
 async function createNewSession(): Promise<void> {
   try {
     await sessions.create()
+    if (sessions.currentId) {
+      emit('navigate', sessionHref(sessions.currentId, globalThis.location.pathname))
+    }
     composer.clearAfterSend()
     files.clearSelection()
     sidebarOpen.value = false
@@ -93,7 +120,10 @@ async function send(): Promise<void> {
   composer.setSending(true)
   try {
     let sessionId = sessions.currentId
-    if (!resumeJob && !sessionId) sessionId = await sessions.create()
+    if (!resumeJob && !sessionId) {
+      sessionId = await sessions.create()
+      emit('navigate', sessionHref(sessionId, globalThis.location.pathname))
+    }
     if (!sessionId) throw new Error('当前没有可用会话。')
     const key = createIdempotencyKey()
     const response = resumeJob
@@ -180,6 +210,7 @@ async function deleteSession(id: string): Promise<void> {
     if (!sessions.currentId) {
       composer.clearAfterSend()
       files.clearSelection()
+      emit('navigate', workspaceHref(globalThis.location.pathname))
     }
   } catch (error) {
     report(error, '删除会话失败。')
@@ -193,6 +224,22 @@ function selectFile(fileId: number): void {
 
 function openAdmin(): void {
   globalThis.location.assign('/admin/database')
+}
+
+function openRagEval(): void {
+  globalThis.location.assign('/rag-eval')
+}
+
+function openSettings(): void {
+  emit('navigate', settingsHref(globalThis.location.pathname))
+}
+
+function closeSettings(): void {
+  const currentId = sessions.currentId
+  emit(
+    'navigate',
+    currentId ? sessionHref(currentId, globalThis.location.pathname) : workspaceHref(globalThis.location.pathname),
+  )
 }
 </script>
 
@@ -211,7 +258,7 @@ function openAdmin(): void {
         <div class="sidebar-section history-section">
           <p v-if="!sessions.items.length" class="sidebar-empty">{{ text.noHistory }}</p>
           <div v-for="session in sessions.items" :key="session.id" class="sidebar-item session-item" :class="{ selected: session.id === sessions.currentId }">
-            <button class="sidebar-item-main" type="button" @click="selectSession(session.id)">
+            <button class="sidebar-item-main" type="button" @click="openSession(session.id)">
               <span class="sidebar-time">{{ session.lastTime }}</span>
               <span v-if="editingSessionId !== session.id" class="sidebar-preview" :title="session.preview">{{ session.preview }}</span>
               <input v-else v-model="editingTitle" class="title-input" @click.stop @keydown.enter.prevent="finishRename" @keydown.esc="editingSessionId = null" @blur="finishRename" />
@@ -235,14 +282,15 @@ function openAdmin(): void {
         </div>
       </div>
       <div class="sidebar-footer">
-        <button class="secondary-button" type="button" @click="settingsOpen = true">{{ text.settings }}</button>
+        <button class="secondary-button" type="button" @click="openSettings">{{ text.settings }}</button>
         <button class="avatar-button" type="button" :aria-expanded="userMenuOpen" @click="userMenuOpen = !userMenuOpen">{{ auth.username?.charAt(0).toUpperCase() }}</button>
       </div>
       <div v-if="userMenuOpen" class="user-menu" role="dialog" aria-modal="true" :aria-label="text.userInfo">
         <h3>{{ text.userInfo }}</h3>
         <div class="user-info-content">{{ text.accountPrefix }}{{ auth.username }}</div>
         <div class="popup-button-container">
-          <button v-if="auth.role === 'admin'" class="admin-button" type="button" @click="openAdmin">{{ text.adminPortal }}</button>
+          <button v-if="canOpenAdmin" class="admin-button" type="button" @click="openAdmin">{{ text.adminPortal }}</button>
+          <button v-if="canOpenRagEval" class="admin-button" type="button" @click="openRagEval">{{ text.ragEvalPortal }}</button>
           <button class="logout-button" type="button" @click="emit('logout')">{{ text.logout }}</button>
           <button class="close-button" type="button" @click="userMenuOpen = false">{{ text.close }}</button>
         </div>
@@ -272,6 +320,6 @@ function openAdmin(): void {
         />
       </div>
     </main>
-    <SettingsDialog :open="settingsOpen" @close="settingsOpen = false" />
+    <SettingsDialog :open="settingsOpen" @close="closeSettings" />
   </div>
 </template>

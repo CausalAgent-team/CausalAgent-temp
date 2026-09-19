@@ -2,7 +2,9 @@
 
 生效目录：`chat-frontend/` 及其子目录。
 
-- 该目录是普通用户主应用的独立 Vue 3 工程；不得在普通组件任务中顺带修改 Flask、数据库、worker、Docker 或管理员端。
+- 该目录是普通用户应用的独立 Vue 3 工程；不得在普通组件任务中顺带修改 Flask、数据库、worker、Docker、官网或管理员端。
+- 本工程只提供登录后的工作区：入口是 `/dashboard`、`/dashboard/session/<id>` 和 `/dashboard/settings`，资源前缀是 `/dashboard-assets/`；未登录或 Session 失效时跳转 `/auth/sign-in?next=/dashboard`，不得在本工程内重新实现登录、注册或未登录公开预览。
+- 地址是当前会话的唯一来源：路径解析集中在 `src/runtime/navigation/app-route.ts`，选中、创建或删除会话必须通过该模块的链接同步地址，不得只用组件内部状态记录当前会话。
 - 所有后端响应先按 `unknown` 接收，再通过 Zod schema 解析；禁止使用 `response.json() as SomeDto`。
 - `Pinia` 只能保存可序列化的领域状态。`AbortController`、ReadableStream reader、定时器、DOM 节点和 vis-network 实例只能由组件生命周期或 runtime controller 持有。
 - Job SSE 必须使用 `fetch()` 和 `ReadableStream`，不得使用原生 `EventSource`。未知但结构合法的命名事件推进传输游标；坏包不推进游标，并进入有界、可观察的错误路径。

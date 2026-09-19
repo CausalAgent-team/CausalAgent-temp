@@ -82,6 +82,9 @@ chat-frontend/node_modules/
 chat-frontend/dist/
 chat-frontend/test-results/
 chat-frontend/playwright-report/
+website-frontend/node_modules/
+website-frontend/dist/
+app/rag_eval/frontend/node_modules/
 
 
 # --- 数据文件和大文件 ---

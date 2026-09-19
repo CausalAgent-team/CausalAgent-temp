@@ -4,6 +4,7 @@ import {
   ClipboardCheck,
   Database,
   FolderOpen,
+  Gauge,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -28,7 +29,8 @@ const mobileOpen = ref(false)
 const SIDEBAR_STORAGE_KEY = 'causalagent.admin.sidebar.collapsed'
 const BRAND_LOGO_URL = '/api/admin/brand/logo'
 const FLASK_ORIGIN = import.meta.env.VITE_FLASK_ORIGIN?.replace(/\/$/, '') || ''
-const CHAT_URL = `${FLASK_ORIGIN}/`
+const CHAT_URL = `${FLASK_ORIGIN}/dashboard`
+const RAG_EVAL_URL = `${FLASK_ORIGIN}/rag-eval`
 const GRAFANA_URL = 'http://127.0.0.1:3000/'
 
 const navigation = [
@@ -196,6 +198,20 @@ watch(
               <MessageCircle :size="18" :stroke-width="1.8" />
             </span>
             <span class="chat-entry-text">进入聊天</span>
+          </el-button>
+        </el-tooltip>
+        <el-tooltip content="进入 RAG 评测台" placement="right" :disabled="!collapsed">
+          <el-button
+            class="chat-entry-button"
+            tag="a"
+            type="primary"
+            :href="RAG_EVAL_URL"
+            :disabled="!identityReady"
+          >
+            <span class="chat-entry-icon" aria-hidden="true">
+              <Gauge :size="18" :stroke-width="1.8" />
+            </span>
+            <span class="chat-entry-text">RAG 评测台</span>
           </el-button>
         </el-tooltip>
         <el-tooltip content="退出登录" placement="right" :disabled="!collapsed">

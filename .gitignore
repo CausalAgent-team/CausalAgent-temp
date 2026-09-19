@@ -231,15 +231,18 @@ admin-frontend/test-results/
 admin-frontend/playwright-report/
 .playwright-cli/
 app/rag_eval/frontend/node_modules/
+website-frontend/node_modules/
+website-frontend/dist/
+website-frontend/*.tsbuildinfo
 chat-frontend/node_modules/
 chat-frontend/dist/
 chat-frontend/*.tsbuildinfo
 chat-frontend/test-results/
 chat-frontend/playwright-report/
-app/static/rag_eval_app/
-!app/static/rag_eval_app/
-!app/static/rag_eval_app/assets/
-!app/static/rag_eval_app/assets/*
+app/rag_eval/frontend_dist/
+!app/rag_eval/frontend_dist/
+!app/rag_eval/frontend_dist/assets/
+!app/rag_eval/frontend_dist/assets/*
 
 # RAG 隔离评测运行产物与预发本地密钥
 /tmp/rag_eval/
@@ -249,8 +252,7 @@ app/static/rag_eval_app/
 # docs
 docs/
 
-# 管理员生产构建只提交入口文件，哈希 assets 由构建阶段重新生成。
+# 四个前端都只提交源码；构建产物由 Docker 构建阶段生成，本地不进入版本库。
 admin-frontend/dist/*
-!admin-frontend/dist/index.html
 
 temp/

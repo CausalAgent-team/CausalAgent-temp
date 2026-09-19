@@ -66,14 +66,14 @@ interface LoginRedirectOptions {
   notice?: 'admin_required'
 }
 
-/** 返回普通用户统一登录入口，并编码受服务端复核的内部导航状态。 */
-function loginUrl(options: LoginRedirectOptions = {}): string {
+/** 返回统一登录入口，并编码受服务端复核的内部导航状态。 */
+export function adminLoginUrl(options: LoginRedirectOptions = {}): string {
   const origin = import.meta.env.VITE_FLASK_ORIGIN?.replace(/\/$/, '') || ''
   const params = new URLSearchParams()
   if (options.next) params.set('next', options.next)
   if (options.notice) params.set('notice', options.notice)
   const query = params.toString()
-  return `${origin}/${query ? `?${query}` : ''}`
+  return `${origin}/auth/sign-in${query ? `?${query}` : ''}`
 }
 
 /** 返回当前管理员页面路径，供重新登录后由服务端白名单复核。 */
@@ -100,7 +100,7 @@ export function adminAuthRedirectOptions(
 
 /** 把管理员会话送回统一登录入口，并区分失效与越权提示。 */
 function redirectToLogin(options: LoginRedirectOptions = {}): void {
-  window.location.assign(loginUrl(options))
+  window.location.assign(adminLoginUrl(options))
 }
 
 /** 按稳定错误码选择重新登录回跳或普通用户无权限提示。 */

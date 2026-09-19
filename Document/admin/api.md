@@ -4,7 +4,7 @@
 
 适用范围：修改 `app/admin/routes.py`、管理员 service、鉴权/CSRF 或 Vue API 调用时使用；数据库 monitor、主从和 checkpoint 内部实现见 [`../database/overview.md`](../database/overview.md) 与 [`../database/monitoring.md`](../database/monitoring.md)。
 
-管理员 API 统一使用 `/api/admin` 前缀。除特别说明外，接口只允许数据库中 `role = 'admin'` 且 `is_active = TRUE` 的用户访问；后端每次请求都会通过主库强一致读重新确认用户状态，不把浏览器 Session 中的角色缓存作为授权依据。
+管理员 API 统一使用 `/api/admin` 前缀。除特别说明外，接口只允许已启用且通过 `user_roles` 与 `role_permissions` 获得 `admin.access` 权限的用户访问；后端每次请求都会通过主库强一致读重新确认用户状态与权限，不把浏览器 Session 中的角色或权限缓存作为授权依据。
 
 ## 通用约定
 
@@ -23,12 +23,12 @@
 | `GET` | `/admin/sessions` | 会话与消息页面 |
 | `GET` | `/admin/jobs` | 分析任务页面 |
 | `GET` | `/admin/files` | 文件资产页面 |
-| `GET` | `/admin/database` | 数据库看板与登录落点 |
+| `GET` | `/admin/database` | 数据库看板与管理员默认落点 |
 | `GET` | `/admin/database/settings` | 采集配置页面 |
 | `GET` | `/admin/database/audit` | 数据库审计页面 |
 | `GET` | `/api/admin/brand/logo` | 受保护的品牌图片 |
 
-未登录访问管理员页面时回到统一登录入口；普通登录用户访问返回 `403`。
+未登录访问管理员页面时跳转 `/auth/sign-in?next=<管理页面>`；缺少 `admin.access` 权限返回 `403`（错误码 `admin_required`）。
 
 ## 数据库看板
 

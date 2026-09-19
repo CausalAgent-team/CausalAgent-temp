@@ -9,6 +9,7 @@ export const loginResponseSchema = z.object({
   success: z.boolean(),
   username: z.string().optional(),
   role: z.string().optional(),
+  permissions: z.array(z.string()).optional(),
   csrf_token: z.string().optional(),
   redirect_to: z.string().optional(),
   warning_code: z.string().optional(),
@@ -20,6 +21,7 @@ export const checkAuthResponseSchema = z.discriminatedUnion('isLoggedIn', [
     isLoggedIn: z.literal(true),
     username: z.string(),
     role: z.string().optional(),
+    permissions: z.array(z.string()).optional(),
     csrf_token: z.string().optional(),
   }).passthrough(),
   z.object({
