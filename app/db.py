@@ -510,6 +510,10 @@ def check_database_readiness():
                 "rag_eval_profiles",
                 "rag_eval_jobs",
                 "rag_eval_datasets",
+                "roles",
+                "permissions",
+                "user_roles",
+                "role_permissions",
             ]
             cursor.execute(
                 """
@@ -565,6 +569,22 @@ def check_database_readiness():
                 error_msg = (
                     "数据库关键字段缺失: "
                     f"{sorted(f'users.{name}' for name in missing_security_columns)}。"
+                    "请先运行 'python -m Database.bootstrap'。"
+                )
+                raise RuntimeError(error_msg)
+
+            cursor.execute(
+                """
+                SELECT role_key
+                FROM roles
+                WHERE role_key IN ('user', 'admin')
+                """
+            )
+            seeded_roles = {row[0] for row in cursor.fetchall()}
+            missing_roles = {"user", "admin"} - seeded_roles
+            if missing_roles:
+                error_msg = (
+                    f"数据库角色缺失: {sorted(missing_roles)}。"
                     "请先运行 'python -m Database.bootstrap'。"
                 )
                 raise RuntimeError(error_msg)
