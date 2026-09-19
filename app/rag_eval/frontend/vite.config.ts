@@ -3,9 +3,19 @@ import vue from "@vitejs/plugin-vue";
 
 export default defineConfig({
   plugins: [vue()],
-  base: "/static/rag_eval_app/",
+  base: "/rag-eval/",
+  server: {
+    port: 5176,
+    strictPort: true,
+    proxy: {
+      "/api": {
+        target: "http://127.0.0.1:5001",
+        changeOrigin: true,
+      },
+    },
+  },
   build: {
-    outDir: "../../static/rag_eval_app",
+    outDir: "../frontend_dist",
     emptyOutDir: true,
   },
 });
