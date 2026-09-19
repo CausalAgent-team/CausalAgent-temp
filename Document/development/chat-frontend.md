@@ -17,6 +17,8 @@ Vue 构建产物由 Flask 在同源路径提供：入口为 `/chat-assets/` 对�
 
 匿名状态下不调用 `/api/new_chat`、`/api/agent/jobs`、`/api/upload_file` 等业务接口：预览中的 Composer 以 `auth-required` 模式渲染，点击发送或上传只打开登录面板 `AuthPanel`，上传按钮不会弹出文件选择框。用户输入的文字保存在共享的 Composer store 中，并同步写入 `sessionStorage`（键 `causalagent.preview.draft`），刷新后恢复；登录面板关闭后文字仍在，登录成功后草稿进入正式 Composer 但不会自动发送，用户再次点击发送才会创建真实 Session 和 Job。文件对象、文件名和文件内容不写入任何存储或统计请求，登录成功后需要重新选择文件。
 
+登录面板是覆盖在预览之上的模态卡片：遮罩挡住底层预览的点击，卡片使用不透明表面，打开时自动聚焦用户名输入框。匿名状态下可以按 Esc、点击遮罩或点击“先浏览公开预览”关闭面板，等待接口响应期间不允许关闭。密码输入框提供显示与隐藏切换；注册成功后面板自动回到登录态并提示“注册成功！请登录。”，已经填写的用户名和密码保留，用户只需补一次提交。
+
 公开预览的交互通过 `src/runtime/analytics/analytics-client.ts` 上报到 `POST /api/analytics/events`（契约见 [`observability.md`](observability.md)）。上报使用 `sendBeacon` 或 `fetch(..., { keepalive: true })`，不等待响应，并在同一浏览器会话内按页面和示例去重；统计请求失败或被拒绝都不影响浏览、登录和真实功能。
 
 ## 工程边界

@@ -26,6 +26,7 @@ const { text } = useLocale()
 const controller = new JobController(jobs)
 const authBusy = ref(false)
 const authError = ref<string | null>(null)
+const authNotice = ref<string | null>(null)
 const notice = ref('')
 const appReady = ref(false)
 const next = new URLSearchParams(globalThis.location.search).get('next')
@@ -80,6 +81,8 @@ function clearStoredDraft(): void {
 
 function openAuthPanel(): void {
   trackPublicPreviewEvent({ event: 'analytics.auth.panel_open', page: PUBLIC_PREVIEW_PAGE_ID })
+  authError.value = null
+  authNotice.value = null
   authPanelOpen.value = true
 }
 
@@ -127,6 +130,7 @@ async function loadWorkspace(): Promise<void> {
 async function login(username: string, password: string): Promise<void> {
   authBusy.value = true
   authError.value = null
+  authNotice.value = null
   try {
     const redirectTo = await auth.login(username, password, next)
     const hasLoginWarning = auth.warningCode === 'last_login_record_failed'
@@ -161,9 +165,10 @@ async function register(username: string, password: string, confirmPassword: str
   }
   authBusy.value = true
   authError.value = null
+  authNotice.value = null
   try {
     await auth.register(username, password)
-    authError.value = '注册成功，请登录。'
+    authNotice.value = text.value.registerSuccess
   } catch (error) {
     authError.value = error instanceof Error ? error.message : '注册失败，请稍后再试。'
   } finally {
@@ -225,6 +230,7 @@ onBeforeUnmount(() => {
       closeable
       :busy="authBusy"
       :error="authError || auth.error"
+      :notice="authNotice"
       @login="login"
       @register="register"
       @close="authPanelOpen = false"

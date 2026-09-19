@@ -129,7 +129,7 @@ test('mock ordinary chat login, job creation and fetch SSE terminal event', asyn
   await expect(authCard.getByRole('heading', { name: '登录' })).toBeVisible()
   expect(traffic.businessPaths).toEqual([])
   await authCard.getByLabel('用户名').fill('alice')
-  await authCard.getByLabel('密码').fill('secret')
+  await authCard.getByLabel('密码', { exact: true }).fill('secret')
   await authCard.getByRole('button', { name: '登录' }).click()
 
   await expect(page.getByRole('button', { name: '新建对话' })).toBeVisible()

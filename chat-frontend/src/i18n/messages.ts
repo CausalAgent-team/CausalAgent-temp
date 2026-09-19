@@ -4,6 +4,7 @@ export const messages = {
   zh: {
     login: '登录', register: '注册', username: '用户名', password: '密码', confirmPassword: '确认密码',
     loginHint: '还没有账号？点击注册', registerHint: '已有账号？点击登录',
+    showPassword: '显示密码', hidePassword: '隐藏密码',
     newChat: '新建对话', fileList: '文件列表', settings: '设置', userInfo: '用户信息',
     adminPortal: '管理后台', logout: '退出登录', close: '关闭', back: '返回',
     userAgreement: '用户协议', userManual: '操作文档', checkUpdate: '检查更新', toggleLanguage: '切换英文',
@@ -35,6 +36,7 @@ export const messages = {
   en: {
     login: 'Login', register: 'Register', username: 'Username', password: 'Password', confirmPassword: 'Confirm Password',
     loginHint: "Don't have an account? Register", registerHint: 'Already have an account? Login',
+    showPassword: 'Show password', hidePassword: 'Hide password',
     newChat: 'New Chat', fileList: 'File List', settings: 'Settings', userInfo: 'User Info',
     adminPortal: 'Admin Console', logout: 'Logout', close: 'Close', back: 'Back',
     userAgreement: 'User Agreement', userManual: 'User Manual', checkUpdate: 'Check Update', toggleLanguage: 'Switch to Chinese',

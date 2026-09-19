@@ -1460,3 +1460,14 @@
   - 【日志量控制】：同一浏览器会话内公开预览展示、示例打开和登录面板打开按页面与示例去重，发送点击每次真实点击上报一次；前端使用 `sendBeacon` 或 `keepalive` `fetch` 发送，不等待响应、失败不重试，统计异常不影响浏览、登录和真实业务接口。
   - 【测试】：新增 `tests/unit/analytics/test_public_analytics_events.py`，覆盖接口边界、整体拒绝、访客标识脱敏、业务隔离和登录侧事件写入；`tests/unit/test_event_catalog.py` 与 `tests/integration/test_logging_policy.py` 同步新增事件；`chat-frontend` 新增匿名统计客户端单元测试、公开预览组件测试，并把 Mock E2E 改为未登录公开预览到登录后真实 Job 的完整流程。
   - 【文档同步】：更新 `Document/api/conventions.md`、`Document/development/chat-frontend.md` 和 `Document/development/observability.md`，登记公开预览状态、登录拦截、草稿与文件边界、匿名事件合同、脱敏和日志量控制；同时修正日志事件目录表缺失的 `rag.runtime.ready`/`rag.sparse.ready` 行、`mcp.client.reconnected` 的 `pool_lane` 字段，以及测试文档引用失效测试文件路径的问题。
+
+---
+
+2026.9.19
+
+- 【普通用户前端：登录面板修复】
+  - 【卡片背景】：`AuthPanel` 的卡片此前没有设置背景色，公开预览的正文、按钮和消息会透过卡片显示，与登录标题、标签和输入框叠在一起；现在卡片改为不透明的白色表面，带边框、12px 圆角和阴影，遮罩保持 55% 深色以隔离底层页面。
+  - 【表单样式】：原样式只依赖浏览器默认输入框外观，现按 `tokens.css` 的设计变量重写标签、输入框、主按钮和次级链接的字号、间距、圆角与悬停/禁用状态，并保留全局键盘焦点轮廓；宽度收窄到 400px，480px 以下收窄内边距。
+  - 【面板交互】：面板改为带 `role="dialog"` 和 `aria-modal` 的模态卡片，打开时自动聚焦用户名输入框；匿名预览下可以按 Esc、点击遮罩或点击“先浏览公开预览”关闭面板，等待接口响应期间关闭动作不生效。
+  - 【注册与密码】：新增显示/隐藏密码按钮；注册成功消息改用独立的提示样式而不是错误样式，面板自动回到登录态，已填写的用户名和密码保留。
+  - 【测试与文档】：`tests/components/auth-panel.spec.ts` 新增密码切换、注册成功后回到登录态、Esc 与遮罩关闭的用例；Mock E2E 的密码定位改为精确匹配；`Document/development/chat-frontend.md` 补充面板遮罩、关闭方式和注册成功后的行为。
