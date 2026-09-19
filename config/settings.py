@@ -137,6 +137,21 @@ class AppConfig:
             required=False,
             default="",
         ).rstrip("/")
+        self.WEBSITE_FRONTEND_DIST_DIR = self._get_config(
+            "WEBSITE_FRONTEND_DIST_DIR",
+            required=False,
+            default="",
+        )
+        self.WEBSITE_VITE_DEV_SERVER_URL = self._get_config(
+            "WEBSITE_VITE_DEV_SERVER_URL",
+            required=False,
+            default="",
+        ).rstrip("/")
+        self.RAG_EVAL_FRONTEND_DIST_DIR = self._get_config(
+            "RAG_EVAL_FRONTEND_DIST_DIR",
+            required=False,
+            default="",
+        )
         self.ADMIN_VITE_DEV_SERVER_URL = self._get_config(
             "ADMIN_VITE_DEV_SERVER_URL",
             required=False,
