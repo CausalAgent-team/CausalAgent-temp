@@ -92,6 +92,8 @@ def handle_login():
         session['username'] = user_data['username']
         session['auth_version'] = int(user_data.get('auth_version') or 1)
         bind_request_log_context(user_id=user_data["id"])
+        # 登录成功由后端自己记录，不依赖前端上报的结果。
+        log_event(LOGGER, "analytics.auth.login_success")
         csrf_token = ensure_csrf_token()
         # Session 会自动通过浏览器 cookie 维护状态，不再需要文件
         

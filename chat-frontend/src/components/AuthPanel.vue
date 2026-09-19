@@ -2,10 +2,11 @@
 import { ref } from 'vue'
 import { useLocale } from '../i18n/use-locale'
 
-defineProps<{ busy: boolean; error: string | null }>()
+defineProps<{ busy: boolean; error: string | null; closeable?: boolean }>()
 const emit = defineEmits<{
   login: [username: string, password: string]
   register: [username: string, password: string, confirmPassword: string]
+  close: []
 }>()
 
 const { text } = useLocale()
@@ -64,6 +65,9 @@ function toggleMode(): void {
       </button>
       <button class="link-button" type="button" :disabled="busy" @click="toggleMode">
         {{ mode === 'login' ? text.loginHint : text.registerHint }}
+      </button>
+      <button v-if="closeable" class="link-button auth-close" type="button" :disabled="busy" @click="emit('close')">
+        {{ text.backToPreview }}
       </button>
     </form>
   </section>

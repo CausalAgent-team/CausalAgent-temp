@@ -44,7 +44,7 @@
 
 ### 2.2 关联字段和标签边界
 
-`request_id`、`user_id`、`session_id`、`job_id`、`invocation_id`、`worker_slot`、`node`、`tool`、`instance` 只能作为 JSON 字段。它们不进入 Loki 标签，不在日志采集层建立索引；后续 Alloy 仅把低基数的 `service` 映射为 `service_name`，并按 `environment`、`level`、`category` 选择标签。
+`request_id`、`user_id`、`session_id`、`job_id`、`invocation_id`、`worker_slot`、`node`、`tool`、`instance` 只能作为 JSON 字段。它们不进入 Loki 标签，不在日志采集层建立索引；后续 Alloy 仅把低基数的 `service` 映射为 `service_name`，并按 `environment`、`level`、`category` 选择标签。公开预览事件的 `visitor_hash` 属于同一类正文关联字段，同样不进入标签。
 
 `details` 必须按事件码定义字段白名单。上下文 ID 不能重复放进 `details`；未知事件码、未知键、错误类型、越界值和非法上下文都降级为固定的 `logging.contract_invalid`，只携带有限 `violation` 枚举，不回显原键和值，也不改变业务控制流。
 
@@ -71,7 +71,7 @@ Flask 在确认 `X-Request-ID` 后立即绑定 `request_id`，只有主库确认
 
 | service | 入口与受管边界 | 当前记录内容 |
 | --- | --- | --- |
-| `web` | `CausalAgent.py`、`app/__init__.py`、Flask 请求上下文 | 启动结果、未处理或受控 5xx、Job 创建结果和真实安全拒绝 |
+| `web` | `CausalAgent.py`、`app/__init__.py`、Flask 请求上下文 | 启动结果、未处理或受控 5xx、Job 创建结果、真实安全拒绝和公开预览匿名事件 |
 | `worker` | `app/agent/worker/__main__.py`、slot/runtime/execution | slot、Job、lease、node 最终降级和 cleanup 聚合结果 |
 | `monitor` | `Database/monitor_worker.py`、`Database/monitoring.py`、`app/db.py` | 快照、配置、锁、主从、连接和慢 SQL 的转移/恢复事件 |
 | `maintenance` | bootstrap、database/checkpoint setup、Agent 持久化清理 worker | 启动边界、两类 outbox attempt 结果和循环级转移/恢复 |
@@ -131,6 +131,14 @@ Grafana 继续使用独立账号和 `127.0.0.1:3000` 本地入口，不复用 Ca
 
 时间线串联 `mcp.client.call.started`、`mcp.request.received/accepted/rejected`、`mcp.tool.slow/finished/failed/canceled` 和 `mcp.client.cancel.*`/`mcp.cancel.finished`。`CAUSAL_MCP_SLOW_LOG_SECONDS` 默认且当前部署值为 60 秒；慢事件只在跨过阈值时记录一次，最终仍必须出现完成、失败或取消终态。该面板用于区分“请求尚未到达 MCP、排队等待、算法运行过慢、已失败、已取消”几类状态，不替代 LangSmith trace 或业务 Job 事件。
 
+### 3.6 公开预览匿名访问事件
+
+未登录访客的公开预览交互通过同源接口 `POST /api/analytics/events` 进入同一套运行日志。该接口不要求登录，也不创建用户、Session、消息、文件或分析 Job；它只接受 `visitor_id` 和最多 10 个事件，请求体上限 8 KiB，事件名、字段名、页面标识和示例标识都必须落在事件目录登记的取值内，任何一项不合法都整体拒绝且不产生部分日志。它不接受客户端时间，成功返回 `202` 和已接受数量；统计写入失败不影响公开页面、登录或真实业务。
+
+- `analytics.public_preview.view`、`analytics.public_preview.demo_open`、`analytics.public_preview.send_click` 和 `analytics.auth.panel_open` 由浏览器上报；`analytics.auth.login_success` 由后端认证路由在登录成功后直接记录，不依赖前端上报的成功状态。
+- 前端在 `localStorage` 保存一个随机 UUID 作为浏览器匿名标识，后端用现有 `SECRET_KEY` 对该标识做 HMAC-SHA256，日志只写 `visitor_hash`。原始标识、消息正文、文件名、文件内容、Cookie 和 Token 都不进入日志，`visitor_hash` 也不配置为 Loki 标签。
+- 日志量控制：同一浏览器会话中，同一页面的 `public_preview.view` 和同一 `demo_key` 的 `demo_open` 各只上报一次，登录面板打开事件不因组件重渲染重复上报，发送点击每次真实点击上报一次；前端使用 `sendBeacon` 或 `fetch(..., { keepalive: true })` 发送且不等待响应，统计请求失败不重试、不阻塞用户操作。
+
 ## 4. 第二阶段事件目录
 
 下表与 `EVENT_SPECS` 一一对应。事件码、消息、级别和分类均由目录固定，最后一列只表示允许出现的 `details` 键；具体类型、枚举和大小上限由代码目录校验并由测试锁定。
@@ -179,6 +187,8 @@ Grafana 继续使用独立账号和 `127.0.0.1:3000` 本地入口，不复用 Ca
 | `job.node.degraded` | `warning/lifecycle` | Agent 节点最终失败并进入降级路径 | `failure_kind`, `final_attempt`, `fallback` |
 | `job.postprocess.degraded` | `warning/lifecycle` | 因果分析后处理已降级 | `reason_code`, `affected_count` |
 | `chat.attachment.degraded` | `warning/dependency` | 聊天附件解析已降级 | `attachment_type`, `reason_code` |
+| `rag.runtime.ready` | `info/lifecycle` | RAG Runtime 初始化完成 | `provider`, `model`, `chunk_count`, `elapsed_ms`, `release_id` |
+| `rag.sparse.ready` | `info/lifecycle` | RAG sparse 索引构建完成 | `version`, `documents`, `vocabulary`, `backend`, `elapsed_ms` |
 | `rag.startup.unavailable` | `warning/dependency` | RAG 知识库启动检查不可用 | `reason_code` |
 | `rag.enrichment.degraded` | `warning/dependency` | RAG 增强结果已降级 | `status`, `reason_code`, `question_count`, `evidence_count` |
 | `rag.multimodal.parse_failed` | `error/dependency` | 多模态 RAG 解析失败 | `phase`, `reason_code`, `source_alias`, `page_number`, `image_index`, `table_index`, `status_code`, `fallback_attempted`, `circuit_breaker_open` |
@@ -196,7 +206,7 @@ Grafana 继续使用独立账号和 `127.0.0.1:3000` 本地入口，不复用 Ca
 | `mcp.client.cancel.failed` | `warning/dependency` | Worker MCP 取消请求失败 | `capability`, `reason_code` |
 | `mcp.capacity.rejected` | `warning/dependency` | MCP 请求因容量限制被拒绝 | `reason_code`, `retry_after_seconds` |
 | `mcp.process.recycled` | `warning/dependency` | MCP 算法进程池已回收 | `reason_code` |
-| `mcp.client.reconnected` | `info/dependency` | MCP 客户端成员已重连 | `generation` |
+| `mcp.client.reconnected` | `info/dependency` | MCP 客户端成员已重连 | `generation`, `pool_lane` |
 | `mcp.transport.failed` | `warning/dependency` | MCP transport 最终调用失败 | `reason_code`, `final_attempt`, `duration_ms` |
 | `monitor.snapshot.failed` | `error/dependency` | 数据库监控快照采集失败 | `snapshot_key`, `reason_code`, `duration_ms`, `suppressed_count` |
 | `monitor.snapshot.recovered` | `info/dependency` | 数据库监控快照采集已恢复 | `snapshot_key`, `downtime_ms`, `failure_count` |
@@ -208,6 +218,11 @@ Grafana 继续使用独立账号和 `127.0.0.1:3000` 本地入口，不复用 Ca
 | `agent.persistence.cleanup.failed` | `error/dependency` | Agent 持久化清理执行失败 | `task_type`, `outbox_id`, `attempt`, `duration_ms`, `reason_code` |
 | `agent.persistence.cleanup.runtime.degraded` | `warning/dependency` | Agent 持久化清理运行循环已降级 | `reason_code`, `suppressed_count` |
 | `agent.persistence.cleanup.runtime.recovered` | `info/dependency` | Agent 持久化清理运行循环已恢复 | `downtime_ms`, `failure_count` |
+| `analytics.public_preview.view` | `info/request` | 公开预览已展示 | `visitor_hash`, `page`, `demo_key` |
+| `analytics.public_preview.demo_open` | `info/request` | 公开预览示例已打开 | `visitor_hash`, `page`, `demo_key` |
+| `analytics.public_preview.send_click` | `info/request` | 未登录访客点击发送 | `visitor_hash`, `page`, `demo_key` |
+| `analytics.auth.panel_open` | `info/request` | 登录面板已打开 | `visitor_hash`, `page` |
+| `analytics.auth.login_success` | `info/request` | 用户登录成功 | 无 |
 
 ## 5. 关联链路与模块边界
 
@@ -233,6 +248,7 @@ X-Request-ID
 ## 6. 验收记录和完成边界
 
 - 第一阶段单元与静态验证覆盖 JSON 契约、上下文、截断、脱敏、序列化失败和 MCP stdout/stderr；第二阶段增加事件目录、合同降级、转移限频、请求/slot/task/thread 隔离、终态映射、MCP 可信参数、RAG/数据库/monitor/cleanup 事件及 AST 日志政策测试；第三阶段增加 Dashboard JSON、固定 UID、面板、变量、级别白名单和高基数字段边界的静态合同。
+- 公开预览匿名事件由 `tests/unit/analytics/test_public_analytics_events.py` 覆盖目录登记、请求边界、`visitor_hash` 脱敏、非法批次整体拒绝和登录侧写入；前端去重、不阻塞与登录拦截由 `chat-frontend` 的单元、组件和 Mock E2E 覆盖。这些测试只证明代码级合同，不证明真实 Loki 检索或生产流量。
 - Docker unit 基线固定为 `docker compose -f docker-compose.test.yml build unit-test` 和 `docker compose -f docker-compose.test.yml run --rm unit-test`。本地 Python 缺少 pytest 时不得临时安装依赖冒充仓库基线。
 - 第一阶段真实验收仍包括 Compose/Alloy/Loki/Grafana、五类测试事件、positions 重启续读、Loki 不可用时不阻塞、高基数标签检查和 30 分钟代表性负载；第二阶段还必须执行受控故障矩阵、关联检索、隐私抽样和正常流噪声检查。
 - Python 3.11 Docker unit、相关 integration 和 Compose 静态合同不能替代 observability Docker 采集、Alloy positions、Loki 检索、真实运行速率/行数/字节数/stream 数或完整 Job 证据。每次发布必须按当前环境重新记录这些结果。

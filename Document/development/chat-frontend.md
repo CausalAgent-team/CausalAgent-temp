@@ -11,6 +11,14 @@ Vue 构建产物由 Flask 在同源路径提供：入口为 `/chat-assets/` 对�
 
 本地 Vite 开发服务器使用 5174 端口和 `/chat-assets/` base。设置 `CHAT_VITE_DEV_SERVER_URL=http://127.0.0.1:5174` 后，Flask 的 `/` 或 `/chat-next` 会跳转到 `http://127.0.0.1:5174/chat-assets/`，并保留 `next` 查询参数。
 
+## 公开预览与登录拦截
+
+普通端入口有三种状态：`checking` 期间显示加载占位；`auth.check()` 确认未登录时进入匿名公开预览；确认登录后才进入 `ChatWorkspace`。公开预览展示产品说明、静态示例会话（`src/preview/public-preview-data.ts`）以及示例报告和因果图，示例数据只在前端渲染，不经过任何公开数据接口。
+
+匿名状态下不调用 `/api/new_chat`、`/api/agent/jobs`、`/api/upload_file` 等业务接口：预览中的 Composer 以 `auth-required` 模式渲染，点击发送或上传只打开登录面板 `AuthPanel`，上传按钮不会弹出文件选择框。用户输入的文字保存在共享的 Composer store 中，并同步写入 `sessionStorage`（键 `causalagent.preview.draft`），刷新后恢复；登录面板关闭后文字仍在，登录成功后草稿进入正式 Composer 但不会自动发送，用户再次点击发送才会创建真实 Session 和 Job。文件对象、文件名和文件内容不写入任何存储或统计请求，登录成功后需要重新选择文件。
+
+公开预览的交互通过 `src/runtime/analytics/analytics-client.ts` 上报到 `POST /api/analytics/events`（契约见 [`observability.md`](observability.md)）。上报使用 `sendBeacon` 或 `fetch(..., { keepalive: true })`，不等待响应，并在同一浏览器会话内按页面和示例去重；统计请求失败或被拒绝都不影响浏览、登录和真实功能。
+
 ## 工程边界
 
 `chat-frontend/src/` 按 API schema、Pinia store、Job runtime、组件、渲染器和设计样式分域。后端响应先以 `unknown` 接收，再由 Zod schema 解析；Store 只保存可序列化领域状态。`AbortController`、ReadableStream reader、定时器和 vis-network 实例由 controller 或 Vue 生命周期持有，不放入 Pinia。
