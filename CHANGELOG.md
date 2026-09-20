@@ -1518,3 +1518,8 @@
 - 【修复：Store 工厂半构造实例启动日志】
   - 【Store 装配】：`build_async_postgres_store` 改为按官方签名直接 `AsyncPostgresStore(conn=pool)`，不再用 `pool` 关键字试错；试错会让官方 `__init__` 绑定失败并留下 `_task` 未赋值的半构造实例，回收时 `__del__` 抛 `AttributeError`，在清理 worker 启动日志里打印一次。
   - 【测试】：`tests/integration/agent/test_deep_agent_checkpoint.py` 新增用例，断言 Store 只按 `conn` 构造一次。
+- 【报告来源：RAG 知识库来源接入】
+  - 【来源装配】：报告来源装配同时接受 State 中的 pydantic 证据对象与等价字典，RAG 与 Web 证据不再因类型不匹配被静默丢弃；来源类别改由证据通道显式给出，知识库来源即使带可点击地址也保持 `knowledge_base`，不再按“是否存在 URL”推断。
+  - 【来源身份】：知识库来源的展示名由 release manifest 的 `document_id → relative_path` 解析，解析 active release 时随 `RagRuntimeConfig.document_names` 一并投影，不新增文件读取；manifest 未覆盖时回退到检索元数据的 title/source_name，`asset_uri` 不再充当 `source_url`，避免把内部资源路径渲染成点不开的相对链接。
+  - 【测试补充】：`tests/unit/agent/test_report_document.py` 覆盖证据对象与字典两种形态产出一致、知识库来源带地址仍为 knowledge_base、无法归一化的载荷被安全跳过；`tests/test_rag_service_and_tool.py` 覆盖 manifest 展示名解析、`asset_uri` 不进入 `source_url`，以及 manifest 未覆盖时的回退。
+  - 【文档】：`Document/architecture/agent-runtime.md` 记录知识库来源展示名的解析来源与来源类别显式规则。
