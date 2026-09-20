@@ -123,6 +123,8 @@ export interface ChatMessage {
   analysisJobInputId?: number
   references?: Reference[]
   thinkingAfter?: ExecutionPhase
+  /** 本页实时执行到一半时被追问固定下来的执行记录；只存在于内存，不来自接口。 */
+  frozenThinking?: ThinkingProjection
 }
 
 export interface SessionSummary {
@@ -222,6 +224,8 @@ export type PublicEvent = PublicEventBase
 export interface JobRecord {
   jobId: string
   sessionId: string
+  /** 运行态记录当前代表的分析输入；null 表示还没有对应的历史阶段。 */
+  phaseInputId: number | null
   backendStatus: BackendJobStatus
   uiState: JobUiState
   connection: JobConnectionState

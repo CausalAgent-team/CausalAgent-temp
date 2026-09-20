@@ -43,6 +43,8 @@ JobController 为每个 Job 管理订阅 generation，切换 Session、取消、
 
 公开决策由两类事件表达。`decision_delta` 只携带同一 `stream_id` 的批次增量和 `decision_kind`，页面按 `decision_kind` 显示`算法决策：`、`检索决策：`或`最终决策：`前缀，并按码点逐字推进；完整 `decision` 到达时只结束该决策流，不会重复插入文本。同一工具的 `tool_call_start`/`tool_call_result` 在该决策的逐字展示追平之前只能暂存，追平后按原顺序补在决策文本后面；如果缺少完整 `decision` 结束事件，工具结果会强制放行，任务进入终态时同样放行所有未结束的决策，不允许永久挂起。历史回放只有完整 `decision`，因此直接显示带前缀的完整文本。
 
+执行记录只挂在发起它的那条用户消息下面。历史阶段由 `thinking_after` 静态投影；答案已经作为独立消息存在时不再复用运行态记录，答案消息本身也不显示执行记录，只有本页新发送的提问消息才直接消费运行态记录。加载会话时只为仍在执行的 Job 建立运行态记录，`JobRecord.phaseInputId` 记录它代表的分析输入，同一 Job 更早的输入继续按历史阶段展示，避免一份记录在两条消息下重复出现。追问恢复会把上一阶段的执行记录固定到发起它的用户消息上（`ChatMessage.frozenThinking`），运行态记录从空投影和原游标继续。
+
 聊天草稿和公开决策共用同一套展示节奏：40 字/秒、25ms 步进推进展示游标，完整缓冲区始终以服务端内容为准，展示速度不影响工具执行。`final_result` 到达时如果已有文字草稿，终态文本校正到同一草稿；没有草稿或结果不是文字时才新增一条结果消息。`prefers-reduced-motion` 和所有终态直接展示完整文本，暂停等待输入时展示继续推进。
 
 聊天区滚动按 80px 阈值跟随最新内容：用户在阈值外主动上滑后停止自动跟随，回到底部后恢复；发送、切换或创建会话、新增消息和展示推进都会在跟随状态下滚动到最新内容。逐字推进、定时器和滚动容器由组件或 runtime controller 持有，不进入 Pinia。
@@ -51,7 +53,7 @@ JobController 为每个 Job 管理订阅 generation，切换 Session、取消、
 
 报告终态由 `type=report`、`render_mode=structured` 和 `document` 组成，`MessageBody.vue` 把它交给 `ReportRenderer.vue`；报告块的 HTML 不在 `MessageBody.vue` 里拼接。渲染器按块类型分发到 `ReportSection.vue`、`MarkdownBlock.vue`、`ChartBlock.vue` 和 `CausalGraphBlock.vue`：章节递归渲染子块，Markdown 块继续调用 `renderers/markdown-adapter.ts`，因此列表、标题、表格、引用、代码块和链接与普通聊天共用同一套解析。报告文档在渲染前由 `renderers/report-document.ts` 用 Zod 防御性解析一次：未知块类型降级成占位块，缺失或非法的图表、因果图资源引用降级成受控提示，顶层载荷不合法时显示报告不可用提示，都不能让整页崩溃。
 
-图表只读取经过校验的资源数据，使用 SVG 和 CSS 绘制直方图、分类柱状图和相关性热力图，第一阶段不引入第三方图表库，也不支持缩放、拖拽和导出。因果图只接受业务模型，由 `projectCausalGraphForVis()` 投影成 vis-network 载荷；`CausalGraph.vue` 支持 `view` 和 `select` 两种模式，数据变化时原地更新 `setData`，卸载时销毁实例，`select` 模式下向上抛出 `selectNode`/`selectEdge`。图形库仍然动态加载，初始入口不静态包含 vis-network。报告的颜色、间距、标题层级、表格和移动端布局由 `.report-document` 上的 CSS 变量与各组件作用域样式控制，LLM 不返回类名或样式。
+图表只读取经过校验的资源数据，使用 SVG 和 CSS 绘制直方图、分类柱状图和相关性热力图，第一阶段不引入第三方图表库，也不支持缩放、拖拽和导出。因果图只接受业务模型，由 `projectCausalGraphForVis()` 投影成 vis-network 载荷；`CausalGraph.vue` 支持 `view` 和 `select` 两种模式，数据变化时原地更新 `setData`，卸载时销毁实例，`select` 模式下向上抛出 `selectNode`/`selectEdge`。图形库仍然动态加载，初始入口不静态包含 vis-network。报告正文与普通聊天和追问消息共用同一条消息盒子，`.report-document` 只保留块间距与文字颜色，不再自带底色、边框和内边距；图表和因果图块仍各自使用白色卡片。报告的颜色、间距、标题层级、表格和移动端布局由 `.report-document` 上的 CSS 变量与各组件作用域样式控制，LLM 不返回类名或样式。
 
 ## 开发与构建
 

@@ -1510,3 +1510,8 @@
   - 【幂等写入】：Session 默认指针的写入不再用 MySQL `rowcount` 判断越权。当指针本来就指向目标上下文时 `rowcount` 为 0，旧实现把这种正常情况误判成「会话不存在或不属于当前用户」，导致切换或重新分析在 `context_switch` 节点里抛错、降级，并最终让整个 Job 失败；归属校验保留在 `FOR UPDATE` 锁定 Session 与上下文的读取里，同时去掉重复的 `rollback`，让回滚归属唯一。
   - 【意图输入上限】：`agent` 节点的历史渲染限制单条消息 400 字符、整体 2000 字符并优先保留最近的对话，避免上一轮的长报告或长解释整段重复进入意图判断提示词。
   - 【测试补充】：新增分析上下文服务的事务语义用例（幂等写入不算越权、跨用户与跨会话上下文被拒绝、旧 lease 被 fencing）和意图历史长度上限用例。
+- 【普通用户前端：报告底色与执行记录重复】
+  - 【报告消息盒子】：报告正文不再自带浅灰色底色、边框和内边距，与普通聊天和追问消息共用同一条消息盒子；`.report-document` 只保留块间距和文字颜色，旧版 Markdown 报告的 `#f5f5f5` 底色与 16/20 内边距一并移除，图表和因果图块继续使用各自的白色卡片。
+  - 【执行记录归属】：`MessageTimeline` 不再让所有引用同一 Job 的消息都消费同一条运行态记录：历史阶段由 `thinking_after` 静态投影；答案已经作为独立消息存进历史时不再复用运行态记录，答案消息本身也不显示执行记录；只有本页新发送的提问消息才直接消费运行态记录。加载会话时只为仍在执行的 Job 建立运行态记录，`JobRecord.phaseInputId` 记录它代表的分析输入，同一 Job 更早的输入保持静态展示，重新加载后不再重复出现任务执行记录。
+  - 【追问恢复】：开始新一轮追问时把上一阶段的执行记录固定到发起它的用户消息上（`ChatMessage.frozenThinking`），运行态记录从空投影和原游标继续，同一份记录不再同时出现在两条消息下面。
+  - 【测试与文档】：新增 `chat-frontend/tests/unit/phase-ownership.spec.ts` 与 `chat-frontend/tests/e2e-mock/session-history.spec.ts`，并扩充 `chat-frontend/tests/components/message-timeline.spec.ts`，覆盖阶段归属、追问固定、刷新后仍在执行、等待补充输入等场景；`Document/development/chat-frontend.md` 补充执行记录归属和报告消息盒子事实。
