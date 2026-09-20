@@ -18,6 +18,7 @@ from Agent.causal_agent.graph_utils import bind_subgraph_node
 from Agent.causal_agent.state import CausalAgentState
 from Agent.deep_agent.context import AgentRunContext, TrustedJobIdentity
 from Agent.deep_agent.finalization import StructuredResponseError
+from Agent.deep_agent.prompts import MANDATORY_WEB_INSTRUCTION
 from Agent.deep_agent_tools.identity import (
     build_deep_agent_execution_scope,
     build_deep_agent_run_id,
@@ -140,12 +141,17 @@ def test_parent_node_uses_stable_child_thread_id_and_minimal_projection() -> Non
         worker_id="worker-1",
         input_identity="input-sha",
     )
-    context = AgentRunContext(execution_guard=None, trusted_identity=identity)
+    context = AgentRunContext(
+        execution_guard=None,
+        trusted_identity=identity,
+        web_search_enabled=True,
+    )
     state = {
         "job_id": identity.job_id,
         "messages": [],
         "analysis_parameters": {},
         "file_summary": {},
+        "route_decision": "fold",
     }
 
     update = asyncio.run(
@@ -164,6 +170,9 @@ def test_parent_node_uses_stable_child_thread_id_and_minimal_projection() -> Non
     assert update["deep_agent_status"] == "completed"
     assert calls[0][1]["configurable"]["thread_id"] == expected
     assert "execution_guard" not in calls[0][0]
+    assert MANDATORY_WEB_INSTRUCTION in [
+        message["content"] for message in calls[0][0]["messages"]
+    ]
 
 
 def test_parent_node_reads_matching_child_checkpoint_instead_of_projecting_messages() -> None:

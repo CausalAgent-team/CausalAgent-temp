@@ -1,6 +1,7 @@
 """P2-U ToolStrategy 终态和 finalization retry 预算测试。"""
 
 import asyncio
+from datetime import datetime, timezone
 import pytest
 
 from Agent.deep_agent import AgentRunContext, FinalizationGate, TrustedJobIdentity
@@ -27,6 +28,8 @@ from Agent.causal_agent.graph import (
     _legacy_web_evidence_result,
 )
 from Agent.deep_agent_tools.models import EvidenceResult, WebEvidenceResult
+from Agent.deep_agent_tools.identity import build_invocation_id
+from Agent.deep_agent_tools.models import ActionAttempt, InvocationRecord
 
 
 def _decision():
@@ -118,6 +121,256 @@ def _algorithm_execution(*, failure: bool = False):
     result = next(iter(command.update["algorithm_results"].values()))
     ledger = next(iter(command.update["action_ledger"].values()))
     return identity, registry, result, ledger
+
+
+def _evidence_only_decision():
+    return validate_structured_response(
+        {
+            **_decision(),
+            "outcome": "evidence_only",
+            "primary_result_ref": None,
+            "result_assessments": [],
+        }
+    )
+
+
+def _rag_ledger(identity):
+    return _evidence_ledger(identity, tool_name="rag_evidence_search")
+
+
+def _web_ledger(identity, *, final_status="succeeded", attempt_status="succeeded"):
+    return _evidence_ledger(
+        identity,
+        tool_name="web_evidence_search",
+        final_status=final_status,
+        attempt_status=attempt_status,
+    )
+
+
+def _evidence_ledger(
+    identity,
+    *,
+    tool_name,
+    final_status="succeeded",
+    attempt_status="succeeded",
+):
+    response_identity = f"{tool_name}-response-1"
+    provider_call_id = f"{tool_name}-call-1"
+    invocation_id = build_invocation_id(
+        job_id=identity.job_id,
+        response_identity=response_identity,
+        provider_call_id=provider_call_id,
+    )
+    started_at = datetime.now(timezone.utc)
+    record = InvocationRecord(
+        invocation_id=invocation_id,
+        response_identity=response_identity,
+        response_identity_source="message_execution_id",
+        provider_call_id=provider_call_id,
+        tool_name=tool_name,
+        final_status=final_status,
+        job_id=str(identity.job_id),
+        attempt_count=identity.attempt_count,
+        lease_epoch=identity.lease_epoch,
+        worker_id=identity.worker_id,
+        input_identity=identity.input_identity,
+        attempts={
+            0: ActionAttempt(
+                retry_ordinal=0,
+                revision=2,
+                status=attempt_status,
+                started_at=started_at,
+                finished_at=started_at,
+            )
+        },
+    )
+    return record
+
+
+def test_finalization_gate_requires_algorithm_result_on_analysis_route() -> None:
+    """分析路由下不允许一个算法都没跑就交证据型结论。"""
+
+    identity, registry, _result, _ledger = _algorithm_execution()
+    decision = _evidence_only_decision()
+
+    with pytest.raises(StructuredResponseError, match="requires at least one algorithm result"):
+        FinalizationGate(registry=registry).validate(
+            decision=decision,
+            algorithm_results={},
+            action_ledger={},
+            trusted_identity=identity,
+            route_decision="fold",
+        )
+
+    accepted = FinalizationGate(registry=registry).validate(
+        decision=decision,
+        algorithm_results={},
+        action_ledger={},
+        trusted_identity=identity,
+        route_decision="inquiry_answer",
+    )
+    assert accepted.outcome == "evidence_only"
+
+
+def test_finalization_gate_allows_discarded_result_on_analysis_route() -> None:
+    """算法确实跑过（哪怕结果被丢弃）时不触发“必须调用算法”规则。"""
+
+    identity, registry, result, ledger = _algorithm_execution()
+    rag_ledger = _rag_ledger(identity)
+    decision = validate_structured_response(
+        {
+            **_decision(),
+            "outcome": "evidence_only",
+            "primary_result_ref": None,
+            "result_assessments": [
+                {
+                    "result_ref": result.result_ref,
+                    "disposition": "discarded",
+                    "rationale": "该结果不作为结论依据。",
+                }
+            ],
+        }
+    )
+
+    accepted = FinalizationGate(registry=registry).validate(
+        decision=decision,
+        algorithm_results={result.result_ref: result},
+        action_ledger={
+            ledger.invocation_id: ledger,
+            rag_ledger.invocation_id: rag_ledger,
+        },
+        trusted_identity=identity,
+        route_decision="fold",
+    )
+    assert accepted.outcome == "evidence_only"
+
+
+def test_finalization_gate_requires_rag_retrieval_on_analysis_route() -> None:
+    identity, registry, result, ledger = _algorithm_execution()
+    decision = validate_structured_response(
+        {
+            **_decision(),
+            "primary_result_ref": result.result_ref,
+            "result_assessments": [
+                {
+                    "result_ref": result.result_ref,
+                    "disposition": "primary",
+                    "rationale": "the validated result is selected",
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(
+        StructuredResponseError,
+        match="requires at least one rag evidence invocation",
+    ):
+        FinalizationGate(registry=registry).validate(
+            decision=decision,
+            algorithm_results={result.result_ref: result},
+            action_ledger={ledger.invocation_id: ledger},
+            trusted_identity=identity,
+            route_decision="fold",
+        )
+
+    rag_ledger = _rag_ledger(identity)
+    accepted = FinalizationGate(registry=registry).validate(
+        decision=decision,
+        algorithm_results={result.result_ref: result},
+        action_ledger={
+            ledger.invocation_id: ledger,
+            rag_ledger.invocation_id: rag_ledger,
+        },
+        trusted_identity=identity,
+        route_decision="fold",
+    )
+    assert accepted.primary_result_ref == result.result_ref
+
+
+def test_finalization_gate_rejects_nonterminal_evidence_ledger() -> None:
+    identity, registry, result, ledger = _algorithm_execution()
+    rag_ledger = _rag_ledger(identity)
+    web_ledger = _web_ledger(
+        identity,
+        final_status="succeeded",
+        attempt_status="running",
+    )
+    decision = validate_structured_response(
+        {
+            **_decision(),
+            "primary_result_ref": result.result_ref,
+            "result_assessments": [
+                {
+                    "result_ref": result.result_ref,
+                    "disposition": "primary",
+                    "rationale": "the validated result is selected",
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(
+        StructuredResponseError,
+        match="evidence action ledger terminal status mismatch",
+    ):
+        FinalizationGate(registry=registry).validate(
+            decision=decision,
+            algorithm_results={result.result_ref: result},
+            action_ledger={
+                ledger.invocation_id: ledger,
+                rag_ledger.invocation_id: rag_ledger,
+                web_ledger.invocation_id: web_ledger,
+            },
+            trusted_identity=identity,
+            route_decision="fold",
+            web_search_enabled=True,
+        )
+
+
+def test_finalization_gate_requires_enabled_web_search_on_analysis_route() -> None:
+    identity, registry, result, ledger = _algorithm_execution()
+    rag_ledger = _rag_ledger(identity)
+    decision = validate_structured_response(
+        {
+            **_decision(),
+            "primary_result_ref": result.result_ref,
+            "result_assessments": [
+                {
+                    "result_ref": result.result_ref,
+                    "disposition": "primary",
+                    "rationale": "the validated result is selected",
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(
+        StructuredResponseError,
+        match="requires at least one web evidence invocation",
+    ):
+        FinalizationGate(registry=registry).validate(
+            decision=decision,
+            algorithm_results={result.result_ref: result},
+            action_ledger={ledger.invocation_id: ledger, rag_ledger.invocation_id: rag_ledger},
+            trusted_identity=identity,
+            route_decision="fold",
+            web_search_enabled=True,
+        )
+
+    web_ledger = _web_ledger(identity)
+    accepted = FinalizationGate(registry=registry).validate(
+        decision=decision,
+        algorithm_results={result.result_ref: result},
+        action_ledger={
+            ledger.invocation_id: ledger,
+            rag_ledger.invocation_id: rag_ledger,
+            web_ledger.invocation_id: web_ledger,
+        },
+        trusted_identity=identity,
+        route_decision="fold",
+        web_search_enabled=True,
+    )
+    assert accepted.primary_result_ref == result.result_ref
 
 
 def test_finalization_gate_accepts_only_ledger_backed_primary_result() -> None:

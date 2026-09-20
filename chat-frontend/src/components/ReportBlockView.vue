@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import type { ReportBlockView as ReportBlockViewModel } from '../renderers/report-document'
+import { reportBlockAnchor } from '../renderers/report-document'
 import CausalGraphBlock from './CausalGraphBlock.vue'
 import ChartBlock from './ChartBlock.vue'
 import MarkdownBlock from './MarkdownBlock.vue'
 import ReportSection from './ReportSection.vue'
 
-defineProps<{ block: ReportBlockViewModel; evidence: Map<string, string> }>()
+defineProps<{ block: ReportBlockViewModel }>()
 </script>
 
 <template>
@@ -14,15 +15,11 @@ defineProps<{ block: ReportBlockViewModel; evidence: Map<string, string> }>()
       v-for="child in block.children"
       :key="child.id"
       :block="child"
-      :evidence="evidence"
     />
   </ReportSection>
-  <MarkdownBlock
-    v-else-if="block.kind === 'markdown'"
-    :content="block.content"
-    :evidence-refs="block.evidenceRefs"
-    :evidence="evidence"
-  />
+  <div v-else-if="block.kind === 'markdown'" :id="reportBlockAnchor(block.id)" class="report-block">
+    <MarkdownBlock :content="block.content" />
+  </div>
   <ChartBlock
     v-else-if="block.kind === 'chart'"
     :title="block.title"

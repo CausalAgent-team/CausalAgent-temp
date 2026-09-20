@@ -645,7 +645,11 @@ async def _deep_agent_parent_node(
             child_input = None
     else:
         child_input = to_deep_agent_input(
-            {**state, "deep_agent_run_id": child_run_id},
+            {
+                **state,
+                "deep_agent_run_id": child_run_id,
+                "web_search_enabled": getattr(context, "web_search_enabled", None),
+            },
             reset_execution_artifacts=True,
         )
     if isinstance(child_input, Mapping) and current_scope:
@@ -830,6 +834,8 @@ async def _finalization_gate_node(
             trusted_identity=identity,
             rag_evidence=state.get("deep_agent_rag_evidence"),
             web_evidence=state.get("deep_agent_web_evidence"),
+            route_decision=state.get("route_decision"),
+            web_search_enabled=getattr(context, "web_search_enabled", None),
         )
     except StructuredResponseError as exc:
         retry_count = int(state.get("finalization_retry_count") or 0)

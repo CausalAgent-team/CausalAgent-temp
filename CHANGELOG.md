@@ -1523,3 +1523,20 @@
   - 【来源身份】：知识库来源的展示名由 release manifest 的 `document_id → relative_path` 解析，解析 active release 时随 `RagRuntimeConfig.document_names` 一并投影，不新增文件读取；manifest 未覆盖时回退到检索元数据的 title/source_name，`asset_uri` 不再充当 `source_url`，避免把内部资源路径渲染成点不开的相对链接。
   - 【测试补充】：`tests/unit/agent/test_report_document.py` 覆盖证据对象与字典两种形态产出一致、知识库来源带地址仍为 knowledge_base、无法归一化的载荷被安全跳过；`tests/test_rag_service_and_tool.py` 覆盖 manifest 展示名解析、`asset_uri` 不进入 `source_url`，以及 manifest 未覆盖时的回退。
   - 【文档】：`Document/architecture/agent-runtime.md` 记录知识库来源展示名的解析来源与来源类别显式规则。
+- 【分析运行强制算法结果】
+  - 【按运行注入约束】：进入 Deep Agent 的运行都是分析运行（`agent` 的 `start_analysis`/`rerun_analysis` 直接路由到 `fold`，`context_switch` 也会把 `route_decision` 改写成后续节点名），因此父图投影时按运行追加一条“必须至少调用一个算法工具并在最终决策中引用算法结果”的系统约束；该约束不写进 worker 级系统提示词，同一次部署里不同 Job 的要求互不干扰。
+  - 【Gate 新规则】：`FinalizationGate` 在分析路由下新增 `analysis_route_without_algorithm_result`：没有任何算法结果时不得提交 `evidence_only` 或 `no_valid_algorithm`，按既有的一次修正预算要求模型补做；算法确实返回未就绪或失败时会留下算法结果，不受该规则影响。
+  - 【测试补充】：`tests/unit/agent/test_deep_agent_state.py` 覆盖分析路由注入与非分析路由不注入；`tests/unit/agent/test_final_analysis_decision.py` 覆盖分析路由缺少算法结果被拒、非分析路由放行，以及算法结果被丢弃时放行。
+- 【文档】：`Document/architecture/agent-runtime.md` 记录分析运行的按运行约束与新的 Gate 规则。
+- 【分析运行强制 RAG 检索】
+  - 【按运行注入约束】：进入因果分析的 Deep Agent 必须至少调用一次 `rag_evidence_search`；有证据、无相关证据或知识库不可用都保留真实 terminal 状态后再提交最终决策。
+  - 【Gate 校验】：`FinalizationGate` 新增 `analysis_route_without_rag_invocation`，没有当前 Job attempt 的 RAG 调用记录时拒绝终态并交回一次受控修正。
+  - 【测试与文档】：补充 Deep Agent State、FinalizationGate 的强制检索合同测试，并同步 `Document/architecture/agent-runtime.md`。
+- 【分析运行强制联网搜索】
+  - 【按开关注入约束】：Job 的 `web_search_enabled=true` 时，Deep Agent 按运行收到“至少调用一次 `web_evidence_search`”的系统约束；关闭时不注入该要求，工具仍由 runtime 开关阻断真实触网。
+  - 【Gate 校验】：`FinalizationGate` 新增 `analysis_route_without_web_invocation`，开启联网搜索但没有当前 Job attempt 的 Web terminal 调用时拒绝终态并交回一次受控修正；无结果或暂不可用仍保留真实 terminal 状态。
+  - 【测试与文档】：补充 Web 开关的 State 投影、父图上下文传递和 Gate 合同测试，并同步 `Document/architecture/agent-runtime.md`。
+
+---
+2026.9.21
+- 【报告来源正文定位】：报告装配时把正文中出现且属于当前证据清单的 `ev_...` ID 回填到 `markdown.evidence_refs`，前端兼容历史报告中的同类漏填数据，恢复来源证据到正文块的“定位正文”按钮和高亮跳转。

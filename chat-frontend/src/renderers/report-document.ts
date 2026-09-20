@@ -260,3 +260,69 @@ export function parseReportDocument(payload: unknown): ReportDocumentView | null
     evidenceRefs: normalizeEvidence(document.evidence_refs),
   }
 }
+
+/**
+ * 去掉检索文本的“类型/标题”前缀，得到可读的证据片段。
+ *
+ * 报告里的描述已被后端折叠成单行空格分隔，标题本身可能含空格，
+ * 因此只在标题与来源展示名一致时才按长度裁剪，否则保留标题文本。
+ */
+export function evidenceSnippet(description: string, sourceTitle = '', limit = 160): string {
+  let body = description.replace(/\s+/g, ' ').trim()
+  const typePrefix = /^类型：\S+\s*/.exec(body)
+  if (typePrefix) {
+    body = body.slice(typePrefix[0].length)
+    const titlePrefix = /^标题：/.exec(body)
+    if (titlePrefix) {
+      const afterTitle = body.slice(titlePrefix[0].length)
+      const knownTitle = sourceTitle.trim()
+      body = knownTitle && afterTitle.startsWith(knownTitle)
+        ? afterTitle.slice(knownTitle.length)
+        : afterTitle
+    }
+  }
+  const cleaned = body.trim()
+  return cleaned.length > limit ? cleaned.slice(0, limit) + '…' : cleaned
+}
+
+/** 从证据定位串解析物理页码；没有页码时返回 null。 */
+export function evidencePage(locator: Record<string, unknown> | undefined | null): string | null {
+  const raw = locator?.locator
+  if (typeof raw !== 'string') return null
+  const matched = /#page=(\d+)/.exec(raw)
+  return matched?.[1] ?? null
+}
+
+/** 证据 ID → 引用它的报告块 ID，按报告顺序排列，供来源导航跳转。 */
+export function collectEvidenceUsage(
+  blocks: ReportBlockView[],
+  evidenceIds: ReadonlySet<string>,
+): Map<string, string[]> {
+  const usage = new Map<string, string[]>()
+  const visit = (items: ReportBlockView[]): void => {
+    for (const block of items) {
+      if (block.kind === 'section') {
+        visit(block.children)
+        continue
+      }
+      if (block.kind !== 'markdown') continue
+      const textualRefs = block.content.match(/\bev_[A-Za-z0-9_-]+\b/g) ?? []
+      const citedRefs = new Set([
+        ...block.evidenceRefs,
+        ...textualRefs.filter((evidenceId) => evidenceIds.has(evidenceId)),
+      ])
+      for (const evidenceId of citedRefs) {
+        const existing = usage.get(evidenceId)
+        if (!existing) usage.set(evidenceId, [block.id])
+        else if (!existing.includes(block.id)) existing.push(block.id)
+      }
+    }
+  }
+  visit(blocks)
+  return usage
+}
+
+/** 报告块在 DOM 中的锚点 ID。 */
+export function reportBlockAnchor(blockId: string): string {
+  return 'report-block-' + blockId
+}

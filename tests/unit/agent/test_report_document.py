@@ -451,6 +451,22 @@ def test_report_node_injects_assets_and_evidence_without_sending_data_points() -
     assert "value_counts" not in prompt
 
 
+def test_build_report_document_recovers_textual_evidence_ids_for_navigation() -> None:
+    document = build_report_document(
+        _draft([
+            {
+                "id": "markdown_result",
+                "type": "markdown",
+                "content": "结论正文（证据 ev_1）",
+            }
+        ]),
+        sources=[_source()],
+        evidence_refs=[_evidence()],
+    )
+
+    assert document.blocks[0].evidence_refs == ["ev_1"]
+
+
 def test_report_metadata_prompt_is_compact_json() -> None:
     metadata = nodes._report_metadata_for_prompt({
         "n_rows": 15,
