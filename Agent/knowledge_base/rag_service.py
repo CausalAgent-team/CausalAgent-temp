@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from typing import Any, Callable, Dict, List, Protocol, Union
+from typing import Any, Callable, Dict, List, Mapping, Protocol, Union
 
 from Agent.knowledge_base.embedding_runtime import EmbeddingApiError
 from Agent.knowledge_base.rag_runtime import RagRuntime
@@ -102,8 +102,19 @@ class RagService:
             "diagnostics": {**identity, "reason_code": reason_code},
         }
 
-    @staticmethod
+    def _document_display_name(self, metadata: Mapping[str, Any]) -> str | None:
+        """用 release manifest 的 document_id → 相对路径解析展示名，缺失时回退检索元数据。"""
+
+        document_names = getattr(self._runtime.config, "document_names", None) or {}
+        return (
+            document_names.get(str(metadata.get("document_id") or ""))
+            or metadata.get("title")
+            or metadata.get("source_name")
+            or None
+        )
+
     def _build_evidence_result(
+        self,
         question: str,
         identity: Dict[str, Any],
         config: Any,
@@ -116,15 +127,16 @@ class RagService:
         for payload in payloads:
             metadata = payload.get("metadata") or {}
             evidence_id = str(payload.get("evidence_id") or len(evidence) + 1)
+            display_name = self._document_display_name(metadata)
             evidence.append(
                 {
                     "evidence_id": evidence_id,
                     "evidence_ref": f"rag:{release_id}:{evidence_id}",
                     "snippet": str(payload.get("content") or ""),
-                    "source_title": metadata.get("title") or metadata.get("source_name"),
-                    "source_url": metadata.get("source_url") or metadata.get("asset_uri"),
+                    "source_title": display_name,
+                    "source_url": metadata.get("source_url"),
                     "locator": (
-                        f"{metadata.get('source_name', '')}"
+                        f"{display_name or ''}"
                         f"#page={metadata.get('page', '')}"
                         f"#chunk={metadata.get('chunk_id', '')}"
                     ).strip("#"),
