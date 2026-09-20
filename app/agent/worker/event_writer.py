@@ -18,6 +18,7 @@ async def _complete_terminal_event(
     job: dict[str, Any],
     worker_id: str,
     payload: dict[str, Any],
+    context_update: dict[str, Any] | None = None,
 ) -> bool:
     """在一个事务内完成终态事件、聊天保存和 job 成功更新。"""
     event_type = payload.get("type")
@@ -42,6 +43,7 @@ async def _complete_terminal_event(
         result,
         lease_epoch=int(job.get("lease_epoch") or 0),
         question_id=payload.get("question_id"),
+        context_update=context_update,
     )
 
 
@@ -136,10 +138,21 @@ class OrderedEventWriter:
             payload = {
                 key: value for key, value in payload.items() if key != "_event_key"
             }
+        # 上下文写回事实以内部字段传递：只在终态事务里使用，不落库、不出前端。
+        context_update = payload.get("_context_commit")
+        if "_context_commit" in payload:
+            payload = {
+                key: value for key, value in payload.items() if key != "_context_commit"
+            }
         event_type = payload.get("type", "message")
         attempt_count = int(self.job["attempt_count"])
         if event_type in {"final_result", "interrupt"}:
-            accepted = await _complete_terminal_event(self.job, self.worker_id, payload)
+            accepted = await _complete_terminal_event(
+                self.job,
+                self.worker_id,
+                payload,
+                context_update,
+            )
             if not accepted:
                 raise JobExecutionRevoked("terminal event fenced")
             self.terminal_seen = True

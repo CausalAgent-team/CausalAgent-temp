@@ -205,6 +205,20 @@ def build_graph(
             timeout_ms=90_000,
         ),
     )
+    workflow.add_node(
+        "context_switch",
+        bind_subgraph_node(
+            nodes.context_switch_node,
+            event_node_name="context_switch",
+        ),
+        retry_policy=short_retry(),
+        timeout=timeout(run_timeout=60, idle_timeout=30),
+        error_handler=guarded_error_handler(
+            route_to_normal_chat,
+            event_node_name="context_switch",
+            timeout_ms=60_000,
+        ),
+    )
 
     workflow.set_entry_point("agent")#节点入口
     workflow.add_conditional_edges(#节点的边
@@ -214,8 +228,24 @@ def build_graph(
             "fold": "fold",#"路由函数返回值": "要跳转到的节点名"
             "normal_chat": "normal_chat",
             "postprocess": "postprocess",
-            "inquiry_answer": "inquiry_answer"
+            "report": "report",
+            "inquiry_answer": "inquiry_answer",
+            "context_switch": "context_switch",
         }
+    )
+    workflow.add_conditional_edges(
+        "context_switch",
+        guarded_router(edges.decision_router),
+        {
+            "fold": "fold",
+            "normal_chat": "normal_chat",
+            "report": "report",
+            "inquiry_answer": "inquiry_answer",
+            # context_switch 正常只写入 fold/report/inquiry_answer/normal_chat；
+            # 这里为异常状态保留一个确定性的终点，避免自环。
+            "context_switch": "normal_chat",
+            "postprocess": "report",
+        },
     )
     workflow.add_conditional_edges(
         "fold",
@@ -577,7 +607,7 @@ async def _deep_agent_parent_node(
             job_id=trusted_identity.job_id,
             attempt_count=int(trusted_identity.attempt_count),
             lease_epoch=int(trusted_identity.lease_epoch),
-            input_identity=trusted_identity.input_identity,
+            input_identity=trusted_identity.current_input_identity(),
         )
 
     # 子图 checkpoint 是内部 messages/官方 State 的真相源。父图重跑这个
@@ -1032,6 +1062,20 @@ def build_deep_agent_parent_graph(
             timeout_ms=90_000,
         ),
     )
+    workflow.add_node(
+        "context_switch",
+        bind_subgraph_node(
+            nodes.context_switch_node,
+            event_node_name="context_switch",
+        ),
+        retry_policy=short_retry(),
+        timeout=timeout(run_timeout=60, idle_timeout=30),
+        error_handler=guarded_error_handler(
+            route_to_normal_chat,
+            event_node_name="context_switch",
+            timeout_ms=60_000,
+        ),
+    )
 
     workflow.set_entry_point("agent")
     workflow.add_conditional_edges(
@@ -1041,7 +1085,21 @@ def build_deep_agent_parent_graph(
             "fold": "fold",
             "normal_chat": "normal_chat",
             "postprocess": "report",
+            "report": "report",
             "inquiry_answer": "inquiry_answer",
+            "context_switch": "context_switch",
+        },
+    )
+    workflow.add_conditional_edges(
+        "context_switch",
+        guarded_router(edges.decision_router),
+        {
+            "fold": "fold",
+            "normal_chat": "normal_chat",
+            "report": "report",
+            "inquiry_answer": "inquiry_answer",
+            "context_switch": "normal_chat",
+            "postprocess": "report",
         },
     )
     workflow.add_conditional_edges(

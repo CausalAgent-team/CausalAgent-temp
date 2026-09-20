@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { api } from '../api/client'
 import type { ChatMessageResponse, ExecutionPhaseResponse } from '../api/sessions.schemas'
-import type { ChatMessage, ExecutionPhase, MessageText, SessionSummary, StructuredMessage } from '../types/domain'
+import type { ChatMessage, ExecutionPhase, MessageText, SessionSummary, StructuredMessage, ThinkingProjection } from '../types/domain'
 
 interface SessionsState {
   items: SessionSummary[]
@@ -117,6 +117,16 @@ export const useSessionsStore = defineStore('sessions', {
         text,
         analysisJobId: jobId,
       })
+    },
+    /** 追问恢复后，上一阶段的执行记录固定在它所属的用户消息上，不再随运行态记录继续变化。 */
+    freezeThinking(jobId: string, thinking: ThinkingProjection): void {
+      for (let index = this.messages.length - 1; index >= 0; index -= 1) {
+        const message: ChatMessage | undefined = this.messages[index]
+        if (!message || message.sender !== 'user' || message.analysisJobId !== jobId) continue
+        if (message.frozenThinking) continue
+        this.messages[index] = { ...message, frozenThinking: thinking }
+        return
+      }
     },
     async rename(sessionId: string, title: string): Promise<void> {
       const response = await api.changeSession(sessionId, title)

@@ -6,7 +6,7 @@ from collections.abc import Mapping, Set
 from dataclasses import dataclass
 from typing import Any
 
-from Agent.deep_agent_tools.identity import build_invocation_id
+from Agent.deep_agent_tools.identity import build_invocation_id, current_input_identity
 from Agent.deep_agent_tools.models import (
     AlgorithmResult,
     FinalAnalysisDecision,
@@ -106,6 +106,14 @@ class FinalizationGate:
     def _identity_value(identity: Any, name: str) -> Any:
         value = getattr(identity, name, None)
         if value is None:
+            raise StructuredResponseError("trusted job identity is incomplete")
+        return value
+
+    @staticmethod
+    def _current_input_identity(identity: Any) -> str:
+        """读取当前有效的冻结输入摘要，兼容可刷新的 invocation 级引用。"""
+        value = current_input_identity(identity)
+        if not value:
             raise StructuredResponseError("trusted job identity is incomplete")
         return value
 
@@ -233,7 +241,7 @@ class FinalizationGate:
             raise StructuredResponseError("result attempt does not match the trusted Job")
         if provenance.lease_epoch != int(identity.lease_epoch):
             raise StructuredResponseError("result lease does not match the trusted Job")
-        if provenance.input_identity != identity.input_identity:
+        if provenance.input_identity != self._current_input_identity(identity):
             raise StructuredResponseError("result input identity does not match the Job")
         latest_attempt = max(
             record.attempts.values(),
@@ -284,7 +292,7 @@ class FinalizationGate:
         current_attempt = int(self._identity_value(trusted_identity, "attempt_count"))
         current_lease = int(self._identity_value(trusted_identity, "lease_epoch"))
         current_worker = str(self._identity_value(trusted_identity, "worker_id"))
-        current_input = str(self._identity_value(trusted_identity, "input_identity"))
+        current_input = self._current_input_identity(trusted_identity)
         current_ledger = self._current_ledger(ledger, job_id=job_id)
         current_ledger = {
             key: record

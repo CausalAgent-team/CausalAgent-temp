@@ -10,6 +10,31 @@ from pydantic import BaseModel
 
 SchemaT = TypeVar("SchemaT", bound=BaseModel)
 
+# 按异常类型把结构化输出失败归类为稳定代码；只使用类名，不读取异常正文。
+_CAUSE_CODE_BY_EXCEPTION = {
+    "validationerror": "schema_invalid",
+    "jsondecodeerror": "json_invalid",
+    "outputparserexception": "output_parser_error",
+    "lengthfinishreasonerror": "truncated",
+    "apitimeouterror": "timeout",
+    "timeouterror": "timeout",
+    "apiconnectionerror": "connection_error",
+    "connecterror": "connection_error",
+    "ratelimiterror": "rate_limited",
+    "badrequesterror": "request_rejected",
+    "internalservererror": "provider_error",
+}
+
+
+def classify_structured_output_cause(cause: BaseException) -> str:
+    """把结构化输出失败的底层异常归类为稳定代码。
+
+    只依据异常类名判断，既避免把模型输出、prompt 或供应商正文写进日志，又让
+    「模型没按要求返回结构化结果」和「网络/限流/上下文超限」可以区分。
+    """
+    name = type(cause).__name__.lower()
+    return _CAUSE_CODE_BY_EXCEPTION.get(name, "unknown")
+
 
 class StructuredOutputError(RuntimeError):
     """封装结构化输出调用或 Pydantic 校验失败，并保留可审计元数据。"""
@@ -18,6 +43,7 @@ class StructuredOutputError(RuntimeError):
         self.node_name = node_name
         self.schema_name = schema_name
         self.original_exception_type = type(cause).__name__
+        self.safe_cause_code = classify_structured_output_cause(cause)
         super().__init__(
             f"{node_name} 结构化输出失败: schema={schema_name}, "
             f"cause={self.original_exception_type}"

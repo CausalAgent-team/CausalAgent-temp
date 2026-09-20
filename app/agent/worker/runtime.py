@@ -14,7 +14,7 @@ from typing import Any
 from langchain_openai import ChatOpenAI
 
 from Agent.causal_agent.postgres_checkpointer import build_checkpointer
-from Agent.deep_agent.context import AgentRunContext, TrustedJobIdentity
+from Agent.deep_agent.context import AgentRunContext, FrozenInputRef, TrustedJobIdentity
 from Agent.deep_agent.graph import (
     DeepAgentGraphConfig,
     build_deep_agent,
@@ -113,6 +113,17 @@ class SlotRuntime:
             raise RuntimeError("slot process runtime is unavailable")
         job_id = str(job["job_id"])
         input_identity = str(job.get("input_file_hash") or f"job-input:{job_id}")
+        # 冻结输入引用在本 invocation 内可刷新：用户用自然语言切换分析上下文时，
+        # 服务端在同一事务里重写 Job 冻结快照，MCP 摘要与 provenance 校验随后
+        # 读取这里的新 hash，不需要重建整个 run context。
+        frozen_input = FrozenInputRef(
+            user_file_id=(
+                int(job["input_user_file_id"]) if job.get("input_user_file_id") else None
+            ),
+            object_id=int(job["input_object_id"]) if job.get("input_object_id") else None,
+            content_hash=input_identity,
+            filename=job.get("input_filename"),
+        )
         identity = TrustedJobIdentity(
             job_id=job_id,
             session_id=str(job["session_id"]),
@@ -122,6 +133,7 @@ class SlotRuntime:
             worker_id=worker_id,
             input_identity=input_identity,
             input_snapshot_digest=str(job.get("input_file_hash") or input_identity),
+            frozen_input=frozen_input,
         )
         return AgentRunContext(
             execution_guard=execution_guard,

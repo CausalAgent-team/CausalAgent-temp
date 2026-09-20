@@ -459,6 +459,7 @@ _events: dict[str, EventSpec] = {
         failure_kind=TOKEN,
         final_attempt=POSITIVE_COUNT,
         fallback=TOKEN,
+        cause_code=TOKEN,
     ),
     "job.postprocess.degraded": _spec(
         logging.WARNING,

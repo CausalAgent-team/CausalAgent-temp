@@ -23,7 +23,7 @@ from .models import (
     InvocationRecord,
     McpInvocationContext,
 )
-from .identity import build_invocation_id
+from .identity import build_invocation_id, current_input_identity
 from .registry import AlgorithmRegistry, RegistryEntry
 from .runtime_updates import (
     build_terminal_invocation,
@@ -105,7 +105,7 @@ class AlgorithmTool:
         dataset_csv = state.get("dataset_csv")
         return AdapterInput(
             data_profile=self._data_profile_from_state(state),
-            input_identity=identity.input_identity,
+            input_identity=current_input_identity(identity),
             dataset_csv=dataset_csv if isinstance(dataset_csv, str) else None,
             missing_values_present=bool(state.get("missing_values_present")),
             dataset_authority_available=True,
@@ -160,7 +160,7 @@ class AlgorithmTool:
             attempt_count=int(active_context.trusted_identity.attempt_count),
             lease_epoch=int(active_context.trusted_identity.lease_epoch),
             worker_id=active_context.trusted_identity.worker_id,
-            input_identity=active_context.trusted_identity.input_identity,
+            input_identity=current_input_identity(active_context.trusted_identity),
             attempts={
                 retry_ordinal: ActionAttempt(
                     retry_ordinal=retry_ordinal,
@@ -201,7 +201,7 @@ class AlgorithmTool:
                 state = {}
             active_input = AdapterInput(
                 data_profile=self._data_profile_from_state(state),
-                input_identity=active_context.trusted_identity.input_identity,
+                input_identity=current_input_identity(active_context.trusted_identity),
                 dataset_csv=(
                     state.get("dataset_csv")
                     if isinstance(state.get("dataset_csv"), str)
@@ -447,7 +447,7 @@ def build_algorithm_tools(
     adapter_input = None
     if runtime_context is not None and data_profile is not None:
         identity = input_identity or (
-            runtime_context.trusted_identity.input_identity
+            current_input_identity(runtime_context.trusted_identity)
             if runtime_context.trusted_identity is not None
             else "runtime-input"
         )

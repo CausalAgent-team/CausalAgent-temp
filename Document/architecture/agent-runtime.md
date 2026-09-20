@@ -34,13 +34,25 @@ MySQL readiness
 agent → fold → preprocess → deep_agent → finalization_gate → report
 ```
 
-普通聊天和报告追问仍由 `normal_chat`、`inquiry_answer` 路径结束。父图只把问题、数据画像、分析参数和必要输入消息投影到 Deep Agent；子图返回时只接收算法结果、Action Ledger、RAG/Web evidence、结构化决策和 Gate/report 所需摘要。完整消息、Deep Agents 内部字段和中间计划不会回投影到父 State。
+父图直接表达的其余路径为 `agent → report`（按当前分析上下文重新生成报告）、`agent → context_switch` 与 `context_switch → fold / report / inquiry_answer / normal_chat`（解析并切换分析上下文后再继续）；普通聊天和报告追问仍由 `normal_chat`、`inquiry_answer` 路径结束。父图只把问题、数据画像、分析参数和必要输入消息投影到 Deep Agent；子图返回时只接收算法结果、Action Ledger、RAG/Web evidence、结构化决策和 Gate/report 所需摘要。完整消息、Deep Agents 内部字段和中间计划不会回投影到父 State。
 
-父图 checkpoint 使用 `thread_id=analysis_jobs.job_id` 和空 namespace。Deep Agent 子图使用同一个 PostgreSQL saver，但使用稳定的 `thread_id=deep-agent:<uuid5(job_id)>` 与 `checkpoint_ns=deep_agent_v1`。子图 State 另外保存由 Job、attempt、lease 和冻结输入身份构成的 execution scope；scope 不匹配时从父图的最小输入重新开始，不复用旧执行产物。Gate 要求修正时，从同一子图 checkpoint 追加受控指令。
+父图 checkpoint 使用 `thread_id=analysis_jobs.job_id` 和空 namespace。Deep Agent 子图使用同一个 PostgreSQL saver，但使用稳定的 `thread_id=deep-agent:<uuid5(job_id)>` 与 `checkpoint_ns=deep_agent_v1`。子图 State 另外保存由 Job、attempt、lease 和当前冻结输入身份构成的 execution scope；scope 不匹配时从父图的最小输入重新开始，不复用旧执行产物。输入身份读取的是 invocation 级可刷新引用，因此服务端按用户表述重新冻结输入或切换分析上下文后，scope 随之变化，旧执行产物不会被复用。Gate 要求修正时，从同一子图 checkpoint 追加受控指令。
 
 长期记忆由 `AsyncPostgresStore` 单独保存，不属于 Job checkpoint。模型只注册 `read_file` 和 `edit_file`，并且只允许写 `/memories/preferences.md` 与 `/memories/research_background.md`；其他写入由兜底 deny 拒绝。namespace 从可信 `AgentRunContext` 的 `user_id` 生成，首次使用时仅做 create-if-absent 初始化。Deep Agent 不启用 subagent、`task`、代码执行或宿主文件系统。
 
 当前 cleanup outbox 只按 `job_id` 删除父图 thread，尚未删除独立的 Deep Agent child thread；这一实现缺口及其影响见 [`job-file-lifecycle.md`](job-file-lifecycle.md)。
+
+## 分析上下文与追问路由
+
+`Session`、`AnalysisContext`、`Job` 和 checkpoint 各管一段事实：Session 是用户可见的会话容器；AnalysisContext 是 MySQL 中的跨 Job 业务事实，保存创建时的文件快照、分析参数、最新结构化算法摘要、RAG/Web 证据摘要和最新报告引用；Job 是一次具体执行并绑定一个上下文；checkpoint 只负责当前 Job 的执行恢复、中间 State 和虚拟文件。一个 Session 可以拥有多个 AnalysisContext，`sessions.active_analysis_context_id` 只表示当前默认上下文。
+
+`agent_node` 用一次结构化调用判断意图（`normal_chat`、`start_analysis`、`answer_report`、`revise_report`、`rerun_analysis`、`switch_analysis_context`、`clarify`），模型只输出意图、`context_hint` 和澄清问题；`route_decision` 由后端按固定映射生成，模型不能输出分析上下文 ID 或用户文件 ID，也不能直接选择图节点。节点输入是当前消息、最近有限聊天历史、当前 AnalysisContext 摘要和同一 Session 的历史上下文索引；索引只含文件名、目标变量、处理变量、报告标题、更新时间和简短摘要，提示词里不出现内部 ID。没有可引用报告时 `answer_report` 与 `revise_report` 回退到 `normal_chat`，结构化输出失败同样回退到 `normal_chat`。
+
+新增的 `context_switch` 节点把“回到某个文件或某次历史分析”解析成真实上下文：按用户表述匹配历史索引，唯一命中才切换；歧义、文件缺失或无匹配都返回澄清问题并保持 active 指针不变；用户点名的是文件库里其他文件时，节点在同一事务里为该文件新建上下文。切换事务同时更新 Session 默认指针、当前 Job 和当前输入账本的上下文绑定，并校验 worker、attempt 和 lease epoch，重复执行得到同一结果。
+
+切换会改变本次 Job 的冻结输入：服务端在同一事务里重写 `analysis_jobs` 的冻结文件快照，并通过 invocation 级引用让 MCP 输入摘要、Adapter 校验、`FinalizationGate` 的 provenance 校验和 Deep Agent 子图 execution scope 一起跟随。旧上下文的算法结果、证据和因果图不会进入新的父图 State。
+
+`report_node` 有两种模式：`normal_generation` 按当前分析结果首次生成报告；`full_regeneration_from_context` 只使用当前 AnalysisContext 已确认的事实重新生成完整报告，不修改算法图，也不新增上下文中没有的因果结论。`inquiry_answer_node` 只回答当前报告或上下文事实相关的问题，或原样转达后端给出的澄清问题，既不决定是否重新执行算法，也不修改报告。
 
 ## 算法工具与 causal-mcp
 
@@ -89,10 +101,13 @@ worker 使用 LangGraph v2 的 `updates`、`messages`、`custom` 和 `tasks` 流
 
 SSE 与会话历史都从 MySQL `analysis_job_events` 恢复。页面刷新先重放持久化事件并记录实际处理到的 Event ID，再从该位置续传；前端可以暂存早于父 `node_start` 到达的工具明细，并在相同 `step_id` 出现后补绘。`decision_delta` 与 `text_delta` 都按各自 `stream_id` 和批次序号增量更新；完整 `decision` 作为公开决策的回退/历史投影，实时页面不会再次复制已经完成的决策增量。普通问答和报告追问的正文通过 `text_delta` 实时渲染，历史回放直接使用已持久化的完整正文；结构化报告不走文字增量，而是在 `final_result` 一次性交付完整报告文档，并以 `report_document` 附件与消息在同一事务落库，刷新后由会话历史接口恢复成同一份载荷。展示速度不影响工具执行，也不产生逐字符数据库事件。
 
+节点错误处理器的降级结果由 worker 负责收敛：LangGraph 在处理器提交降级结果之后，仍会把原任务异常抛给 `astream`。worker 因此读取 updates 流中带 `__error_handler__` 前缀的结果，并在确认图状态已经收敛（没有待执行节点、没有 pending interrupt）时按正常终态继续收尾；缺少任一条件时保持原有失败路径。节点级降级日志 `job.node.degraded` 额外记录 `cause_code`，把结构化输出失败按底层异常类名归类为 schema_invalid、json_invalid、output_parser_error、truncated、timeout、connection_error、rate_limited、request_rejected、provider_error 或 unknown，不记录异常正文。
+
 ## 修改与验证边界
 
 - 修改父图或 Deep Agent 时，必须核对显式 State 投影、child execution scope、Gate 修正和 degraded 路径。
 - 修改算法工具时，必须同步检查默认 Spec allowlist、Registry、Adapter、MCP runner registry、schema 快照和公共名称映射。
 - 修改 worker 初始化时，必须同时检查 PostgreSQL Store/checkpointer、MCP execute/control lane、RAG readiness、Compose 环境和 slot 资源占用。
 - 修改事件或结果展示时，必须验证实时 SSE 与历史回放使用同一白名单，且 payload 不含内部标识或原始工具数据。
+- 修改分析上下文、意图路由或上下文切换时，必须同时核对 `Database/analysis_contexts.py` 的事务边界与 fencing 校验、MCP 输入摘要与 Deep Agent execution scope 的一致性，以及 `Document/architecture/job-file-lifecycle.md` 的冻结输入语义。
 - 单元测试和 graph 构造只证明代码合同；真实 DeepSeek、MCP HTTP、PostgreSQL、RAG/SearXNG 与完整 Job 的验证入口和证据边界见 [`../development/testing.md`](../development/testing.md)。
