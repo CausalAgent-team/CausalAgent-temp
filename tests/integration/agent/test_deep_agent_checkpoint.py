@@ -5,6 +5,7 @@ import asyncio
 from Agent.deep_agent.memory import build_in_memory_backend
 from Agent.deep_agent.postgres_store import (
     PostgresStoreConfig,
+    build_async_postgres_store,
     filter_checkpoint_cleanup_tables,
     open_async_postgres_store,
 )
@@ -90,3 +91,26 @@ def test_official_store_factory_owns_context_and_runs_setup(monkeypatch) -> None
 
     asyncio.run(scenario())
     assert events == ["enter", "setup", "yield", "exit"]
+
+
+def test_pool_store_is_built_once_with_the_official_conn_keyword(monkeypatch) -> None:
+    import langgraph.store.postgres as postgres_module
+
+    pool = object()
+    attempted_keywords = []
+
+    class FakeAsyncPostgresStore:
+        def __new__(cls, *args, **kwargs):
+            # __new__ 早于 __init__ 的参数绑定，失败的关键字尝试也会留下半构造实例。
+            attempted_keywords.append(kwargs)
+            return super().__new__(cls)
+
+        def __init__(self, conn):
+            self.conn = conn
+
+    monkeypatch.setattr(postgres_module, "AsyncPostgresStore", FakeAsyncPostgresStore)
+
+    store = build_async_postgres_store(pool=pool)
+
+    assert store.conn is pool
+    assert attempted_keywords == [{"conn": pool}]

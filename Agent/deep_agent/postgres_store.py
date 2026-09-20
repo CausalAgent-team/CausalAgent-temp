@@ -94,12 +94,7 @@ def build_async_postgres_store(*, pool: Any | None = None, config: PostgresStore
             ) from exc
 
     if pool is not None:
-        for kwargs in ({"pool": pool}, {"conn": pool}):
-            try:
-                return AsyncPostgresStore(**kwargs)
-            except TypeError:
-                continue
-        raise PostgresStoreDependencyError("installed AsyncPostgresStore does not accept the checkpoint pool")
+        return AsyncPostgresStore(conn=pool)
 
     del config
     raise PostgresStoreDependencyError(

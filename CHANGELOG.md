@@ -1515,3 +1515,6 @@
   - 【执行记录归属】：`MessageTimeline` 不再让所有引用同一 Job 的消息都消费同一条运行态记录：历史阶段由 `thinking_after` 静态投影；答案已经作为独立消息存进历史时不再复用运行态记录，答案消息本身也不显示执行记录；只有本页新发送的提问消息才直接消费运行态记录。加载会话时只为仍在执行的 Job 建立运行态记录，`JobRecord.phaseInputId` 记录它代表的分析输入，同一 Job 更早的输入保持静态展示，重新加载后不再重复出现任务执行记录。
   - 【追问恢复】：开始新一轮追问时把上一阶段的执行记录固定到发起它的用户消息上（`ChatMessage.frozenThinking`），运行态记录从空投影和原游标继续，同一份记录不再同时出现在两条消息下面。
   - 【测试与文档】：新增 `chat-frontend/tests/unit/phase-ownership.spec.ts` 与 `chat-frontend/tests/e2e-mock/session-history.spec.ts`，并扩充 `chat-frontend/tests/components/message-timeline.spec.ts`，覆盖阶段归属、追问固定、刷新后仍在执行、等待补充输入等场景；`Document/development/chat-frontend.md` 补充执行记录归属和报告消息盒子事实。
+- 【修复：Store 工厂半构造实例启动日志】
+  - 【Store 装配】：`build_async_postgres_store` 改为按官方签名直接 `AsyncPostgresStore(conn=pool)`，不再用 `pool` 关键字试错；试错会让官方 `__init__` 绑定失败并留下 `_task` 未赋值的半构造实例，回收时 `__del__` 抛 `AttributeError`，在清理 worker 启动日志里打印一次。
+  - 【测试】：`tests/integration/agent/test_deep_agent_checkpoint.py` 新增用例，断言 Store 只按 `conn` 构造一次。
