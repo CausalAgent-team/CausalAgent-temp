@@ -176,6 +176,11 @@ CLARIFICATION_DEFAULTS = {
 
 _CSV_NAME_PATTERN = re.compile(r"[\w\-.]+\.csv", flags=re.IGNORECASE)
 
+# 意图判断只需要少量上下文：单条消息和整体都设上限，避免上一轮的长报告或长解释
+# 整段重复进入提示词。
+INTENT_HISTORY_MESSAGE_CHARS = 400
+INTENT_HISTORY_TOTAL_CHARS = 2000
+
 
 def _latest_human_text(state: CausalAgentState) -> str:
     """Return the latest human message content from the graph state."""
@@ -187,15 +192,29 @@ def _latest_human_text(state: CausalAgentState) -> str:
 
 
 def _recent_history_text(state: CausalAgentState, limit: int = 20) -> str:
-    """把最近的有界聊天历史渲染成单行文本，供意图判断使用。"""
-    lines: list[str] = []
+    """把最近的有界聊天历史渲染成单行文本，供意图判断使用。
+
+    每条消息限制长度，整体也限制长度并优先保留最近的对话；超出部分只保留开头，
+    保证意图判断的输入规模稳定。
+    """
+    rendered: list[str] = []
     for message in list(state.get("messages", []))[-max(1, int(limit)) :]:
         content = getattr(message, "content", "")
         if not isinstance(content, str) or not content.strip():
             continue
+        text = content.strip()
+        if len(text) > INTENT_HISTORY_MESSAGE_CHARS:
+            text = text[:INTENT_HISTORY_MESSAGE_CHARS] + "…"
         role = "用户" if isinstance(message, HumanMessage) else "助手"
-        lines.append(f"{role}：{content.strip()}")
-    return "\n".join(lines)
+        rendered.append(f"{role}：{text}")
+    kept: list[str] = []
+    total = 0
+    for line in reversed(rendered):
+        if kept and total + len(line) > INTENT_HISTORY_TOTAL_CHARS:
+            break
+        kept.append(line)
+        total += len(line)
+    return "\n".join(reversed(kept))
 
 
 def _frozen_filename(state: CausalAgentState) -> Optional[str]:

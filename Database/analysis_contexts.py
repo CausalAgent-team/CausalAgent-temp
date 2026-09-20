@@ -142,7 +142,12 @@ def _activate_context(
     session_id: str,
     context_id: str,
 ) -> None:
-    """把 Session 默认指针、当前 Job 和当前输入指向目标上下文。"""
+    """把 Session 默认指针、当前 Job 和当前输入指向目标上下文。
+
+    这里只做幂等写入，不用 rowcount 判断权限：MySQL 在写入值与现值相同时上报的
+    rowcount 是 0，而“切到当前上下文”是完全正常的路径。归属校验由调用方在
+    _lock_session 与 _lock_context 里以 FOR UPDATE 完成。
+    """
     cursor.execute(
         """
         UPDATE sessions
@@ -151,8 +156,6 @@ def _activate_context(
         """,
         (context_id, session_id, user_id),
     )
-    if cursor.rowcount != 1:
-        raise PermissionError("会话不存在或不属于当前用户")
     cursor.execute(
         """
         UPDATE analysis_jobs
@@ -230,8 +233,6 @@ def create_or_reuse_context_for_frozen_file(
         """,
         (context_id, session_id, user_id),
     )
-    if cursor.rowcount != 1:
-        raise PermissionError("会话不存在或不属于当前用户")
     return context_id
 
 
@@ -422,10 +423,8 @@ def apply_fold_context(
             lease_epoch=lease_epoch,
         )
         if job is None:
-            connection.rollback()
             raise AnalysisContextFencedError("Job 执行资格已失效")
         if int(job["user_id"]) != int(user_id) or str(job["session_id"]) != str(session_id):
-            connection.rollback()
             raise PermissionError("Job 归属与上下文字段不一致")
         file_object_id = job.get("input_object_id")
         if not file_object_id:
@@ -659,10 +658,8 @@ def switch_to_context(
             lease_epoch=lease_epoch,
         )
         if job is None:
-            connection.rollback()
             raise AnalysisContextFencedError("Job 执行资格已失效")
         if int(job["user_id"]) != int(user_id) or str(job["session_id"]) != str(session_id):
-            connection.rollback()
             raise PermissionError("Job 归属与上下文字段不一致")
         _lock_session(cursor, user_id=user_id, session_id=session_id)
         target = _lock_context(
@@ -736,10 +733,8 @@ def create_context_for_new_file(
             lease_epoch=lease_epoch,
         )
         if job is None:
-            connection.rollback()
             raise AnalysisContextFencedError("Job 执行资格已失效")
         if int(job["user_id"]) != int(user_id) or str(job["session_id"]) != str(session_id):
-            connection.rollback()
             raise PermissionError("Job 归属与上下文字段不一致")
         _lock_session(cursor, user_id=user_id, session_id=session_id)
         cursor.execute(

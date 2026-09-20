@@ -8,7 +8,7 @@ import sys
 import types
 
 import pytest
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from typing import get_args
 
 
@@ -236,3 +236,23 @@ def test_inquiry_answer_outputs_backend_clarification_without_model_call():
 
     assert result["messages"][0].content == "请说明是哪一次分析。"
     assert result["messages"][0].name == "inquiry_answer"
+
+def test_intent_history_caps_single_message_and_total_length():
+    """意图历史限制单条与整体长度，并优先保留更近的对话。"""
+    messages = []
+    for index in range(6):
+        messages.append(HumanMessage(content=f"问题{index}"))
+        messages.append(AIMessage(content="长回答" * 500))
+    state = _state("当前问题", messages=messages)
+
+    text = nodes._recent_history_text(state)
+    lines = text.split("\n")
+
+    assert len(text) <= (
+        nodes.INTENT_HISTORY_TOTAL_CHARS + nodes.INTENT_HISTORY_MESSAGE_CHARS + 8
+    )
+    for line in lines:
+        body = line.split("：", 1)[1]
+        assert len(body) <= nodes.INTENT_HISTORY_MESSAGE_CHARS + 1
+    assert "问题5" in text
+    assert "问题0" not in text
