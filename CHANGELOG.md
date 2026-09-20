@@ -1488,3 +1488,17 @@
 - 【开发脚本：前端 Vite 一键启动】
   - 【新增脚本】：新增 `scripts/dev_frontends.ps1`，用 `Start-Process` 按 `-Frontends` 参数在独立窗口启动 `website-frontend/`、`chat-frontend/`、`admin-frontend/` 和 `app/rag_eval/frontend/` 的 Vite 开发服务器；端口和资源前缀从各工程的 `vite.config.ts` 读取，支持 `-Install` 先执行 `npm ci`、`-WhatIf` 只打印将要执行的操作，端口已被占用或缺少 `node_modules` 的前端会跳过并打印原因，脚本只依赖 PowerShell 内置命令和本机 npm。
   - 【文档】：`Document/development/setup.md` 新增四个前端开发服务器一键启动章节和端口表，并把 RAG 评测台的开发地址由 `http://127.0.0.1:5176/rag-eval/` 更正为 `http://localhost:5176/rag-eval/`（该工程的 `vite` 未指定 `host`，只监听 IPv6 的 `::1`）；`README.md` 与 `README_EN.md` 的前端开发章节改用这个入口，目录树补充 `scripts/` 的开发用途。
+---
+2026.9.20
+- 【Session 多分析上下文：跨 Job 的分析事实来源】
+  - 【数据模型】：新增迁移 `c9d0e1f2a3b4` 建立 `analysis_contexts` 表，保存创建时的文件快照（用户文件、对象、hash、文件名）、分析参数（target、treatment、分析问题）、最新结构化算法摘要、RAG/Web 证据摘要和最新报告引用；同时给 `sessions` 增加可空的 `active_analysis_context_id`，给 `analysis_jobs` 和 `analysis_job_inputs` 增加可空的 `analysis_context_id`。`sessions` 指向上下文的一侧不建外键，避免与 `analysis_contexts` 到 `sessions` 的级联删除形成环；上下文写入始终按 `user_id + session_id` 校验归属。
+  - 【上下文生命周期】：创建 Job 时在同一事务中按冻结文件复用当前 active 上下文或新建上下文；fold 解析出 target/treatment 后回填参数，参数与已绑定上下文不一致时先复用同一文件上参数一致的历史上下文，没有才新建并切换 active 指针。分析成功才写回算法摘要、证据摘要和报告引用，失败或澄清不覆盖原有有效结果。
+  - 【Agent 意图路由】：`agent_node` 改用结构化 `AgentIntentDecision`（normal_chat、start_analysis、answer_report、revise_report、rerun_analysis、switch_analysis_context、clarify），模型只能表达意图、上下文线索和澄清问题；图路由由后端按固定映射生成，模型无法输出分析上下文 ID 或用户文件 ID。原有“明确因果分析请求”的确定性分支保留，但用户点名了其他文件时不再抢路由。
+  - 【上下文切换】：新增 `context_switch` 节点，按用户表述匹配同一会话的历史分析（文件名、目标变量、处理变量、报告标题、问题描述或展示序号），唯一命中才切换；歧义、文件缺失、无匹配都返回澄清问题，并且不修改 active 指针。切换在一个 MySQL 事务里更新 Session 默认指针、当前 Job 和当前输入账本的上下文绑定，并带 worker/attempt/lease fencing 校验，节点重复执行得到同一结果。
+  - 【冻结输入与切换文件】：用户点名了文件库里其他文件时，切换事务会同时重写 `analysis_jobs` 的冻结文件快照（用户文件、对象、hash、文件名），即服务端主动重新冻结输入。新增 invocation 级可刷新引用 `FrozenInputRef`，使 MCP 输入摘要、适配器校验、FinalizationGate 的 provenance 校验和 Deep Agent 子图 execution scope 跟随同一次写入变化，切换后的算法调用按新文件通过 MCP 强读校验，旧上下文的算法结果、证据和因果图不进入新 State。
+  - 【报告与追问】：`report_node` 增加 `full_regeneration_from_context` 模式，只使用当前上下文已确认的事实重新生成完整报告，不修改算法图；`inquiry_answer_node` 改为回答报告问题或转达后端澄清问题，既不决定是否重跑算法，也不修改报告。
+- 【分析与运行事实同步】
+  - 【就绪检查】：`check_database_readiness()` 增加 `analysis_contexts` 表、`sessions.active_analysis_context_id`、`analysis_jobs.analysis_context_id`、`analysis_job_inputs.analysis_context_id` 和四个上下文索引；`Database/deep_audit.py` 的期望字段、索引与外键同步覆盖新结构。
+  - 【文档】：`Document/architecture/agent-runtime.md` 记录意图路由、上下文切换与报告修订模式；`Document/architecture/job-file-lifecycle.md` 记录 Session、AnalysisContext、Job、Checkpoint 的边界与切换后的重新冻结语义；`Document/api/agent-jobs.md` 记录创建 Job 的上下文绑定、澄清与切换行为；迁移 head 同步为 `c9d0e1f2a3b4`。
+- 【测试补充】
+  - 【Agent 与上下文】：新增 `tests/unit/agent/test_agent_intent_routing.py`、`test_context_switch_node.py` 和 `test_analysis_context_projection.py`，覆盖意图到路由的映射、结构化失败回退、报告意图在缺少报告时的降级、澄清路径不调用模型、上下文投影与匹配、冻结输入刷新；`tests/integration/migrations/test_migration_chain.py` 增加新迁移的结构、绑定字段、回滚边界与就绪检查断言。
