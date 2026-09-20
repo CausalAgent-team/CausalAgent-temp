@@ -186,7 +186,7 @@ def _latest_human_text(state: CausalAgentState) -> str:
     return ""
 
 
-def _recent_history_text(state: CausalAgentState, limit: int = 8) -> str:
+def _recent_history_text(state: CausalAgentState, limit: int = 20) -> str:
     """把最近的有界聊天历史渲染成单行文本，供意图判断使用。"""
     lines: list[str] = []
     for message in list(state.get("messages", []))[-max(1, int(limit)) :]:

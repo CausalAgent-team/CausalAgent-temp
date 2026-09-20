@@ -25,7 +25,7 @@ from app.db import (
 )
 
 
-DEFAULT_CONTEXT_INDEX_LIMIT = 8
+DEFAULT_CONTEXT_INDEX_LIMIT = 20
 MAX_CONTEXT_INDEX_LIMIT = 20
 JSON_COLUMNS = (
     "latest_algorithm_summary",
