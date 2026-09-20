@@ -14,6 +14,7 @@ from app.agent.worker.graph_runner import (
     ai_call_stream,
 )
 from app.agent.worker.execution_guard import JobExecutionRevoked
+from Agent.Report.document import build_degraded_report_document
 
 
 class APIStatusError(Exception):
@@ -71,6 +72,25 @@ class FailingGraph(FakeGraph):
         """复现 LangGraph 把节点异常抛给调用方的行为。"""
         raise self.error
         yield {}  # pragma: no cover
+class ErrorHandlerGraph(FakeGraph):
+    """先在 updates 流里提交错误处理器的降级结果，再抛出原始任务异常。"""
+
+    def __init__(self, *, states, handler_update=True):
+        super().__init__(states)
+        self.handler_update = handler_update
+
+    async def astream(self, input_data, config, **_kwargs):
+        """复现 langgraph 在错误处理器收敛后仍抛出任务异常的行为。"""
+        if self.handler_update:
+            yield {
+                "type": "updates",
+                "ns": (),
+                "data": {"__error_handler__report": {"report_document": "degraded"}},
+            }
+        raise RuntimeError("report 节点执行失败")
+
+
+
 
 
 def _snapshot(*, interrupts=(), public_interrupts=None, values=None):
@@ -298,15 +318,31 @@ class GraphRunnerTests(unittest.IsolatedAsyncioTestCase):
             "app.agent.worker.graph_runner.load_context_index",
             return_value=index,
         ) as index_reader:
-            await _collect(
-                graph,
-                input_record={
-                    "input_type": "initial",
-                    "runtime_value": "当前问题",
-                    "stored_text": "当前问题",
-                    "chat_message_id": 99,
-                },
-            )
+            events = [
+                event
+                async for event in ai_call_stream(
+                    "当前问题",
+                    7,
+                    "user-7",
+                    "session-1",
+                    job_id="job-1",
+                    job_attempt=1,
+                    input_user_file_id=None,
+                    input_object_id=None,
+                    input_file_hash=None,
+                    input_filename=None,
+                    graph=graph,
+                    claim_kind="initial",
+                    input_record={
+                        "input_type": "initial",
+                        "runtime_value": "当前问题",
+                        "stored_text": "当前问题",
+                        "chat_message_id": 99,
+                    },
+                )
+            ]
+
+        self.assertEqual(events[-1]["type"], "final_result")
 
         index_reader.assert_called_once_with(
             7,
@@ -449,3 +485,35 @@ class GraphRunnerTests(unittest.IsolatedAsyncioTestCase):
         events = await _collect(FailingGraph(RateLimitError("slow down")))
 
         self.assertEqual(events[0]["_diagnostic"].reason_code, "rate_limited")
+
+
+    async def test_node_error_handler_result_becomes_terminal_result(self):
+        """节点错误处理器已提交降级结果时，worker 不能把整轮判成失败。"""
+        report = build_degraded_report_document("报告生成失败：report 节点执行失败")
+        graph = ErrorHandlerGraph(
+            states=[
+                _snapshot(),
+                _snapshot(values={"messages": [], "report_document": report}),
+            ]
+        )
+
+        events = await _collect(graph)
+
+        self.assertEqual(events[-1]["type"], "final_result")
+        self.assertEqual(events[-1]["data"]["type"], "report")
+        self.assertEqual(
+            events[-1]["data"]["document"]["report_id"],
+            report.report_id,
+        )
+        self.assertTrue(all(event["type"] != "error" for event in events))
+
+    async def test_node_error_without_handler_result_still_fails(self):
+        """没有错误处理器结果时仍然按失败处理，不能凭状态猜测成功。"""
+        graph = ErrorHandlerGraph(
+            states=[_snapshot(), _snapshot(values={"messages": []})],
+            handler_update=False,
+        )
+
+        events = await _collect(graph)
+
+        self.assertEqual(events[-1]["type"], "error")

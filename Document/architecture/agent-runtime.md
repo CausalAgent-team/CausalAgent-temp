@@ -101,6 +101,8 @@ worker 使用 LangGraph v2 的 `updates`、`messages`、`custom` 和 `tasks` 流
 
 SSE 与会话历史都从 MySQL `analysis_job_events` 恢复。页面刷新先重放持久化事件并记录实际处理到的 Event ID，再从该位置续传；前端可以暂存早于父 `node_start` 到达的工具明细，并在相同 `step_id` 出现后补绘。`decision_delta` 与 `text_delta` 都按各自 `stream_id` 和批次序号增量更新；完整 `decision` 作为公开决策的回退/历史投影，实时页面不会再次复制已经完成的决策增量。普通问答和报告追问的正文通过 `text_delta` 实时渲染，历史回放直接使用已持久化的完整正文；结构化报告不走文字增量，而是在 `final_result` 一次性交付完整报告文档，并以 `report_document` 附件与消息在同一事务落库，刷新后由会话历史接口恢复成同一份载荷。展示速度不影响工具执行，也不产生逐字符数据库事件。
 
+节点错误处理器的降级结果由 worker 负责收敛：LangGraph 在处理器提交降级结果之后，仍会把原任务异常抛给 `astream`。worker 因此读取 updates 流中带 `__error_handler__` 前缀的结果，并在确认图状态已经收敛（没有待执行节点、没有 pending interrupt）时按正常终态继续收尾；缺少任一条件时保持原有失败路径。节点级降级日志 `job.node.degraded` 额外记录 `cause_code`，把结构化输出失败按底层异常类名归类为 schema_invalid、json_invalid、output_parser_error、truncated、timeout、connection_error、rate_limited、request_rejected、provider_error 或 unknown，不记录异常正文。
+
 ## 修改与验证边界
 
 - 修改父图或 Deep Agent 时，必须核对显式 State 投影、child execution scope、Gate 修正和 degraded 路径。

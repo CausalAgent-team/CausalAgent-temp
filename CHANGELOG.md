@@ -1502,3 +1502,7 @@
   - 【文档】：`Document/architecture/agent-runtime.md` 记录意图路由、上下文切换与报告修订模式；`Document/architecture/job-file-lifecycle.md` 记录 Session、AnalysisContext、Job、Checkpoint 的边界与切换后的重新冻结语义；`Document/api/agent-jobs.md` 记录创建 Job 的上下文绑定、澄清与切换行为；迁移 head 同步为 `c9d0e1f2a3b4`。
 - 【测试补充】
   - 【Agent 与上下文】：新增 `tests/unit/agent/test_agent_intent_routing.py`、`test_context_switch_node.py` 和 `test_analysis_context_projection.py`，覆盖意图到路由的映射、结构化失败回退、报告意图在缺少报告时的降级、澄清路径不调用模型、上下文投影与匹配、冻结输入刷新；`tests/integration/migrations/test_migration_chain.py` 增加新迁移的结构、绑定字段、回滚边界与就绪检查断言。
+- 【运行错误修复：节点降级结果不再被引擎异常覆盖】
+  - 【worker 终态收敛】：LangGraph 在节点错误处理器提交降级结果后仍会把原任务异常抛给 `astream`，worker 现在检测 updates 流中带 `__error_handler__` 前缀的降级结果，并在确认图状态已经收敛（没有待执行节点、没有 pending interrupt）时按正常终态收尾，缺少任一条件时保持原有失败路径，避免报告节点降级后整个 Job 被判失败。
+  - 【结构化输出诊断】：`StructuredOutputError` 按底层异常类名归类出稳定原因代码，节点降级日志 `job.node.degraded` 新增 `cause_code`，事件目录同步登记该字段，用于区分模型未按结构化契约返回、JSON 解析失败、上下文截断、超时、连接、限流和服务端错误，不记录异常正文。
+  - 【测试补充】：新增节点错误处理器收敛与无处理器仍按失败处理两个用例，并补充结构化输出失败原因归类用例。

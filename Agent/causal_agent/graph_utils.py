@@ -64,6 +64,15 @@ def _final_attempt(runtime: Runtime, error: NodeError) -> int:
     return 1
 
 
+def _cause_code(error: NodeError) -> str | None:
+    """读取底层异常的稳定原因代码；没有时返回 None，日志层会跳过该键。"""
+    underlying = _underlying_error(error)
+    if underlying is None:
+        return None
+    value = getattr(underlying, "safe_cause_code", None)
+    return value if isinstance(value, str) and value else None
+
+
 def _underlying_error(error: NodeError) -> BaseException | None:
     candidate = getattr(error, "error", error)
     return candidate if isinstance(candidate, BaseException) else None
@@ -342,6 +351,7 @@ def guarded_error_handler(
                         exc_info=_safe_exc_info(error),
                     )
                 else:
+                    cause_code = _cause_code(error)
                     log_event(
                         LOGGER,
                         "job.node.degraded",
@@ -349,6 +359,7 @@ def guarded_error_handler(
                             "failure_kind": _failure_kind(error, node_name),
                             "final_attempt": final_attempt,
                             "fallback": fallback_name,
+                            "cause_code": cause_code,
                         },
                         exc_info=_safe_exc_info(error),
                     )
