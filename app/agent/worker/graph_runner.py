@@ -19,7 +19,9 @@ from app.agent.worker.event_adapter import (
 from app.agent.worker.execution_guard import JobExecutionGuard, JobExecutionRevoked
 from app.agent.worker.result_presenter import process_final_result
 from config.settings import settings
+from Agent.causal_agent.analysis_context import build_context_commit, build_context_index
 from Agent.causal_agent.context import AgentRunContext
+from Database.analysis_contexts import load_active_context, load_context_index
 
 
 def _snapshot_interrupts(snapshot: Any) -> list[Any]:
@@ -140,6 +142,15 @@ async def _initial_graph_input(
         )
         if not history:
             raise RuntimeError("Job 初始聊天历史为空")
+    # 分析上下文是跨 Job 的业务事实来源，只在 Job 首次构造 State 时读取；
+    # 同一 Job 的 resume 与 stale recovery 继续使用 checkpoint 中的投影。
+    active_context = await asyncio.to_thread(load_active_context, user_id, session_id)
+    index_rows = await asyncio.to_thread(
+        load_context_index,
+        user_id,
+        session_id,
+        exclude_context_id=(active_context or {}).get("analysis_context_id"),
+    )
     return {
         "messages": history,
         "user_id": user_id,
@@ -152,6 +163,8 @@ async def _initial_graph_input(
             "file_hash": input_file_hash,
             "filename": input_filename,
         },
+        "analysis_context": active_context or {},
+        "analysis_context_index": build_context_index(index_rows),
     }
 
 
@@ -301,10 +314,13 @@ async def ai_call_stream(
         final_result = process_final_result(state.values)
         if execution_guard is not None:
             await execution_guard.check_after_call()
+        # 上下文写回事实只作为内部字段交给 event writer，由其从持久化 payload 中剔除。
+        context_commit = build_context_commit(state.values)
         yield {
             "type": "final_result",
             "data": final_result,
             "attempt": job_attempt,
+            "_context_commit": context_commit,
         }
     except JobExecutionRevoked:
         raise

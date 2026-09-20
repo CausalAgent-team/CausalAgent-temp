@@ -23,6 +23,57 @@ def _canonical_uuid(value: str | UUID, *, field_name: str) -> str:
         raise ValueError(f"{field_name} must be a canonical UUID value") from exc
 
 
+@dataclass(eq=False)
+class FrozenInputRef:
+    """本次 invocation 内可刷新的冻结输入引用。
+
+    正常情况下 Job 冻结的文件在生命周期内不变，该引用只是 Job claim 时快照的副本。
+    当用户在会话里用自然语言切换到另一个分析上下文时，服务端会在同一个 MySQL 事务里
+    重写 Job 的冻结文件快照；本引用用于让 MCP 输入摘要、适配器校验、FinalizationGate
+    的 provenance 校验和 Deep Agent execution scope 跟随同一次写入变化，不必重建整个
+    AgentRunContext。它只在一次 invocation 内存活，绝不进入 State 或 checkpoint。
+    """
+
+    user_file_id: int | None
+    object_id: int | None
+    content_hash: str
+    filename: str | None = None
+    revision: int = 0
+
+    @property
+    def digest(self) -> str:
+        """返回当前冻结内容的稳定摘要，作为 MCP 与 provenance 的输入身份。"""
+        return self.content_hash
+
+    def apply_snapshot(
+        self,
+        *,
+        user_file_id: int | None,
+        object_id: int | None,
+        content_hash: str,
+        filename: str | None,
+    ) -> bool:
+        """按服务端已提交的新冻结快照刷新引用；内容未变化时返回 False。"""
+
+        normalized_hash = str(content_hash or "")
+        if not normalized_hash:
+            raise ValueError("frozen input content hash must not be blank")
+        unchanged = (
+            self.user_file_id == user_file_id
+            and self.object_id == object_id
+            and self.content_hash == normalized_hash
+            and self.filename == filename
+        )
+        if unchanged:
+            return False
+        self.user_file_id = user_file_id
+        self.object_id = object_id
+        self.content_hash = normalized_hash
+        self.filename = filename
+        self.revision += 1
+        return True
+
+
 @dataclass(frozen=True)
 class TrustedJobIdentity:
     """由 worker claim/lease 绑定的可信 Job 身份。
@@ -39,6 +90,19 @@ class TrustedJobIdentity:
     worker_id: str
     input_identity: str
     input_snapshot_digest: str | None = None
+    # 可刷新的冻结输入引用；存在时 input_snapshot_digest 跟随它变化。
+    frozen_input: FrozenInputRef | None = None
+
+    def current_input_identity(self) -> str:
+        """返回当前有效的冻结输入摘要。
+
+        worker claim 之后如果通过自然语言切换分析上下文并重新冻结文件，本方法返回
+        服务端最新提交的 hash，使 MCP 上下文、适配器校验和 provenance 校验保持一致。
+        """
+
+        if self.frozen_input is not None:
+            return self.frozen_input.digest
+        return self.input_snapshot_digest or self.input_identity
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "job_id", _canonical_uuid(self.job_id, field_name="job_id"))
@@ -82,7 +146,7 @@ class TrustedJobIdentity:
         issued_at = now or datetime.now(timezone.utc)
         if issued_at.tzinfo is None or issued_at.utcoffset() is None:
             raise ValueError("now must be timezone-aware")
-        digest = self.input_snapshot_digest or self.input_identity
+        digest = self.current_input_identity()
         return McpInvocationContext(
             invocation_id=invocation_id,
             job_id=self.job_id,

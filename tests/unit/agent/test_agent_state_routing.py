@@ -79,23 +79,39 @@ def _mcp_tool(name="causal_pc"):
 
 
 @pytest.mark.parametrize(
-    "route",
-    ["fold", "postprocess", "normal_chat", "inquiry_answer"],
+    "intent,expected_route",
+    [
+        ("normal_chat", "normal_chat"),
+        ("start_analysis", "fold"),
+        ("answer_report", "inquiry_answer"),
+        ("switch_analysis_context", "context_switch"),
+    ],
 )
-def test_agent_writes_every_legal_structured_route(monkeypatch, route):
-    """LLM 四种合法路由都必须覆盖 checkpoint 中的旧决策值。"""
+def test_agent_writes_every_legal_structured_intent(monkeypatch, intent, expected_route):
+    """模型给出的每一种意图都由后端映射覆盖 checkpoint 中的旧决策值。"""
     async def fake_invoke(**kwargs):
-        return nodes.RouteQuery(route=route)
+        return nodes.AgentIntentDecision(
+            intent=intent,
+            context_hint=(
+                "sales.csv" if intent == "switch_analysis_context" else None
+            ),
+        )
 
     monkeypatch.setattr(nodes, "ainvoke_structured", fake_invoke)
     result = asyncio.run(
         nodes.agent_node(
-            _state(route_decision="postprocess"),
+            _state(
+                route_decision="postprocess",
+                analysis_context={
+                    "analysis_context_id": "ctx-1",
+                    "latest_report_message_id": 3,
+                },
+            ),
             object(),
         )
     )
 
-    assert result["route_decision"] == route
+    assert result["route_decision"] == expected_route
 
 
 def test_agent_deterministic_and_failure_routes_overwrite_old_state(monkeypatch):

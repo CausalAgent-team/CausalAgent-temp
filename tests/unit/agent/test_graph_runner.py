@@ -87,26 +87,33 @@ def _snapshot(*, interrupts=(), public_interrupts=None, values=None):
 
 
 async def _collect(graph, text="hello", *, claim_kind="initial", input_record=None, initial_input_record=None, **file_snapshot):
-    """收集一次 Job 执行产生的公开事件。"""
-    return [
-        event
-        async for event in ai_call_stream(
-            text,
-            7,
-            "user-7",
-            "session-1",
-            job_id="job-1",
-            job_attempt=1,
-            input_user_file_id=file_snapshot.get("input_user_file_id"),
-            input_object_id=file_snapshot.get("input_object_id"),
-            input_file_hash=file_snapshot.get("input_file_hash"),
-            input_filename=file_snapshot.get("input_filename"),
-            graph=graph,
-            claim_kind=claim_kind,
-            input_record=input_record,
-            initial_input_record=initial_input_record,
-        )
-    ]
+    """收集一次 Job 执行产生的公开事件；分析上下文读取用替身，单测不访问数据库。"""
+    with patch(
+        "app.agent.worker.graph_runner.load_active_context",
+        return_value=None,
+    ), patch(
+        "app.agent.worker.graph_runner.load_context_index",
+        return_value=[],
+    ):
+        return [
+            event
+            async for event in ai_call_stream(
+                text,
+                7,
+                "user-7",
+                "session-1",
+                job_id="job-1",
+                job_attempt=1,
+                input_user_file_id=file_snapshot.get("input_user_file_id"),
+                input_object_id=file_snapshot.get("input_object_id"),
+                input_file_hash=file_snapshot.get("input_file_hash"),
+                input_filename=file_snapshot.get("input_filename"),
+                graph=graph,
+                claim_kind=claim_kind,
+                input_record=input_record,
+                initial_input_record=initial_input_record,
+            )
+        ]
 
 
 class GraphRunnerTests(unittest.IsolatedAsyncioTestCase):
@@ -265,6 +272,53 @@ class GraphRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("input_object_id", input_data)
         self.assertNotIn("input_file_hash", input_data)
         self.assertNotIn("input_filename", input_data)
+
+    async def test_initial_state_loads_active_context_and_history_index(self):
+        """新 Job 初始 State 携带当前分析上下文投影和同一会话的历史上下文索引。"""
+        graph = FakeGraph([_snapshot(), _snapshot(values={"messages": []})])
+        context = {
+            "analysis_context_id": "ctx-1",
+            "filename": "sales.csv",
+            "target": "销售额",
+        }
+        index = [
+            {
+                "analysis_context_id": "ctx-2",
+                "filename": "data.csv",
+                "target": "访问量",
+            }
+        ]
+        with patch(
+            "app.agent.worker.graph_runner.get_job_chat_history",
+            return_value=[SimpleNamespace(type="human", content="当前问题")],
+        ), patch(
+            "app.agent.worker.graph_runner.load_active_context",
+            return_value=context,
+        ), patch(
+            "app.agent.worker.graph_runner.load_context_index",
+            return_value=index,
+        ) as index_reader:
+            await _collect(
+                graph,
+                input_record={
+                    "input_type": "initial",
+                    "runtime_value": "当前问题",
+                    "stored_text": "当前问题",
+                    "chat_message_id": 99,
+                },
+            )
+
+        index_reader.assert_called_once_with(
+            7,
+            "session-1",
+            exclude_context_id="ctx-1",
+        )
+        input_data = graph.inputs[0][0]
+        self.assertEqual(input_data["analysis_context"], context)
+        self.assertEqual(
+            input_data["analysis_context_index"][0]["analysis_context_id"],
+            "ctx-2",
+        )
 
     async def test_stale_recovery_with_checkpoint_uses_none_input(self):
         """stale recovery 有 checkpoint 时继续原 State，不追加原始问题。"""

@@ -92,9 +92,27 @@ def _safe_exc_info(error: NodeError):
     return type(underlying), underlying, underlying.__traceback__
 
 
+def _accepts_keyword_argument(func, name: str) -> bool:
+    """判断节点函数是否显式声明了某个可传入的关键字参数。"""
+    try:
+        parameters = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return False
+    parameter = parameters.get(name)
+    if parameter is None:
+        return False
+    return parameter.kind in (
+        inspect.Parameter.KEYWORD_ONLY,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    )
+
+
 def bind_node(func, *, event_node_name: str | None = None, **bound_kwargs):
     """绑定节点依赖，并通过 custom 流暴露真实的节点执行尝试。"""
     node_name = event_node_name or getattr(func, "__name__", "bound_node").removesuffix("_node")
+    # 只有显式声明 runtime 参数的节点才拿到 invocation 运行上下文；
+    # 其余节点保持原有的 (state, **bound_kwargs) 调用契约。
+    wants_runtime = _accepts_keyword_argument(func, "runtime")
 
     async def _node(state, runtime: Runtime):
         """执行函数节点，并把 attempt 边界写入 custom 流。"""
@@ -112,7 +130,10 @@ def bind_node(func, *, event_node_name: str | None = None, **bound_kwargs):
                 "node_attempt": node_attempt,
             })
             try:
-                result = await func(state, **bound_kwargs)
+                kwargs = dict(bound_kwargs)
+                if wants_runtime:
+                    kwargs["runtime"] = runtime
+                result = await func(state, **kwargs)
                 if guard is not None:
                     await guard.check_after_call()
                 return result
