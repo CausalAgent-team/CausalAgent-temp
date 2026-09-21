@@ -184,7 +184,7 @@ Grafana 继续使用独立账号和 `127.0.0.1:3000` 本地入口，不复用 Ca
 | `worker.lease.refresh_failed` | `warning/dependency` | Worker lease 刷新失败 | `consecutive_failures`, `suppressed_count` |
 | `worker.lease.recovered` | `info/dependency` | Worker lease 刷新已恢复 | `failure_count`, `downtime_ms` |
 | `job.node.timeout` | `warning/lifecycle` | Agent 节点最终超时并进入降级路径 | `final_attempt`, `timeout_ms`, `fallback` |
-| `job.node.degraded` | `warning/lifecycle` | Agent 节点最终失败并进入降级路径 | `failure_kind`, `final_attempt`, `fallback` |
+| `job.node.degraded` | `warning/lifecycle` | Agent 节点最终失败并进入降级路径 | `failure_kind`, `final_attempt`, `fallback`, `cause_code`, `schema_name`, `structured_attempts`, `validation_error_count`, `validation_first_type`, `validation_first_loc` |
 | `job.postprocess.degraded` | `warning/lifecycle` | 因果分析后处理已降级 | `reason_code`, `affected_count` |
 | `chat.attachment.degraded` | `warning/dependency` | 聊天附件解析已降级 | `attachment_type`, `reason_code` |
 | `rag.runtime.ready` | `info/lifecycle` | RAG Runtime 初始化完成 | `provider`, `model`, `chunk_count`, `elapsed_ms`, `release_id` |

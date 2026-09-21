@@ -40,6 +40,7 @@ def test_structured_output_failure_exposes_only_a_safe_cause_code():
     import json
 
     from Agent.llm_structured_output import (
+        NoToolCallError,
         StructuredOutputError,
         classify_structured_output_cause,
     )
@@ -53,6 +54,10 @@ def test_structured_output_failure_exposes_only_a_safe_cause_code():
         == "json_invalid"
     )
     assert classify_structured_output_cause(RuntimeError("boom")) == "unknown"
+    assert (
+        classify_structured_output_cause(NoToolCallError("empty"))
+        == "tool_call_invalid"
+    )
 
     error = StructuredOutputError(
         node_name="report",

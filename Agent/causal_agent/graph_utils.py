@@ -4,6 +4,7 @@ import inspect
 import logging
 import re
 from collections.abc import Mapping
+from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.errors import NodeError
@@ -99,6 +100,37 @@ def _safe_exc_info(error: NodeError):
     if underlying is None:
         return None
     return type(underlying), underlying, underlying.__traceback__
+
+
+def _structured_output_details(error: NodeError) -> dict[str, Any]:
+    """读取结构化输出失败的受控诊断字段；缺失时返回空字典。
+
+    只记录 schema 名称、统一入口的尝试次数，以及校验错误的字段路径与错误码，
+    不记录模型取值、提示词或异常正文。
+    """
+    underlying = _underlying_error(error)
+    details: dict[str, Any] = {}
+    if underlying is None:
+        return details
+    schema_name = getattr(underlying, "schema_name", None)
+    if isinstance(schema_name, str) and schema_name:
+        details["schema_name"] = schema_name
+    attempts = getattr(underlying, "structured_attempts", None)
+    if isinstance(attempts, int) and attempts > 0:
+        details["structured_attempts"] = attempts
+    summary = getattr(underlying, "safe_validation", None)
+    if not isinstance(summary, Mapping):
+        return details
+    count = summary.get("count")
+    if isinstance(count, int) and count >= 0:
+        details["validation_error_count"] = count
+    first_type = summary.get("first_type")
+    if isinstance(first_type, str) and first_type:
+        details["validation_first_type"] = first_type
+    first_loc = summary.get("first_loc")
+    if isinstance(first_loc, str) and first_loc:
+        details["validation_first_loc"] = first_loc
+    return details
 
 
 def _accepts_keyword_argument(func, name: str) -> bool:
@@ -351,16 +383,17 @@ def guarded_error_handler(
                         exc_info=_safe_exc_info(error),
                     )
                 else:
-                    cause_code = _cause_code(error)
+                    details = {
+                        "failure_kind": _failure_kind(error, node_name),
+                        "final_attempt": final_attempt,
+                        "fallback": fallback_name,
+                        "cause_code": _cause_code(error),
+                    }
+                    details.update(_structured_output_details(error))
                     log_event(
                         LOGGER,
                         "job.node.degraded",
-                        details={
-                            "failure_kind": _failure_kind(error, node_name),
-                            "final_attempt": final_attempt,
-                            "fallback": fallback_name,
-                            "cause_code": cause_code,
-                        },
+                        details=details,
                         exc_info=_safe_exc_info(error),
                     )
                 return result

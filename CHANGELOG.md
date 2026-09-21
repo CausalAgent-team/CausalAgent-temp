@@ -1543,3 +1543,10 @@
 - 【分析运行工具选择调整】：取消“分析运行必须至少调用一次 `rag_evidence_search`”的运行级提示与 `FinalizationGate` 门禁，知识库检索恢复为 Agent 自主决策；至少一个因果算法调用和开启联网搜索时至少一次 `web_evidence_search` 的约束保持不变。
 - 【报告来源展示】：知识库来源的长证据引用默认收起，来源标题旁新增展开/收起按钮；文件来源与联网来源保持原有展示方式。
 - 【报告引用控件调整】：撤回带边框和“引用 N 条”文字的展开控件，改为来源标题旁的纯折叠箭头；引用数量不再占用收起状态的展示空间。
+- 【Agent 报告节点容错】
+  - 【结构化输出分类】：统一入口新增 `tool_call_invalid` 原因代码，模型没有返回任何可解析工具调用时不再被误报成 `schema_invalid`；`NoToolCallError` 在结构化结果为空时抛出，并按类名归类。
+  - 【有界重试】：`Agent/llm_structured_output.py` 对「模型本次产出的结构化结果不可用」的失败（`tool_call_invalid`、`schema_invalid`、`json_invalid`、`output_parser_error`）重试一次，第二次调用前重新确认 Job 执行资格；模型自身异常、超时、限流、连接和供应商错误不在入口内重试，撤销控制流不再被包装成结构化输出失败。
+  - 【降级日志】：`job.node.degraded` 新增 `schema_name`、`structured_attempts`、`validation_error_count`、`validation_first_type` 和 `validation_first_loc`，字段路径只保留 schema 字段名、额外字段统一写成 extra，不记录模型取值、提示词和异常正文；事件目录同步登记这些字段，并修正观测文档中该事件遗漏的 `cause_code`。
+  - 【报告节点流式边界】：报告节点改用非流式模型生成报告草稿，其空闲超时从 60 秒放宽到 120 秒，以容纳只在调用开始和结束时刷新计时的非流式长响应；普通问答和报告追问继续使用流式模型。
+  - 【测试补充】：`tests/unit/agent/test_structured_output_runtime.py` 覆盖原因分类、单次重试、重试成功恢复、模型异常不重试和撤销时停止重试；`tests/unit/agent/test_execution_guard.py` 覆盖降级日志新字段与脱敏边界；`tests/unit/agent/test_graph_llm_streaming_scope.py` 约束报告节点绑定非流式模型与新的空闲超时。
+  - 【文档】：`Document/architecture/agent-runtime.md`、`Document/development/observability.md` 和 `Document/api/agent-jobs.md` 同步原因代码、重试约定、日志字段和报告节点的文字增量边界。

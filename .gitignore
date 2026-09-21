@@ -230,6 +230,7 @@ admin-frontend/node_modules/
 admin-frontend/test-results/
 admin-frontend/playwright-report/
 .playwright-cli/
+.playwright-mcp/
 app/rag_eval/frontend/node_modules/
 website-frontend/node_modules/
 website-frontend/dist/

@@ -99,10 +99,12 @@ def build_graph(
         event_node_name="inquiry_answer",
         llm=streaming_llm,
     )
+    # 报告草稿是结构化输出，模型正文恒为空，因此使用非流式模型，
+    # 避免流式工具参数拼接带来的额外失败面。
     report_node_with_llm = bind_node(
         nodes.report_node,
         event_node_name="report",
-        llm=streaming_llm,
+        llm=llm,
     )
     normal_chat_node_with_llm = bind_node(
         nodes.normal_chat_node,
@@ -176,7 +178,8 @@ def build_graph(
         "report",
         report_node_with_llm,
         retry_policy=short_retry(),
-        timeout=timeout(run_timeout=180, idle_timeout=60),
+        # 非流式调用只在开始和结束刷新空闲计时，放宽窗口以容纳慢响应。
+        timeout=timeout(run_timeout=180, idle_timeout=120),
         error_handler=guarded_error_handler(
             recover_report,
             event_node_name="report",
@@ -1033,9 +1036,11 @@ def build_deep_agent_parent_graph(
     )
     workflow.add_node(
         "report",
-        bind_node(nodes.report_node, event_node_name="report", llm=streaming_llm),
+        bind_node(nodes.report_node, event_node_name="report", llm=llm),
         retry_policy=short_retry(),
-        timeout=timeout(run_timeout=180, idle_timeout=60),
+        # 报告草稿是结构化输出且模型正文恒为空，非流式调用只在开始和结束
+        # 刷新空闲计时，因此放宽窗口以容纳慢响应。
+        timeout=timeout(run_timeout=180, idle_timeout=120),
         error_handler=guarded_error_handler(
             recover_report,
             event_node_name="report",

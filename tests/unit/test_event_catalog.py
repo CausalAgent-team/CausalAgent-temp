@@ -125,6 +125,7 @@ def _sample_value(field: str, rule):
         "generation",
         "retry_ordinal",
         "retry_after_seconds",
+        "structured_attempts",
         "timeout_seconds",
     }:
         return 1

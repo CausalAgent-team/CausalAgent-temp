@@ -164,6 +164,11 @@ METHOD = DetailRule(
 STATUS_CODE = DetailRule((int,), minimum=100, maximum=599)
 PHASES = DetailRule((list, tuple), max_items=16, max_bytes=1024)
 SHA256 = DetailRule((str,), pattern=re.compile(r"^[a-f0-9]{64}$"), max_bytes=64)
+STRUCTURED_LOCATION = DetailRule(
+    (str,),
+    pattern=re.compile(r"^[A-Za-z0-9_.-]{1,64}$"),
+    max_bytes=64,
+)
 JOB_STATUS = DetailRule(
     (str,),
     choices=frozenset({
@@ -460,6 +465,11 @@ _events: dict[str, EventSpec] = {
         final_attempt=POSITIVE_COUNT,
         fallback=TOKEN,
         cause_code=TOKEN,
+        schema_name=TEXT,
+        structured_attempts=POSITIVE_COUNT,
+        validation_error_count=COUNT,
+        validation_first_type=TOKEN,
+        validation_first_loc=STRUCTURED_LOCATION,
     ),
     "job.postprocess.degraded": _spec(
         logging.WARNING,
