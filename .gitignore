@@ -255,4 +255,4 @@ docs/
 # 四个前端都只提交源码；构建产物由 Docker 构建阶段生成，本地不进入版本库。
 admin-frontend/dist/*
 
-temp/
+tmp/
