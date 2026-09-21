@@ -1515,3 +1515,31 @@
   - 【执行记录归属】：`MessageTimeline` 不再让所有引用同一 Job 的消息都消费同一条运行态记录：历史阶段由 `thinking_after` 静态投影；答案已经作为独立消息存进历史时不再复用运行态记录，答案消息本身也不显示执行记录；只有本页新发送的提问消息才直接消费运行态记录。加载会话时只为仍在执行的 Job 建立运行态记录，`JobRecord.phaseInputId` 记录它代表的分析输入，同一 Job 更早的输入保持静态展示，重新加载后不再重复出现任务执行记录。
   - 【追问恢复】：开始新一轮追问时把上一阶段的执行记录固定到发起它的用户消息上（`ChatMessage.frozenThinking`），运行态记录从空投影和原游标继续，同一份记录不再同时出现在两条消息下面。
   - 【测试与文档】：新增 `chat-frontend/tests/unit/phase-ownership.spec.ts` 与 `chat-frontend/tests/e2e-mock/session-history.spec.ts`，并扩充 `chat-frontend/tests/components/message-timeline.spec.ts`，覆盖阶段归属、追问固定、刷新后仍在执行、等待补充输入等场景；`Document/development/chat-frontend.md` 补充执行记录归属和报告消息盒子事实。
+- 【修复：Store 工厂半构造实例启动日志】
+  - 【Store 装配】：`build_async_postgres_store` 改为按官方签名直接 `AsyncPostgresStore(conn=pool)`，不再用 `pool` 关键字试错；试错会让官方 `__init__` 绑定失败并留下 `_task` 未赋值的半构造实例，回收时 `__del__` 抛 `AttributeError`，在清理 worker 启动日志里打印一次。
+  - 【测试】：`tests/integration/agent/test_deep_agent_checkpoint.py` 新增用例，断言 Store 只按 `conn` 构造一次。
+- 【报告来源：RAG 知识库来源接入】
+  - 【来源装配】：报告来源装配同时接受 State 中的 pydantic 证据对象与等价字典，RAG 与 Web 证据不再因类型不匹配被静默丢弃；来源类别改由证据通道显式给出，知识库来源即使带可点击地址也保持 `knowledge_base`，不再按“是否存在 URL”推断。
+  - 【来源身份】：知识库来源的展示名由 release manifest 的 `document_id → relative_path` 解析，解析 active release 时随 `RagRuntimeConfig.document_names` 一并投影，不新增文件读取；manifest 未覆盖时回退到检索元数据的 title/source_name，`asset_uri` 不再充当 `source_url`，避免把内部资源路径渲染成点不开的相对链接。
+  - 【测试补充】：`tests/unit/agent/test_report_document.py` 覆盖证据对象与字典两种形态产出一致、知识库来源带地址仍为 knowledge_base、无法归一化的载荷被安全跳过；`tests/test_rag_service_and_tool.py` 覆盖 manifest 展示名解析、`asset_uri` 不进入 `source_url`，以及 manifest 未覆盖时的回退。
+  - 【文档】：`Document/architecture/agent-runtime.md` 记录知识库来源展示名的解析来源与来源类别显式规则。
+- 【分析运行强制算法结果】
+  - 【按运行注入约束】：进入 Deep Agent 的运行都是分析运行（`agent` 的 `start_analysis`/`rerun_analysis` 直接路由到 `fold`，`context_switch` 也会把 `route_decision` 改写成后续节点名），因此父图投影时按运行追加一条“必须至少调用一个算法工具并在最终决策中引用算法结果”的系统约束；该约束不写进 worker 级系统提示词，同一次部署里不同 Job 的要求互不干扰。
+  - 【Gate 新规则】：`FinalizationGate` 在分析路由下新增 `analysis_route_without_algorithm_result`：没有任何算法结果时不得提交 `evidence_only` 或 `no_valid_algorithm`，按既有的一次修正预算要求模型补做；算法确实返回未就绪或失败时会留下算法结果，不受该规则影响。
+  - 【测试补充】：`tests/unit/agent/test_deep_agent_state.py` 覆盖分析路由注入与非分析路由不注入；`tests/unit/agent/test_final_analysis_decision.py` 覆盖分析路由缺少算法结果被拒、非分析路由放行，以及算法结果被丢弃时放行。
+- 【文档】：`Document/architecture/agent-runtime.md` 记录分析运行的按运行约束与新的 Gate 规则。
+- 【分析运行强制 RAG 检索】
+  - 【按运行注入约束】：进入因果分析的 Deep Agent 必须至少调用一次 `rag_evidence_search`；有证据、无相关证据或知识库不可用都保留真实 terminal 状态后再提交最终决策。
+  - 【Gate 校验】：`FinalizationGate` 新增 `analysis_route_without_rag_invocation`，没有当前 Job attempt 的 RAG 调用记录时拒绝终态并交回一次受控修正。
+  - 【测试与文档】：补充 Deep Agent State、FinalizationGate 的强制检索合同测试，并同步 `Document/architecture/agent-runtime.md`。
+- 【分析运行强制联网搜索】
+  - 【按开关注入约束】：Job 的 `web_search_enabled=true` 时，Deep Agent 按运行收到“至少调用一次 `web_evidence_search`”的系统约束；关闭时不注入该要求，工具仍由 runtime 开关阻断真实触网。
+  - 【Gate 校验】：`FinalizationGate` 新增 `analysis_route_without_web_invocation`，开启联网搜索但没有当前 Job attempt 的 Web terminal 调用时拒绝终态并交回一次受控修正；无结果或暂不可用仍保留真实 terminal 状态。
+  - 【测试与文档】：补充 Web 开关的 State 投影、父图上下文传递和 Gate 合同测试，并同步 `Document/architecture/agent-runtime.md`。
+
+---
+2026.9.21
+- 【报告来源正文定位】：报告装配时把正文中出现且属于当前证据清单的 `ev_...` ID 回填到 `markdown.evidence_refs`，前端兼容历史报告中的同类漏填数据，恢复来源证据到正文块的“定位正文”按钮和高亮跳转。
+- 【分析运行工具选择调整】：取消“分析运行必须至少调用一次 `rag_evidence_search`”的运行级提示与 `FinalizationGate` 门禁，知识库检索恢复为 Agent 自主决策；至少一个因果算法调用和开启联网搜索时至少一次 `web_evidence_search` 的约束保持不变。
+- 【报告来源展示】：知识库来源的长证据引用默认收起，来源标题旁新增展开/收起按钮；文件来源与联网来源保持原有展示方式。
+- 【报告引用控件调整】：撤回带边框和“引用 N 条”文字的展开控件，改为来源标题旁的纯折叠箭头；引用数量不再占用收起状态的展示空间。

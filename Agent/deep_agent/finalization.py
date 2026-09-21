@@ -13,6 +13,7 @@ from Agent.deep_agent_tools.models import (
     InvocationRecord,
     validate_result_ref_for_invocation,
 )
+from Agent.deep_agent.prompts import ANALYSIS_ROUTE
 
 
 class StructuredResponseError(ValueError):
@@ -204,6 +205,66 @@ class FinalizationGate:
             current[record.invocation_id] = record
         return current
 
+    def _has_current_terminal_tool_invocation(
+        self,
+        ledger: Mapping[str, InvocationRecord],
+        *,
+        tool_name: str,
+        job_id: str,
+        attempt_count: int,
+        lease_epoch: int,
+        worker_id: str,
+        input_identity: str,
+    ) -> bool:
+        """检查指定工具是否在当前 Job attempt 中完成过一次真实调用。"""
+
+        terminal_statuses = {"succeeded", "not_ready", "failed", "timed_out"}
+        for record in ledger.values():
+            if record.tool_name != tool_name:
+                continue
+            try:
+                expected_id = build_invocation_id(
+                    job_id=job_id,
+                    response_identity=record.response_identity,
+                    provider_call_id=record.provider_call_id,
+                )
+            except (TypeError, ValueError) as exc:
+                raise StructuredResponseError("action ledger identity is invalid") from exc
+            if expected_id != record.invocation_id:
+                if record.job_id == job_id:
+                    raise StructuredResponseError("action ledger identity is invalid")
+                continue
+            if (
+                record.job_id is None
+                or record.attempt_count is None
+                or record.lease_epoch is None
+                or record.worker_id is None
+                or record.input_identity is None
+            ):
+                raise StructuredResponseError("action ledger ownership is incomplete")
+            if record.job_id != job_id:
+                raise StructuredResponseError("action ledger Job ownership mismatch")
+            if (
+                record.attempt_count != attempt_count
+                or record.lease_epoch != lease_epoch
+                or record.worker_id != worker_id
+                or record.input_identity != input_identity
+            ):
+                continue
+            if record.final_status == "pending" or not record.attempts:
+                raise StructuredResponseError("evidence action ledger is not terminal")
+            latest_attempt = max(
+                record.attempts.values(),
+                key=lambda attempt: (attempt.retry_ordinal, attempt.revision),
+            )
+            if latest_attempt.status != record.final_status:
+                raise StructuredResponseError(
+                    "evidence action ledger terminal status mismatch"
+                )
+            if record.final_status in terminal_statuses:
+                return True
+        return False
+
     def _validate_result_ledger_pair(
         self,
         result: AlgorithmResult,
@@ -282,6 +343,8 @@ class FinalizationGate:
         trusted_identity: Any,
         rag_evidence: Mapping[str, Any] | None = None,
         web_evidence: Mapping[str, Any] | None = None,
+        route_decision: str | None = None,
+        web_search_enabled: bool | None = None,
     ) -> FinalAnalysisDecision:
         """校验并返回可安全交给 report 的 decision 副本。"""
 
@@ -385,6 +448,37 @@ class FinalizationGate:
                     rule="no_valid_algorithm_without_invocation",
                 )
 
+        # 分析路由下不允许“一个算法都没跑”就交证据型结论：这类报告没有主图，
+        # 也不是用户要的结果。算法真的返回未就绪或失败时会留下算法结果，不受影响。
+        if (
+            route_decision == ANALYSIS_ROUTE
+            and not results
+            and normalized_decision.outcome
+            in {"evidence_only", "no_valid_algorithm"}
+        ):
+            raise StructuredResponseError(
+                "analysis route requires at least one algorithm result",
+                rule="analysis_route_without_algorithm_result",
+            )
+
+        if (
+            route_decision == ANALYSIS_ROUTE
+            and web_search_enabled is True
+            and not self._has_current_terminal_tool_invocation(
+                ledger,
+                tool_name="web_evidence_search",
+                job_id=job_id,
+                attempt_count=current_attempt,
+                lease_epoch=current_lease,
+                worker_id=current_worker,
+                input_identity=current_input,
+            )
+        ):
+            raise StructuredResponseError(
+                "analysis route requires at least one web evidence invocation",
+                rule="analysis_route_without_web_invocation",
+            )
+
         return normalized_decision
 
 
@@ -455,6 +549,15 @@ FINALIZATION_RETRY_HINTS: dict[str, str] = {
     ),
     "no_valid_algorithm_without_invocation": (
         "outcome=no_valid_algorithm 必须建立在本次真实算法调用之上。"
+    ),
+    "analysis_route_without_algorithm_result": (
+        "本次运行要求执行因果分析，但还没有任何算法调用结果。请至少调用一个算法工具"
+        "（例如 causal_pc 或 causal_direct_lingam），并在 result_assessments 中给出它的"
+        "取舍；如果算法工具返回未就绪或失败，按它的真实状态提交 outcome。"
+    ),
+    "analysis_route_without_web_invocation": (
+        "本次运行已开启联网搜索。请先调用一次 web_evidence_search 并等待真实返回，"
+        "即使没有结果或服务暂不可用，也要保留该真实状态后再提交最终决策。"
     ),
 }
 

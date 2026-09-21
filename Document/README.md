@@ -43,6 +43,7 @@
 - [`development/chat-frontend.md`](development/chat-frontend.md)：普通用户应用 Vue 前端的 `/dashboard` 入口、地址与会话映射、SSE、状态边界、构建、验收和回退。
 - [`../windows-client/README.md`](../windows-client/README.md)：Windows WebView2 桌面壳的独立依赖、配置、打包和 smoke 验收入口。
 - [`development/observability.md`](development/observability.md)：日志字段、事件目录、上下文关联、降噪、敏感信息边界和验收状态。
+- [`development/agent-tool-routing-history.md`](development/agent-tool-routing-history.md)：因果 MCP、RAG 与联网搜索从旧父图到 Deep Agent 的工具选择契约历史与调研结论。
 - [`documentation.md`](documentation.md)：文档归属、维护、链接和日志规则。
 
 ### RAG、联网搜索与评测

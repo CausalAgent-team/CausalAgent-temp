@@ -535,15 +535,29 @@ def _evidence_source_id(
     *,
     source_url: Any,
     source_title: Any,
-    default_kind: str,
+    kind: str,
 ) -> str | None:
+    """按证据通道构造来源；kind 由调用方显式给出，url 只作为可点击地址。"""
+
     url = source_url if isinstance(source_url, str) and source_url.strip() else None
     title = source_title if isinstance(source_title, str) and source_title.strip() else None
-    if url:
-        return index.add_source(kind="web", title=title or url, url=url)
     if title:
-        return index.add_source(kind=default_kind, title=title)
+        return index.add_source(kind=kind, title=title, url=url)
+    if url:
+        return index.add_source(kind=kind, title=url, url=url)
     return None
+
+
+def _evidence_item(raw: Any) -> Mapping[str, Any] | None:
+    """把 State 中的证据对象归一化成可读取的映射；不支持的形态返回 None。"""
+
+    if isinstance(raw, Mapping):
+        return raw
+    model_dump = getattr(raw, "model_dump", None)
+    if not callable(model_dump):
+        return None
+    dumped = model_dump(mode="json")
+    return dumped if isinstance(dumped, Mapping) else None
 
 
 def _add_rag_evidence(
@@ -551,25 +565,26 @@ def _add_rag_evidence(
     rag_evidence: Mapping[str, Any] | None,
 ) -> None:
     for raw in dict(rag_evidence or {}).values():
-        if not isinstance(raw, Mapping):
+        item = _evidence_item(raw)
+        if item is None:
             continue
         source_id = _evidence_source_id(
             index,
-            source_url=raw.get("source_url"),
-            source_title=raw.get("source_title"),
-            default_kind="knowledge_base",
+            source_url=item.get("source_url"),
+            source_title=item.get("source_title"),
+            kind="knowledge_base",
         )
         if source_id is None:
             continue
         locator: dict[str, Any] = {}
-        if isinstance(raw.get("locator"), str) and raw["locator"].strip():
-            locator["locator"] = raw["locator"]
-        if isinstance(raw.get("modality"), str) and raw["modality"].strip():
-            locator["modality"] = raw["modality"]
+        if isinstance(item.get("locator"), str) and item["locator"].strip():
+            locator["locator"] = item["locator"]
+        if isinstance(item.get("modality"), str) and item["modality"].strip():
+            locator["modality"] = item["modality"]
         index.add_evidence(
             source_ids=[source_id],
             locator=locator,
-            description=raw.get("snippet") or "",
+            description=item.get("snippet") or "",
         )
 
 
@@ -578,23 +593,24 @@ def _add_web_evidence(
     web_evidence: Mapping[str, Any] | None,
 ) -> None:
     for raw in dict(web_evidence or {}).values():
-        if not isinstance(raw, Mapping):
+        item = _evidence_item(raw)
+        if item is None:
             continue
         source_id = _evidence_source_id(
             index,
-            source_url=raw.get("source_url"),
-            source_title=raw.get("source_title"),
-            default_kind="web",
+            source_url=item.get("source_url"),
+            source_title=item.get("source_title"),
+            kind="web",
         )
         if source_id is None:
             continue
         locator: dict[str, Any] = {}
-        if isinstance(raw.get("locator"), str) and raw["locator"].strip():
-            locator["locator"] = raw["locator"]
+        if isinstance(item.get("locator"), str) and item["locator"].strip():
+            locator["locator"] = item["locator"]
         index.add_evidence(
             source_ids=[source_id],
             locator=locator,
-            description=raw.get("snippet") or "",
+            description=item.get("snippet") or "",
         )
 
 

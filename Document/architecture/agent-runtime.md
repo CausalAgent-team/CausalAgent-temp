@@ -70,9 +70,9 @@ CDFM v0.1 在 runner 内保持 `directed_graph` 和输入列顺序，按 `adjace
 
 ## RAG 与 Web evidence
 
-`rag_evidence_search` 调用 `RagService.get_evidence()`，不调用旧 RAG answer model。worker 启动只校验 active release，不加载 Chroma、BM25 或 embedding；第一次真实查询时才在进程内初始化 RAG runtime。结果以受控 evidence reference、snippet、来源定位、分数、release 和状态写入子图 State，再投影为 report formatter 使用的引用摘要。RAG 的排名编号和 Web 的相关性分数都属于单次查询，因此写入 State 和 ToolMessage 前会用稳定 invocation id 限定 evidence reference；同一调用重放保持幂等，不同并行查询即使都返回 `E1` 或同一来源也不会占用同一个 reducer key。
+`rag_evidence_search` 调用 `RagService.get_evidence()`，不调用旧 RAG answer model。知识库证据工具由 Agent 根据当前问题自主判断是否调用；未调用不构成终态校验失败，实际调用后仍必须保留真实的 terminal Action Ledger 状态，不能伪造证据或结果。worker 启动只校验 active release，不加载 Chroma、BM25 或 embedding；第一次真实查询时才在进程内初始化 RAG runtime。结果以受控 evidence reference、snippet、来源定位、分数、release 和状态写入子图 State，再投影为 report formatter 使用的引用摘要。知识库证据的来源展示名由 release manifest 的 `document_id → relative_path` 解析，manifest 未覆盖时才回退到检索块元数据；`asset_uri` 是内部资源路径，不充当 URL。RAG 的排名编号和 Web 的相关性分数都属于单次查询，因此写入 State 和 ToolMessage 前会用稳定 invocation id 限定 evidence reference；同一调用重放保持幂等，不同并行查询即使都返回 `E1` 或同一来源也不会占用同一个 reducer key。
 
-`web_evidence_search` 返回 SearXNG 学术结果的 snippet 与来源元数据，不抓取网页正文。每次调用读取 `AgentRunContext.web_search_enabled`；关闭时返回 `WEB_SEARCH_DISABLED` 且不触网。RAG/Web 的异常只转换为受控状态和安全错误码，不把异常正文、查询参数或 provider 数据带入公共事件。
+`web_evidence_search` 返回 SearXNG 学术结果的 snippet 与来源元数据，不抓取网页正文。每次调用读取 `AgentRunContext.web_search_enabled`；关闭时返回 `WEB_SEARCH_DISABLED` 且不触网。分析运行在 `web_search_enabled=true` 时按运行注入“至少调用一次 Web evidence”约束，并由 `FinalizationGate` 校验当前 Job attempt 的 terminal Action Ledger；未开启时不强制联网。RAG/Web 的异常只转换为受控状态和安全错误码，不把异常正文、查询参数或 provider 数据带入公共事件。
 
 旧 `build_graph()` 的固定 `mcp → rag → web_search` 子图只作为兼容路径保留，不是 worker 当前生产入口。
 
@@ -84,12 +84,16 @@ Deep Agent 使用 `ToolStrategy(FinalAnalysisDecision)` 生成 `structured_respo
 - AlgorithmResult 与 Action Ledger 的 invocation、终态和结果引用一致；
 - provenance 属于当前 Job、attempt、lease、worker 与冻结输入；
 - 每个有效算法结果都有唯一取舍，主结果满足 outcome 约束。
+- 分析运行（父图 `route_decision=fold`，含 `context_switch` 之后的 fold）在没有任何算法结果时，不得提交 `evidence_only` 或 `no_valid_algorithm`。
+- `web_search_enabled=true` 时，分析运行必须有一次 `web_evidence_search` terminal 调用；允许真实返回无结果/不可用状态，但不能零调用完成。RAG 是否调用由 Agent 自主决策。
 
-最终决策的两套引用命名空间不混用：`result_assessments`、`primary_result_ref`、`conflicts.result_refs` 与 `revision_proposals.result_ref` 只接受本次运行返回的算法结果引用；RAG/Web 证据引用只能出现在 `revision_proposals.evidence_refs`。该分工同时写在结构化字段描述、系统提示和 Gate 校验中，避免模型把“证据不采用”写进算法结果取舍。
+进入 Deep Agent 的运行都是分析运行：`agent` 的 `start_analysis`/`rerun_analysis` 直接路由到 `fold`，`context_switch` 也会把 `route_decision` 改写成后续节点名。因此父图投影时按运行追加“必须至少调用一个算法工具”这一条系统约束；当本 Job 开启联网搜索时再追加“必须至少调用一次 `web_evidence_search`”，RAG 不追加强制调用约束，所有约束都不写进 worker 级系统提示词。
+
+最终决策的两套引用命名空间不混用：`result_assessments`、`primary_result_ref`、`conflicts.result_refs` 与 `revision_proposals.result_ref` 只接受本次运行返回的算法结果引用；RAG/Web 证据引用只能出现在 `revision_proposals.evidence_refs`。该分工以及“开启联网搜索时必须实际完成一次 Web 检索”的要求同时写在按运行提示和 Gate 校验中，RAG 是否检索由 Agent 自主判断，避免模型把“证据不采用”写进算法结果取舍。
 
 第一次校验失败时，父图把失败映射为稳定的规则码，再生成一条脱敏修正指令（包含被违反的具体引用规则）交回同一个 Deep Agent 子图；第二次仍失败则设置 `finalization_status=degraded` 并生成安全报告。身份、账本或状态一致性问题不带规则码，修正指令保持通用措辞，不把内部问题包装成模型可修正的指令。每次 Gate 拒绝都会发布一条 `progress` 阶段说明：可修正时挂在 `finalization_gate` 阶段并给出同一份修正要求，降级时说明本次仅基于已验证输入生成报告；第二次 Deep Agent 启动修正时，新阶段同样收到一条 `progress` 说明，指出该阶段沿用已有工具结果、不重复调用工具。`degraded` 不公开未经验证的主图或最终选择，但报告成功时 Job 仍以 `succeeded` 收敛。校验通过时设置 `finalization_status=valid`，并把内部结果引用转换为公开算法名称后发布最终决策说明。
 
-报告节点让模型只产出 `ReportDraft`：报告标题、块结构、Markdown 文本和资源/证据引用。图表资源、因果图模型、来源和证据全部由后端注入并校验，块 ID 重复、块类型未知、`asset_key` 不存在或类型不匹配、`evidence_id` 不存在都会进入节点受控错误路径并生成降级报告文档，不保存部分报告。父 State 用 `chart_assets` 保存预处理阶段生成的结构化图表资源，用 `report_document` 保存后端装配完成的结构化报告文档；报告追问只使用文档摘要、资源说明、来源说明和证据说明，不把图表数据、因果图模型或完整文档塞进提示词。新报告不再依赖 `visualization_mapping`、Base64 图片、HTML 图片标签和 `[[CHART:...]]` 占位符。
+报告节点让模型只产出 `ReportDraft`：报告标题、块结构、Markdown 文本和资源/证据引用。图表资源、因果图模型、来源和证据全部由后端注入并校验，块 ID 重复、块类型未知、`asset_key` 不存在或类型不匹配、`evidence_id` 不存在都会进入节点受控错误路径并生成降级报告文档，不保存部分报告。来源类别按证据通道（输入文件、知识库、联网检索）显式给出，不根据是否存在 URL 推断。报告装配还会把正文中出现且属于本次证据清单的 `ev_...` ID 回填到对应 `markdown.evidence_refs`，兼容模型漏填结构化字段；前端来源页脚据此提供“定位正文”。父 State 用 `chart_assets` 保存预处理阶段生成的结构化图表资源，用 `report_document` 保存后端装配完成的结构化报告文档；报告追问只使用文档摘要、资源说明、来源说明和证据说明，不把图表数据、因果图模型或完整文档塞进提示词。新报告不再依赖 `visualization_mapping`、Base64 图片、HTML 图片标签和 `[[CHART:...]]` 占位符。
 
 算法 Tool 的模型可见参数允许附带 `public_decision.summary`。middleware 在科学参数校验和执行前剥离该字段；有效说明写入 `decision_kind=algorithm` 的公共事件，缺失或格式无效不会阻止算法执行。`rag_evidence_search` 与 `web_evidence_search` 使用同一 envelope，并在外部检索前剥离该字段，写入 `decision_kind=evidence` 的公共事件。两类工具说明都不进入 Adapter、MCP、检索器入参。普通 assistant content、ToolMessage、工具参数、完整工具结果、provider ID、result reference 和隐藏推理都不会因此公开。
 

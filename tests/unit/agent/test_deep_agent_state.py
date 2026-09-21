@@ -11,6 +11,68 @@ from Agent.deep_agent.state import (
     to_deep_agent_input,
 )
 from Agent.deep_agent_tools.models import DataProfile
+from Agent.deep_agent.prompts import (
+    MANDATORY_ALGORITHM_INSTRUCTION,
+    MANDATORY_WEB_INSTRUCTION,
+)
+
+
+ANALYSIS_PARENT = {
+    "messages": [],
+    "analysis_question": "question",
+    "analysis_parameters": {"target": "y"},
+    "file_summary": {"rows": 10, "columns": ["x", "y"]},
+}
+
+
+def test_analysis_route_requires_algorithm_but_leaves_rag_optional() -> None:
+    """分析运行强制算法调用，但知识库检索仍由 Agent 自主判断。"""
+
+    projected = to_deep_agent_input({**ANALYSIS_PARENT, "route_decision": "fold"})
+
+    assert MANDATORY_ALGORITHM_INSTRUCTION in [
+        message["content"] for message in projected["messages"]
+    ]
+    assert all(
+        "必须至少调用一次 rag_evidence_search" not in message["content"]
+        for message in projected["messages"]
+    )
+
+
+def test_non_analysis_route_has_no_algorithm_requirement() -> None:
+    """非分析路由不会带着“必须调用算法”的约束启动 Deep Agent。"""
+
+    projected = to_deep_agent_input(
+        {**ANALYSIS_PARENT, "route_decision": "inquiry_answer"}
+    )
+
+    assert MANDATORY_ALGORITHM_INSTRUCTION not in [
+        message["content"] for message in projected["messages"]
+    ]
+
+
+def test_enabled_web_search_requires_a_web_evidence_call() -> None:
+    """开启联网搜索的分析运行必须把 Web 检索合同注入 Deep Agent。"""
+
+    projected = to_deep_agent_input(
+        {**ANALYSIS_PARENT, "route_decision": "fold", "web_search_enabled": True}
+    )
+
+    assert MANDATORY_WEB_INSTRUCTION in [
+        message["content"] for message in projected["messages"]
+    ]
+
+
+def test_disabled_web_search_has_no_web_requirement() -> None:
+    """关闭联网搜索时不向模型注入必须联网的约束。"""
+
+    projected = to_deep_agent_input(
+        {**ANALYSIS_PARENT, "route_decision": "fold", "web_search_enabled": False}
+    )
+
+    assert MANDATORY_WEB_INSTRUCTION not in [
+        message["content"] for message in projected["messages"]
+    ]
 
 
 def test_state_always_has_empty_ledger_and_independent_reducers() -> None:

@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Mapping
 from typing import Annotated, Any, Literal, Union
@@ -305,6 +306,42 @@ def iter_report_blocks(blocks: list[ReportBlock]):
             yield from iter_report_blocks(block.children)
 
 
+_EVIDENCE_ID_PATTERN = re.compile(r"\bev_[A-Za-z0-9_-]+\b")
+
+
+def _bind_textual_evidence_refs(
+    blocks: list[ReportBlock],
+    evidence_ids: set[str],
+) -> list[ReportBlock]:
+    """把正文中已经写出的合法证据 ID 绑定回 markdown 块。
+
+    模型有时会在正文中写出 ``ev_...``，但漏填结构化的 ``evidence_refs``。
+    只从本次报告的证据清单中取 ID，避免把正文里的任意字符串变成引用。
+    """
+
+    def bind(block: ReportBlock) -> ReportBlock:
+        if isinstance(block, MarkdownBlock):
+            textual_refs = [
+                evidence_id
+                for evidence_id in _EVIDENCE_ID_PATTERN.findall(block.content)
+                if evidence_id in evidence_ids
+            ]
+            merged_refs = list(dict.fromkeys([*block.evidence_refs, *textual_refs]))
+            if merged_refs == block.evidence_refs:
+                return block
+            return block.model_copy(update={"evidence_refs": merged_refs})
+
+        if isinstance(block, SectionBlock):
+            children = [bind(child) for child in block.children]
+            if children == block.children:
+                return block
+            return block.model_copy(update={"children": children})
+
+        return block
+
+    return [bind(block) for block in blocks]
+
+
 def build_report_document(
     draft: ReportDraft,
     *,
@@ -325,6 +362,7 @@ def build_report_document(
     available_sources = list(sources or [])
     evidence_ids = {item.evidence_id for item in available_evidence}
     source_ids = {item.source_id for item in available_sources}
+    normalized_blocks = _bind_textual_evidence_refs(validated_draft.blocks, evidence_ids)
 
     for evidence in available_evidence:
         unknown_sources = [item for item in evidence.source_ids if item not in source_ids]
@@ -332,7 +370,7 @@ def build_report_document(
             raise ReportSchemaError("证据引用了不存在的来源")
 
     seen_block_ids: set[str] = set()
-    for block in iter_report_blocks(validated_draft.blocks):
+    for block in iter_report_blocks(normalized_blocks):
         if block.id in seen_block_ids:
             raise ReportSchemaError(f"报告块 ID 重复: {block.id}")
         seen_block_ids.add(block.id)
@@ -357,7 +395,7 @@ def build_report_document(
     return ReportDocument(
         report_id=new_report_id(),
         title=validated_draft.title,
-        blocks=validated_draft.blocks,
+        blocks=normalized_blocks,
         assets=available_assets,
         sources=available_sources,
         evidence_refs=available_evidence,

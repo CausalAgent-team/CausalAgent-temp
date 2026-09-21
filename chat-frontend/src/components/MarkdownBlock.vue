@@ -2,25 +2,15 @@
 import { computed } from 'vue'
 import { renderMarkdown } from '../renderers/markdown-adapter'
 
-const props = defineProps<{
-  content: string
-  evidenceRefs: string[]
-  evidence: Map<string, string>
-}>()
+const props = defineProps<{ content: string }>()
 
 // Markdown 解析只经过适配器；报告文本块复用普通聊天的同一套 marked 行为。
 const html = computed(() => renderMarkdown(props.content))
-const notes = computed(() => props.evidenceRefs
-  .map((id) => ({ id, description: props.evidence.get(id) ?? '' }))
-  .filter((item) => item.description))
 </script>
 
 <template>
   <div class="report-markdown">
     <div class="markdown-content" v-html="html"></div>
-    <ul v-if="notes.length" class="report-evidence">
-      <li v-for="note in notes" :key="note.id">{{ note.description }}</li>
-    </ul>
   </div>
 </template>
 
@@ -63,12 +53,4 @@ const notes = computed(() => props.evidenceRefs
   border-left: 3px solid var(--report-border, #e2e5e9);
 }
 
-.report-evidence {
-  margin: 10px 0 0;
-  padding: 8px 12px 8px 26px;
-  font-size: 13px;
-  color: var(--color-text-muted, #6b7280);
-  background: var(--report-muted-background, #eef1f4);
-  border-radius: 6px;
-}
 </style>

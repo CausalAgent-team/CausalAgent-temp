@@ -51,7 +51,7 @@ function documentPayload(overrides: Record<string, unknown> = {}) {
 }
 
 describe('ReportRenderer', () => {
-  it('renders the report title, markdown lists, tables and evidence hints', () => {
+  it('renders the report title, markdown lists and tables without inline evidence text', () => {
     const wrapper = mount(ReportRenderer, { props: { document: documentPayload() } })
 
     expect(wrapper.get('.report-title').text()).toBe('因果分析报告')
@@ -64,8 +64,74 @@ describe('ReportRenderer', () => {
     ])
     expect(wrapper.findAll('.report-markdown table td').map((cell) => cell.text())).toContain('正相关')
     expect(wrapper.get('.report-markdown h2').text()).toBe('结论')
-    expect(wrapper.get('.report-evidence').text()).toContain('年龄字段的相关性统计结果')
+    expect(wrapper.get('.report-markdown').text()).not.toContain('年龄字段的相关性统计结果')
     expect(wrapper.get('.report-sources').text()).toContain('data.csv')
+    expect(wrapper.get('.report-sources').text()).toContain('年龄字段的相关性统计结果')
+    expect(wrapper.get('.report-evidence-jump').text()).toBe('定位正文')
+  })
+
+  it('keeps knowledge base citations collapsed until the user expands them', async () => {
+    const wrapper = mount(ReportRenderer, {
+      props: {
+        document: documentPayload({
+          sources: [{ source_id: 'src_kb', kind: 'knowledge_base', title: 'Pearl_2009_Causality.pdf' }],
+          evidence_refs: [
+            {
+              evidence_id: 'ev_1',
+              source_ids: ['src_kb'],
+              locator: { locator: 'Pearl_2009_Causality.pdf#page=372#chunk=unit_x', modality: 'text' },
+              description: '类型：text 标题：Pearl_2009_Causality.pdf 倾向得分方法可用于调整估计量。',
+            },
+          ],
+        }),
+      },
+    })
+
+    expect(wrapper.get('.report-sources').text()).toContain('Pearl_2009_Causality.pdf')
+    expect(wrapper.get('.report-evidence-toggle').text()).toBe('')
+    expect(wrapper.find('.report-evidence-toggle-icon').exists()).toBe(true)
+    expect(wrapper.get('.report-evidence-toggle').attributes('aria-label')).toBe('展开知识库引用')
+    expect(wrapper.get('.report-evidence-toggle').attributes('aria-expanded')).toBe('false')
+    expect(wrapper.find('.report-evidence-text').exists()).toBe(false)
+
+    await wrapper.get('.report-evidence-toggle').trigger('click')
+
+    expect(wrapper.get('.report-evidence-page').text()).toBe('第 372 页')
+    expect(wrapper.get('.report-evidence-text').text()).toBe('倾向得分方法可用于调整估计量。')
+    expect(wrapper.get('.report-evidence-toggle').text()).toBe('')
+    expect(wrapper.get('.report-evidence-toggle').attributes('aria-label')).toBe('收起知识库引用')
+    expect(wrapper.get('.report-evidence-toggle').attributes('aria-expanded')).toBe('true')
+  })
+
+  it('recovers a jump target when the model wrote an evidence id in markdown content', () => {
+    const wrapper = mount(ReportRenderer, {
+      props: {
+        document: documentPayload({
+          blocks: [
+            {
+              id: 'markdown_summary',
+              type: 'markdown',
+              content: '结论正文（证据 ev_1）',
+            },
+          ],
+        }),
+      },
+    })
+
+    expect(wrapper.get('.report-evidence-jump').text()).toBe('定位正文')
+  })
+
+  it('jumps from a source citation back to the citing block', async () => {
+    const wrapper = mount(ReportRenderer, {
+      props: { document: documentPayload() },
+      attachTo: document.body,
+    })
+
+    await wrapper.get('.report-evidence-jump').trigger('click')
+
+    const target = document.getElementById('report-block-markdown_summary')
+    expect(target?.classList.contains('is-cited-target')).toBe(true)
+    wrapper.unmount()
   })
 
   it('renders a histogram chart from the validated asset', () => {

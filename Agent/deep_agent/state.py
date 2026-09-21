@@ -16,6 +16,11 @@ from Agent.deep_agent_tools.models import (
     merge_algorithm_results,
     merge_evidence_results,
 )
+from Agent.deep_agent.prompts import (
+    ANALYSIS_ROUTE,
+    MANDATORY_ALGORITHM_INSTRUCTION,
+    MANDATORY_WEB_INSTRUCTION,
+)
 
 try:  # pragma: no cover - 真实依赖在 Docker/Spike 环境中验证
     from deepagents.graph import DeepAgentState as _OfficialDeepAgentState
@@ -220,6 +225,16 @@ def to_deep_agent_input(
             ),
         },
     ]
+    if str(parent_state.get("route_decision") or "") == ANALYSIS_ROUTE:
+        messages = [
+            *messages,
+            {"role": "system", "content": MANDATORY_ALGORITHM_INSTRUCTION},
+        ]
+        if parent_state.get("web_search_enabled") is True:
+            messages = [
+                *messages,
+                {"role": "system", "content": MANDATORY_WEB_INSTRUCTION},
+            ]
     retry_instruction = (
         None
         if reset_execution_artifacts

@@ -318,6 +318,81 @@ def test_report_resources_carry_file_web_and_knowledge_base_sources() -> None:
     assert all(source.source_id.startswith("src_") for source in index.sources)
 
 
+def test_report_resources_accept_state_evidence_objects_and_dicts_equally() -> None:
+    """State 中保存的是 pydantic 证据对象；两种形态必须产出同一份来源与证据。"""
+    from Agent.deep_agent_tools.models import EvidenceResult
+
+    evidence = EvidenceResult(
+        evidence_ref="rag:mm_unit:1",
+        evidence_id="1",
+        snippet="知识库片段",
+        source_title="Pearl_2009_Causality.pdf",
+        locator="Pearl_2009_Causality.pdf#page=12#chunk=unit_a",
+        modality="page",
+        release_id="mm_unit",
+    )
+    shared = {
+        "file_summary": {"user_file_id": 7, "filename": "data.csv", "rows": 15, "columns": ["age"]},
+        "web_search_result": None,
+        "web_evidence": None,
+    }
+
+    as_object = build_report_resources(rag_evidence={"rag:mm_unit:1": evidence}, **shared)
+    as_mapping = build_report_resources(
+        rag_evidence={"rag:mm_unit:1": evidence.model_dump(mode="json")}, **shared
+    )
+
+    assert [source.kind for source in as_object.sources] == ["file", "knowledge_base"]
+    assert [source.model_dump(exclude={"source_id"}) for source in as_object.sources] == [
+        source.model_dump(exclude={"source_id"}) for source in as_mapping.sources
+    ]
+    assert [item.description for item in as_object.evidence_refs] == [
+        "知识库片段",
+        "data.csv 是本次因果分析使用的冻结数据文件。",
+    ]
+    assert [item.model_dump(exclude={"evidence_id", "source_ids"}) for item in as_object.evidence_refs] == [
+        item.model_dump(exclude={"evidence_id", "source_ids"}) for item in as_mapping.evidence_refs
+    ]
+    assert as_object.evidence_refs[0].locator == {
+        "locator": "Pearl_2009_Causality.pdf#page=12#chunk=unit_a",
+        "modality": "page",
+    }
+
+
+def test_knowledge_base_evidence_keeps_its_kind_when_it_has_a_url() -> None:
+    """知识库来源即使带可点击地址也保持 knowledge_base，不因 url 存在被判成 web。"""
+    index = build_report_resources(
+        file_summary=None,
+        web_search_result=None,
+        rag_evidence={
+            "rag:mm_unit:1": {
+                "evidence_ref": "rag:mm_unit:1",
+                "snippet": "知识库片段",
+                "source_title": "论文.pdf",
+                "source_url": "https://example.org/paper.pdf",
+            }
+        },
+        web_evidence=None,
+    )
+
+    assert [(source.kind, source.title, source.url) for source in index.sources] == [
+        ("knowledge_base", "论文.pdf", "https://example.org/paper.pdf")
+    ]
+
+
+def test_unsupported_evidence_payload_is_skipped_without_sources() -> None:
+    """无法归一化的证据载荷不产生来源，也不影响其它通道。"""
+    index = build_report_resources(
+        file_summary=None,
+        web_search_result=None,
+        rag_evidence={"broken": object()},
+        web_evidence=None,
+    )
+
+    assert index.sources == []
+    assert index.evidence_refs == []
+
+
 def test_report_graph_asset_prefers_postprocessed_revision() -> None:
     revised = nodes._report_graph_asset(_report_state(postprocess_result={"revised_graph": REVISED_GRAPH}))
     assert revised is not None
@@ -374,6 +449,22 @@ def test_report_node_injects_assets_and_evidence_without_sending_data_points() -
     assert '"inferred_type": "continuous"' in prompt
     assert "'asset_key'" not in prompt
     assert "value_counts" not in prompt
+
+
+def test_build_report_document_recovers_textual_evidence_ids_for_navigation() -> None:
+    document = build_report_document(
+        _draft([
+            {
+                "id": "markdown_result",
+                "type": "markdown",
+                "content": "结论正文（证据 ev_1）",
+            }
+        ]),
+        sources=[_source()],
+        evidence_refs=[_evidence()],
+    )
+
+    assert document.blocks[0].evidence_refs == ["ev_1"]
 
 
 def test_report_metadata_prompt_is_compact_json() -> None:
