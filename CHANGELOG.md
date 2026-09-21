@@ -1558,3 +1558,9 @@
   - 【共享映射】：新增 `build_diagnostics_from_runner_payload()`，把 runner 的 `n_samples`、`n_features` 和其余标量诊断统一映射为 `sample_count`、`variable_count` 与受限 `metrics`；worker 侧的 `result_from_runner_payload()` 与 causal-mcp 的 `service` 改用它，删掉服务端本地的重复实现，避免一侧白名单与 runner 键名不一致时诊断被静默丢弃。
   - 【文档】：`Document/architecture/mcp-runtime.md` 记录 runner 诊断的共享映射函数，并明确两侧不得各写一套键名白名单。
   - 【测试补充】：`tests/unit/agent/test_algorithm_adapters.py` 新增 legacy runner payload 的诊断映射用例；`tests/unit/agent/test_mcp_v2_contract.py` 的成功路径断言补充 `sample_count`、`variable_count` 与 `metrics` 映射结果。
+- 【前端设计系统：设计文档与共享组件包】
+  - 【文档体系】：新增 `Document/design-system/`，包含视觉方向决策（design-decision.md）、token 清单与原型变量映射（tokens.md）、共享组件契约（components.md）和四个前端改造前的样式现状与迁移顺序（current-state.md）；`Document/README.md` 增加导航，`Document/documentation.md` 增加主题归属，根 `AGENTS.md` 增加局部规则入口，新增 `packages/design-system/AGENTS.md`。
+  - 【视觉基础】：`packages/design-system/src/styles/` 从官网原型页面提取纸白到墨黑的灰阶、单字重字体栈、字号与行高、间距与阅读宽度、四档圆角、三层投影和动效时长与缓动，按基础取值与语义取值两层组织；颜色字面值只出现在 colors.css，声明放在 `@layer ca-tokens` 中，业务页面可以覆盖同名变量。
+  - 【品牌基础与字体】：品牌基础只包含字体、字重、焦点环、文字链接和减少动态规则，不重置外边距、不改变布局结构，因此可以按前端逐个页面引入；随包提供 Geist Sans 400 拉丁字形，中文回退系统无衬线。
+  - 【共享组件】：`packages/design-system/src/components/` 提供 CaButton、CaCard、CaBadge、CaPageHeader、CaTabs、CaInput、CaEmptyState、CaLoadingState 和 CaErrorState 九个基础组件，只开放受控变体，不接受自定义颜色、圆角或投影；标签页自带方向键与首尾跳转，输入控件自带标签绑定和错误描述关联。
+  - 【自检与开发入口】：`packages/design-system` 是独立 npm 工程，`npm run check` 执行类型检查和组件行为测试（变体类名、禁用与加载状态、键盘操作、无障碍关联和加载进度声明），`.npmrc` 固定 `legacy-peer-deps`，`node_modules` 进入忽略规则；`Document/development/setup.md` 与 `testing.md` 增加该包的开发入口和验证矩阵条目。四个前端尚未接入共享包。

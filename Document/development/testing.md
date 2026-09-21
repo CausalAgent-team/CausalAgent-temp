@@ -17,6 +17,7 @@
 | 普通用户应用 Vue component/Mock E2E | `chat-frontend/tests/components`、`tests/e2e-mock` | Composer、消息时间线、假流式草稿与公开决策展示，以及未登录跳转、已登录创建 Job/SSE 终态、会话地址、设置页和退出登录 |
 | 官网 Vue unit | `website-frontend/tests/unit` | 路由解析、登录回跳白名单、认证客户端和登录表单交互 |
 | RAG 评测台前端 | `app/rag_eval/frontend/test` | 审核工作流纯函数（`npm test`）、类型检查与生产构建 |
+| 共享设计系统组件 unit | `packages/design-system/tests` | 组件变体与状态类名、标签页键盘行为、输入控件的无障碍关联、空态/加载态/错误态的角色与进度声明 |
 | 前端页面入口 Flask 契约 | `tests/integration/deployment/test_frontend_entrypoints.py` | 四套入口与资源前缀、未登录跳转、权限拒绝、dist 缺失 fail-closed、缓存头、Docker builder/runtime、Compose 变量和忽略规则 |
 | Windows 桌面逻辑 | `windows-client/tests/test_config.py`、`test_navigation_policy.py`、`test_runtime.py`、`test_launcher.py` | 配置优先级、URL/origin 白名单、运行时错误和 Edge 事件策略，不创建真实窗口 |
 | Windows 壳层 smoke | `windows-client/tests/run_windows_smoke.py`、`test_windows_smoke.py` | 隔离 HTTP stub、真实 WebView2 Edge Chromium 页面加载和窗口退出；只在 Windows 桌面会话执行 |
@@ -234,6 +235,23 @@ docker compose -f docker-compose.test.yml run --rm unit-test python -m pytest -p
 ```bash
 python -m pytest tests/unit
 ```
+
+## 前端共享设计系统
+
+共享包的组件契约在 `packages/design-system/` 内自检，与任何前端工程相互独立：
+
+```powershell
+Push-Location packages/design-system
+npm ci
+npm run typecheck
+npm run test:unit
+npm run check
+Pop-Location
+```
+
+`npm run check` 覆盖类型检查和单元测试。测试断言的是组件的行为契约：变体与尺寸的类名、禁用和加载状态不接受点击、加载时保留可读的标签、标签页的方向键和首尾跳转与 `aria-controls` 关联、输入控件的标签绑定与错误描述、空态和错误态的定位方式，以及加载态的角色与进度声明。
+
+自检不证明视觉结果：颜色、字体、间距、圆角、投影和减少动态的表现必须在该前端接入之后，用真实页面在桌面端和移动端核对。组件设计 token 的核对以 `Document/design-system/tokens.md` 为准。
 
 ## 管理员前端
 
