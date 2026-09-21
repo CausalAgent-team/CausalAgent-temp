@@ -10,6 +10,7 @@
 | --- | --- | --- |
 | Session | MySQL `sessions` | 用户可见的会话容器，`id` 是 UUID 字符串；业务访问仍按 `session_id` 授权 |
 | Job | MySQL `analysis_jobs` | 长任务队列、状态、lease、重试、冻结文件快照、终态摘要和创建请求关联 |
+| 分析上下文 | MySQL `analysis_contexts` | 跨 Job 的业务事实：文件快照、分析参数、最新算法摘要、证据摘要和最新报告引用；一个 Session 可以有多个 |
 | Job 输入 | MySQL `analysis_job_inputs` | initial/resume 输入账本、顺序、问题 ID、幂等键和对应聊天消息 |
 | Job 事件 | MySQL `analysis_job_events` | SSE 时间线、生命周期事件和内部执行摘要 |
 | 文件对象 | MySQL `file_objects` | 按用户和 SHA-256 去重的不可变 BLOB |
@@ -29,6 +30,16 @@
 创建 Job 时，服务端在同一个 MySQL 事务中锁定并快照 `input_user_file_id`、对象 ID、文件 hash 和文件名，同时写入 initial `analysis_job_inputs` 和用户聊天消息。之后用户替换或清除浏览器草稿不会改变已创建 Job 的输入。
 
 文件预览、下载以及 Agent 真正读取文件内容都在主库事务内更新 `last_accessed_at` 和 `access_count`；命中已有对象的重复上传不计为访问。CSV 预览最多读取 256 KiB、100 行、50 列，单元格最多 1000 字符，并且只按文本处理。
+
+## 分析上下文与上下文绑定
+
+`analysis_contexts` 是跨 Job 的业务事实来源，保存创建时的文件快照（`input_user_file_id`、`file_object_id`、`file_hash`、`filename`）、分析参数（`target`、`treatment`、`analysis_question`）、最新结构化算法摘要、RAG/Web 证据摘要和最新报告引用。同一个 Session 可以存在多个上下文，`sessions.active_analysis_context_id` 只表示当前默认上下文；`sessions` 指向上下文的一侧不建外键，避免与 `analysis_contexts` 到 `sessions` 的级联删除形成环，所有上下文写入都按 `user_id + session_id` 校验归属。
+
+创建 Job 时，服务端在同一个 MySQL 事务里按冻结文件复用当前 active 上下文或新建上下文，并把 `analysis_context_id` 同时写入 `analysis_jobs` 和 initial `analysis_job_inputs`；resume 输入记录当时的上下文。fold 解析出 target/treatment 后回填参数，参数与已绑定上下文不一致时先复用同一文件上参数一致的历史上下文，没有才新建并切换 active 指针。分析成功才在终态事务里写回算法摘要、证据摘要和报告引用，失败或澄清不覆盖原有有效结果。
+
+用户在会话里用自然语言切换分析上下文时，切换事务同时更新 Session 默认指针、当前 Job 和当前输入账本的上下文绑定，并校验 worker、attempt 和 lease epoch。如果目标上下文的文件与 Job 当前冻结文件不同，同一个事务还会重写 `analysis_jobs` 的冻结文件快照：这是服务端主动的重新冻结，等价于把本次执行的文件输入改为目标上下文引用的文件。冻结快照仍然只由服务端写入，浏览器草稿不会改变它；目标上下文引用的文件已经被删除时，切换直接失败并返回澄清，不写入失效指针。
+
+删除 Session 时 `analysis_contexts` 随 `sessions` 级联删除，不需要单独的清理 outbox；上下文本身不产生 PostgreSQL checkpoint。旧 Session 和历史 Job 的 `analysis_context_id` 可以为空，下一次分析或追问时按需创建上下文。
 
 ## Job 状态和并发
 

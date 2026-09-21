@@ -514,6 +514,7 @@ def check_database_readiness():
                 "permissions",
                 "user_roles",
                 "role_permissions",
+                "analysis_contexts",
             ]
             cursor.execute(
                 """
@@ -601,7 +602,8 @@ def check_database_readiness():
                     'recovery_count', 'resume_count', 'input_user_file_id',
                     'input_object_id', 'input_file_hash', 'input_filename',
                     'current_question_id', 'current_waiting_prompt',
-                    'cancel_idempotency_key', 'cancel_request_fingerprint'
+                    'cancel_idempotency_key', 'cancel_request_fingerprint',
+                    'analysis_context_id'
                   )
                 """,
                 (database_settings.MYSQL_DATABASE,),
@@ -625,11 +627,73 @@ def check_database_readiness():
                 "current_waiting_prompt",
                 "cancel_idempotency_key",
                 "cancel_request_fingerprint",
+                "analysis_context_id",
             } - job_request_columns
             if missing_job_request_columns:
                 error_msg = (
                     "数据库关键字段缺失: "
                     f"{sorted(f'analysis_jobs.{name}' for name in missing_job_request_columns)}。"
+                    "请先运行 'python -m Database.bootstrap'。"
+                )
+                raise RuntimeError(error_msg)
+
+            cursor.execute(
+                """
+                SELECT table_name, column_name
+                FROM information_schema.columns
+                WHERE table_schema = %s
+                  AND (
+                    (
+                      table_name = 'sessions'
+                      AND column_name = 'active_analysis_context_id'
+                    )
+                    OR (
+                      table_name = 'analysis_job_inputs'
+                      AND column_name = 'analysis_context_id'
+                    )
+                    OR (
+                      table_name = 'analysis_contexts'
+                      AND column_name IN (
+                        'analysis_context_id', 'session_id', 'user_id', 'status',
+                        'file_object_id', 'file_hash', 'filename', 'target',
+                        'treatment', 'analysis_question', 'latest_algorithm_summary',
+                        'latest_rag_evidence', 'latest_web_evidence',
+                        'latest_report_message_id', 'latest_report_id'
+                      )
+                    )
+                  )
+                """,
+                (database_settings.MYSQL_DATABASE,),
+            )
+            context_columns = {(row[0], row[1]) for row in cursor.fetchall()}
+            required_context_columns = {
+                ("sessions", "active_analysis_context_id"),
+                ("analysis_job_inputs", "analysis_context_id"),
+            } | {
+                ("analysis_contexts", name)
+                for name in (
+                    "analysis_context_id",
+                    "session_id",
+                    "user_id",
+                    "status",
+                    "file_object_id",
+                    "file_hash",
+                    "filename",
+                    "target",
+                    "treatment",
+                    "analysis_question",
+                    "latest_algorithm_summary",
+                    "latest_rag_evidence",
+                    "latest_web_evidence",
+                    "latest_report_message_id",
+                    "latest_report_id",
+                )
+            }
+            missing_context_columns = required_context_columns - context_columns
+            if missing_context_columns:
+                error_msg = (
+                    "数据库关键字段缺失: "
+                    f"{sorted(f'{table}.{name}' for table, name in missing_context_columns)}。"
                     "请先运行 'python -m Database.bootstrap'。"
                 )
                 raise RuntimeError(error_msg)
@@ -728,6 +792,22 @@ def check_database_readiness():
                       table_name = 'rag_eval_datasets'
                       AND index_name = 'idx_rag_eval_datasets_list'
                     )
+                    OR (
+                      table_name = 'analysis_contexts'
+                      AND index_name = 'idx_analysis_contexts_session_updated'
+                    )
+                    OR (
+                      table_name = 'analysis_contexts'
+                      AND index_name = 'idx_analysis_contexts_user_session_status'
+                    )
+                    OR (
+                      table_name = 'analysis_jobs'
+                      AND index_name = 'idx_analysis_jobs_analysis_context'
+                    )
+                    OR (
+                      table_name = 'analysis_job_inputs'
+                      AND index_name = 'idx_analysis_job_inputs_analysis_context'
+                    )
                   )
                 """,
                 (database_settings.MYSQL_DATABASE,),
@@ -767,6 +847,10 @@ def check_database_readiness():
                 ("rag_eval_jobs", "idx_rag_eval_jobs_priority_queue"),
                 ("rag_eval_datasets", "uq_rag_eval_datasets_identity"),
                 ("rag_eval_datasets", "idx_rag_eval_datasets_list"),
+                ("analysis_contexts", "idx_analysis_contexts_session_updated"),
+                ("analysis_contexts", "idx_analysis_contexts_user_session_status"),
+                ("analysis_jobs", "idx_analysis_jobs_analysis_context"),
+                ("analysis_job_inputs", "idx_analysis_job_inputs_analysis_context"),
             }
             missing_indexes = required_indexes - critical_indexes
             if missing_indexes:

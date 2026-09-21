@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+from typing import Any
 from uuid import UUID, uuid4, uuid5
 
 from .models import McpInvocationContext, canonical_json_bytes
@@ -34,6 +35,22 @@ def new_message_execution_id() -> str:
     """为模型节点生成需在 checkpoint 提交前持久化的本地 fallback。"""
 
     return str(uuid4())
+
+
+def current_input_identity(identity: Any) -> str:
+    """读取可信身份当前有效的冻结输入摘要。
+
+    优先使用 invocation 内可刷新的引用；对只提供固定摘要的兼容身份对象回退到旧字段，
+    因此调用方不需要区分两种身份实现。
+    """
+
+    resolver = getattr(identity, "current_input_identity", None)
+    if callable(resolver):
+        return str(resolver())
+    return str(
+        getattr(identity, "input_snapshot_digest", None)
+        or getattr(identity, "input_identity", "")
+    )
 
 
 def resolve_response_identity(

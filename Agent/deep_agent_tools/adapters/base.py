@@ -300,7 +300,10 @@ class BaseAlgorithmAdapter(ABC):
             raise ValueError("provider_call_id must be a non-blank string")
         if retry_ordinal < 0:
             raise ValueError("retry_ordinal must be non-negative")
-        expected_input_identity = getattr(trusted_context, "input_snapshot_digest", None)
+        resolver = getattr(trusted_context, "current_input_identity", None)
+        expected_input_identity = resolver() if callable(resolver) else None
+        if expected_input_identity is None:
+            expected_input_identity = getattr(trusted_context, "input_snapshot_digest", None)
         if expected_input_identity is None:
             expected_input_identity = getattr(trusted_context, "input_identity", None)
         if adapter_input.input_identity != expected_input_identity:

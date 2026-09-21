@@ -11,7 +11,11 @@ from typing import Any, Literal
 
 from pydantic import Field
 
-from .identity import build_deep_agent_step_id, build_invocation_id
+from .identity import (
+    build_deep_agent_step_id,
+    build_invocation_id,
+    current_input_identity,
+)
 from .models import ActionAttempt, InvocationRecord, PublicDecision, canonical_json_bytes
 
 
@@ -306,7 +310,7 @@ def build_terminal_invocation(
         attempt_count=int(identity.runtime_context.trusted_identity.attempt_count),
         lease_epoch=int(identity.runtime_context.trusted_identity.lease_epoch),
         worker_id=identity.runtime_context.trusted_identity.worker_id,
-        input_identity=identity.runtime_context.trusted_identity.input_identity,
+        input_identity=current_input_identity(identity.runtime_context.trusted_identity),
         attempts={
             retry_ordinal: ActionAttempt(
                 retry_ordinal=retry_ordinal,

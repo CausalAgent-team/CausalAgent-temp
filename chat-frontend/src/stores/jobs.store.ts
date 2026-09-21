@@ -1,8 +1,14 @@
 import { defineStore } from 'pinia'
 import type { DecodedSseEvent } from '../api/events.schemas'
 import type { ActiveJobResponse } from '../api/jobs.schemas'
-import type { BackendJobStatus, JobConnectionState, JobRecord } from '../types/domain'
-import { createJobRecord, reduceJobEvent, seedJobFromPhase, settleDecision as settleDecisionState } from '../runtime/jobs/event-reducer'
+import type { BackendJobStatus, ExecutionPhase, JobConnectionState, JobRecord, ThinkingProjection } from '../types/domain'
+import {
+  createJobRecord,
+  reduceJobEvent,
+  seedJobFromPhase,
+  settleDecision as settleDecisionState,
+  startResumePhase,
+} from '../runtime/jobs/event-reducer'
 import { observeActiveEventId } from '../runtime/jobs/event-cursor'
 
 interface JobsState {
@@ -48,10 +54,31 @@ export const useJobsStore = defineStore('jobs', {
       this.records[jobId] = record
       return record
     },
-    seedPhase(sessionId: string, phase: { analysisJobId?: string; status: string; elapsedSeconds: number; lastEventId: number; events: Array<Record<string, unknown>> }): void {
-      if (!phase.analysisJobId) return
-      if (this.records[phase.analysisJobId]) return
-      this.records[phase.analysisJobId] = seedJobFromPhase(phase.analysisJobId, sessionId, phase)
+    seedPhase(sessionId: string, phase: ExecutionPhase): void {
+      const jobId = phase.analysisJobId
+      if (!jobId) return
+      const inputId = phase.analysisJobInputId ?? null
+      const existing = this.records[jobId]
+      if (!existing) {
+        this.records[jobId] = seedJobFromPhase(jobId, sessionId, phase)
+        return
+      }
+      if (existing.phaseInputId === null) {
+        // 本页实时创建的记录已经积累了进度，只补记它代表的分析输入。
+        if (inputId !== null) existing.phaseInputId = inputId
+        return
+      }
+      // 同一 Job 的后续输入以更靠后的阶段为准；更早的历史阶段不覆盖运行态记录。
+      if (inputId === null || inputId <= existing.phaseInputId) return
+      this.records[jobId] = seedJobFromPhase(jobId, sessionId, phase)
+    },
+    /** 追问恢复：把上一阶段的执行记录交回调用方固定，运行态记录从新阶段继续。 */
+    startResume(jobId: string): ThinkingProjection | null {
+      const record = this.records[jobId]
+      if (!record) return null
+      const next = startResumePhase(record)
+      this.records[jobId] = next.state
+      return next.snapshot
     },
     observeActive(job: ActiveJobResponse): JobRecord {
       const status = isBackendStatus(job.status) ? job.status : 'queued'

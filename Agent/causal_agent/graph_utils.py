@@ -64,6 +64,15 @@ def _final_attempt(runtime: Runtime, error: NodeError) -> int:
     return 1
 
 
+def _cause_code(error: NodeError) -> str | None:
+    """读取底层异常的稳定原因代码；没有时返回 None，日志层会跳过该键。"""
+    underlying = _underlying_error(error)
+    if underlying is None:
+        return None
+    value = getattr(underlying, "safe_cause_code", None)
+    return value if isinstance(value, str) and value else None
+
+
 def _underlying_error(error: NodeError) -> BaseException | None:
     candidate = getattr(error, "error", error)
     return candidate if isinstance(candidate, BaseException) else None
@@ -92,9 +101,27 @@ def _safe_exc_info(error: NodeError):
     return type(underlying), underlying, underlying.__traceback__
 
 
+def _accepts_keyword_argument(func, name: str) -> bool:
+    """判断节点函数是否显式声明了某个可传入的关键字参数。"""
+    try:
+        parameters = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return False
+    parameter = parameters.get(name)
+    if parameter is None:
+        return False
+    return parameter.kind in (
+        inspect.Parameter.KEYWORD_ONLY,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    )
+
+
 def bind_node(func, *, event_node_name: str | None = None, **bound_kwargs):
     """绑定节点依赖，并通过 custom 流暴露真实的节点执行尝试。"""
     node_name = event_node_name or getattr(func, "__name__", "bound_node").removesuffix("_node")
+    # 只有显式声明 runtime 参数的节点才拿到 invocation 运行上下文；
+    # 其余节点保持原有的 (state, **bound_kwargs) 调用契约。
+    wants_runtime = _accepts_keyword_argument(func, "runtime")
 
     async def _node(state, runtime: Runtime):
         """执行函数节点，并把 attempt 边界写入 custom 流。"""
@@ -112,7 +139,10 @@ def bind_node(func, *, event_node_name: str | None = None, **bound_kwargs):
                 "node_attempt": node_attempt,
             })
             try:
-                result = await func(state, **bound_kwargs)
+                kwargs = dict(bound_kwargs)
+                if wants_runtime:
+                    kwargs["runtime"] = runtime
+                result = await func(state, **kwargs)
                 if guard is not None:
                     await guard.check_after_call()
                 return result
@@ -321,6 +351,7 @@ def guarded_error_handler(
                         exc_info=_safe_exc_info(error),
                     )
                 else:
+                    cause_code = _cause_code(error)
                     log_event(
                         LOGGER,
                         "job.node.degraded",
@@ -328,6 +359,7 @@ def guarded_error_handler(
                             "failure_kind": _failure_kind(error, node_name),
                             "final_attempt": final_attempt,
                             "fallback": fallback_name,
+                            "cause_code": cause_code,
                         },
                         exc_info=_safe_exc_info(error),
                     )

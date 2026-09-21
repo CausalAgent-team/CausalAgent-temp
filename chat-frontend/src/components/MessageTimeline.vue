@@ -20,8 +20,6 @@ function onDecisionSettled(jobId: string | undefined, payload: { stepId: string;
 
 /** 只有已持久化的历史阶段事件会走到这里；公开决策在历史中本来就是完整文本。 */
 function phaseThinking(phase: ExecutionPhase): ThinkingProjection {
-  const job = phase.analysisJobId ? jobs.byId(phase.analysisJobId) : undefined
-  if (job) return job.thinking
   const steps: ThinkingProjection['steps'] = {}
   const order: string[] = []
   const detailsFor = (event: Record<string, unknown>): StepDetail[] => {
@@ -75,17 +73,52 @@ function phaseThinking(phase: ExecutionPhase): ThinkingProjection {
   }
 }
 
-function thinkingForMessage(message: ChatMessage): ThinkingProjection | null {
-  if (message.analysisJobId) {
-    const liveJob = jobs.byId(message.analysisJobId)
-    if (liveJob) return liveJob.thinking
+/*
+ * 一条用户消息只展示属于它自己的执行记录：
+ * - 追问固定下来的实时记录优先；
+ * - 答案已经作为独立消息存进历史时，历史阶段按文本展示，运行态记录不再重复同一段内容；
+ * - 其余情况由仍代表这条输入的运行态记录继续推进，例如刷新页面后继续接收答案；
+ * - 没有历史阶段的消息只有本页刚发送的那一条用户消息，运行态记录挂在它下面。
+ */
+function thinkingForMessage(message: ChatMessage, context: { liveOwnerLocalId: string | undefined; answerInHistory: boolean }): ThinkingProjection | null {
+  if (message.frozenThinking) return message.frozenThinking
+  const job = message.analysisJobId ? jobs.byId(message.analysisJobId) : undefined
+  const phase = message.thinkingAfter
+  if (phase) {
+    if (context.answerInHistory) return phaseThinking(phase)
+    if (!job || job.phaseInputId === null || job.phaseInputId !== phase.analysisJobInputId) return phaseThinking(phase)
+    return job.thinking
   }
-  return message.thinkingAfter ? phaseThinking(message.thinkingAfter) : null
+  return message.sender === 'user' && context.liveOwnerLocalId === message.localId && job ? job.thinking : null
 }
+
+/* 每个 Job 只有一个运行态记录，它的宿主是本页最后一条尚未固定执行记录的提问消息。 */
+const liveOwnerByJob = computed(() => {
+  const owners = new Map<string, string>()
+  for (const message of props.messages) {
+    if (message.sender !== 'user' || !message.analysisJobId || message.frozenThinking) continue
+    owners.set(message.analysisJobId, message.localId)
+  }
+  return owners
+})
+
+/* 答案落到独立消息上之后，同一条输入的提问消息不再复用运行态记录展示同一段内容。 */
+const answeredInputs = computed(() => {
+  const keys = new Set<string>()
+  for (const message of props.messages) {
+    if (message.sender !== 'ai' || !message.analysisJobId) continue
+    keys.add(`${message.analysisJobId}:${message.analysisJobInputId ?? ''}`)
+  }
+  return keys
+})
 
 const messageRows = computed(() => props.messages.map((message) => ({
   message,
-  thinking: thinkingForMessage(message),
+  thinking: thinkingForMessage(message, {
+    liveOwnerLocalId: message.analysisJobId ? liveOwnerByJob.value.get(message.analysisJobId) : undefined,
+    answerInHistory: Boolean(message.analysisJobId)
+      && answeredInputs.value.has(`${message.analysisJobId}:${message.thinkingAfter?.analysisJobInputId ?? ''}`),
+  }),
 })))
 
 watch(() => props.messages.length, () => scrollFollow.keepLatest())

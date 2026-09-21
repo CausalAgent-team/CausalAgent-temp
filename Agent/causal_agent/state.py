@@ -52,6 +52,11 @@ class CausalAgentState(TypedDict):
         postprocess_result: 后处理补充结果。
         chart_assets: 预处理阶段生成的结构化图表资源。
         report_document: 后端装配完成的结构化报告文档。
+        report_revision_mode: 报告节点本次是首次生成还是按当前上下文重新生成。
+        agent_decision: agent 节点的结构化意图判断结果。
+        analysis_context: 当前 AnalysisContext 的只读投影。
+        analysis_context_index: 同一 Session 其他历史上下文的简要索引。
+        context_resolution: context_switch 节点解析出的上下文命中结果。
     """
 
     messages: Annotated[List[BaseMessage], add]
@@ -64,13 +69,31 @@ class CausalAgentState(TypedDict):
     data_profile: NotRequired[Optional[DataProfile]]
 
     route_decision: NotRequired[
-        Literal["fold", "postprocess", "normal_chat", "inquiry_answer"]
+        Literal[
+            "fold",
+            "postprocess",
+            "report",
+            "normal_chat",
+            "inquiry_answer",
+            "context_switch",
+        ]
     ]
     fold_decision: NotRequired[Literal["preprocess", "agent", "normal_chat"]]
 
     tool_call_request: Optional[bool]
 
     analysis_parameters: Optional[dict]
+
+    # Agent 的结构化意图判断结果；只保留意图、上下文提示和澄清问题，
+    # 数据库 ID、文件 ID 和最终路由都由后端解析后写入。
+    agent_decision: NotRequired[dict[str, Any]]
+
+    # 当前 AnalysisContext 的投影，以及同一 Session 其他历史上下文的索引。
+    analysis_context: NotRequired[dict[str, Any]]
+    analysis_context_index: NotRequired[List[Dict[str, Any]]]
+
+    # context_switch 解析结果：命中、歧义或无匹配，以及解析出的上下文 ID。
+    context_resolution: NotRequired[dict[str, Any]]
 
     causal_analysis_result: Optional[dict]
     knowledge_base_result: Optional[Dict[str, Any]]
@@ -81,6 +104,9 @@ class CausalAgentState(TypedDict):
 
     chart_assets: NotRequired[Optional[dict]]
     report_document: NotRequired[Optional[ReportDocument]]
+    report_revision_mode: NotRequired[
+        Literal["normal_generation", "full_regeneration_from_context"]
+    ]
 
     # 新 Deep Agent 路径的父子 State 投影；这些字段不包含 runtime-only 对象。
     deep_agent_algorithm_results: NotRequired[dict[str, AlgorithmResult]]

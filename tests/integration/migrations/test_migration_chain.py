@@ -577,5 +577,89 @@ class RbacTablesMigrationTests(unittest.TestCase):
                 self.assertIn(fragment, text)
 
 
+class AnalysisContextsMigrationTests(unittest.TestCase):
+    """静态验证分析上下文 migration、绑定字段和启动就绪检查。"""
+
+    MIGRATION_PATH = Path(
+        "Database/migrations/versions/c9d0e1f2a3b4_add_analysis_contexts.py"
+    )
+
+    def test_migration_extends_the_current_head(self):
+        """新 revision 直接承接 RBAC 关系表 revision。"""
+        text = self.MIGRATION_PATH.read_text(encoding="utf-8")
+        self.assertIn('revision: str = "c9d0e1f2a3b4"', text)
+        self.assertIn(
+            'down_revision: Union[str, Sequence[str], None] = "w9c0d1e2f3a4"',
+            text,
+        )
+
+    def test_migration_creates_context_table_with_snapshot_and_summary_columns(self):
+        """上下文表必须同时保存文件快照、分析参数、结构化摘要和报告引用。"""
+        text = self.MIGRATION_PATH.read_text(encoding="utf-8")
+        self.assertIn("CREATE TABLE analysis_contexts (", text)
+        for column in (
+            "analysis_context_id CHAR(36) NOT NULL PRIMARY KEY",
+            "session_id VARCHAR(36) NOT NULL",
+            "user_id INT NOT NULL",
+            "status ENUM('active', 'archived') NOT NULL DEFAULT 'active'",
+            "input_user_file_id BIGINT DEFAULT NULL",
+            "file_object_id BIGINT DEFAULT NULL",
+            "file_hash CHAR(64) DEFAULT NULL",
+            "filename VARCHAR(255) DEFAULT NULL",
+            "target VARCHAR(255) DEFAULT NULL",
+            "treatment VARCHAR(255) DEFAULT NULL",
+            "analysis_question MEDIUMTEXT DEFAULT NULL",
+            "latest_algorithm_summary JSON DEFAULT NULL",
+            "latest_rag_evidence JSON DEFAULT NULL",
+            "latest_web_evidence JSON DEFAULT NULL",
+            "latest_report_message_id BIGINT DEFAULT NULL",
+            "latest_report_id VARCHAR(64) DEFAULT NULL",
+        ):
+            with self.subTest(column=column):
+                self.assertIn(column, text)
+        self.assertIn("INDEX idx_analysis_contexts_session_updated", text)
+        self.assertIn("INDEX idx_analysis_contexts_user_session_status", text)
+        self.assertIn("FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE", text)
+
+    def test_migration_binds_session_job_and_input_without_rewriting_data(self):
+        """Session 指针、Job 绑定和输入账本字段都可空，且不更新历史数据。"""
+        text = self.MIGRATION_PATH.read_text(encoding="utf-8")
+        upgrade = text.split("def downgrade()", 1)[0]
+
+        self.assertIn("ALTER TABLE sessions", upgrade)
+        self.assertIn("ADD COLUMN active_analysis_context_id CHAR(36) DEFAULT NULL", upgrade)
+        self.assertIn("ALTER TABLE analysis_jobs", upgrade)
+        self.assertIn("ALTER TABLE analysis_job_inputs", upgrade)
+        self.assertIn("fk_analysis_jobs_analysis_context", upgrade)
+        self.assertIn("fk_analysis_job_inputs_analysis_context", upgrade)
+        self.assertNotIn("UPDATE sessions", upgrade)
+        self.assertNotIn("UPDATE analysis_jobs", upgrade)
+
+    def test_downgrade_only_drops_new_context_structure(self):
+        """回滚只删除本次新增的结构，不删除会话、Job、输入或报告数据。"""
+        downgrade = self.MIGRATION_PATH.read_text(encoding="utf-8").split(
+            "def downgrade()"
+        )[1]
+
+        self.assertIn("DROP COLUMN analysis_context_id", downgrade)
+        self.assertIn("DROP COLUMN active_analysis_context_id", downgrade)
+        self.assertIn("DROP TABLE IF EXISTS analysis_contexts", downgrade)
+        self.assertNotIn("DELETE FROM", downgrade)
+
+    def test_readiness_requires_context_table_columns_and_indexes(self):
+        """应用启动检查必须能发现未执行上下文 migration 的数据库。"""
+        text = Path("app/db.py").read_text(encoding="utf-8")
+        for fragment in (
+            '"analysis_contexts"',
+            '"active_analysis_context_id"',
+            "idx_analysis_contexts_session_updated",
+            "idx_analysis_contexts_user_session_status",
+            "idx_analysis_jobs_analysis_context",
+            "idx_analysis_job_inputs_analysis_context",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, text)
+
+
 if __name__ == "__main__":
     unittest.main()

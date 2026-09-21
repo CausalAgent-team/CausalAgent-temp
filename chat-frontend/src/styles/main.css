@@ -556,15 +556,7 @@
 
 .causal-report {
   max-width: 100%;
-  padding: 16px 20px;
   overflow-wrap: anywhere;
-  background: #f5f5f5;
-  border-radius: 8px;
-}
-
-.ai-message > .markdown-content.causal-report,
-.ai-message > .report-content.causal-report {
-  padding: 16px 20px;
 }
 
 .causal-report img {
@@ -591,7 +583,6 @@
 
 /* 结构化报告主题变量：报告块只消费这些变量，不各自决定颜色和间距。 */
 .report-document {
-  --report-background: #f7f8fa;
   --report-surface: #ffffff;
   --report-border: #e2e5e9;
   --report-muted-background: #eef1f4;
@@ -604,7 +595,6 @@
   --report-chart-title-size: 15px;
   --report-text-size: 15px;
   --report-block-gap: 16px;
-  --report-radius: 10px;
   --report-card-radius: 8px;
 }
 

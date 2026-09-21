@@ -90,6 +90,7 @@ export function createJobRecord(
   return {
     jobId,
     sessionId,
+    phaseInputId: null,
     backendStatus: status,
     uiState,
     connection: 'idle',
@@ -404,7 +405,7 @@ export function settleDecision(state: JobRecord, stepId: string, key: string): J
 export function seedJobFromPhase(
   jobId: string,
   sessionId: string,
-  phase: { status: string; elapsedSeconds: number; lastEventId: number; events: Array<Record<string, unknown>> },
+  phase: { status: string; elapsedSeconds: number; lastEventId: number; events: Array<Record<string, unknown>>; analysisJobInputId?: number },
 ): JobRecord {
   const status: BackendJobStatus = phase.status === 'queued' || phase.status === 'running' || phase.status === 'waiting_input' || phase.status === 'succeeded' || phase.status === 'failed' || phase.status === 'canceled' ? phase.status : 'running'
   let state = createJobRecord(jobId, sessionId, status, 0)
@@ -421,8 +422,20 @@ export function seedJobFromPhase(
   return {
     ...state,
     ...cursor,
+    phaseInputId: phase.analysisJobInputId ?? null,
     renderedEventId: phase.lastEventId,
     backendStatus: status,
     uiState: status === 'queued' ? 'queued' : status === 'running' ? 'running' : status === 'waiting_input' ? 'waiting_input' : status === 'succeeded' ? 'completed' : status,
+  }
+}
+
+/**
+ * 追问恢复：上一阶段的执行记录被固定到它所属的用户消息上，运行态记录从空投影继续推进。
+ * 游标、文本去重缓冲和连接状态保持不动，新阶段从同一条事件流接着读。
+ */
+export function startResumePhase(state: JobRecord): { snapshot: ThinkingProjection; state: JobRecord } {
+  return {
+    snapshot: cloneThinking(state.thinking),
+    state: { ...state, phaseInputId: null, thinking: createThinking('active') },
   }
 }

@@ -74,11 +74,14 @@ async function loadSession(sessionId: string): Promise<void> {
   try {
     await sessions.select(sessionId)
     if (sessions.currentId !== sessionId) return
-    for (const message of sessions.messages) {
-      if (message.thinkingAfter) jobs.seedPhase(sessionId, message.thinkingAfter)
-    }
     const active = await api.activeJobs(sessionId)
     if (sessions.currentId !== sessionId) return
+    /* 只有仍在执行的 Job 需要运行态记录；已结束的历史阶段由消息自带的 thinking_after 渲染。 */
+    const activeJobIds = new Set((active.jobs ?? []).map((job) => job.job_id))
+    for (const message of sessions.messages) {
+      const phase = message.thinkingAfter
+      if (phase?.analysisJobId && activeJobIds.has(phase.analysisJobId)) jobs.seedPhase(sessionId, phase)
+    }
     for (const job of active.jobs ?? []) {
       const record = jobs.observeActive(job)
       if (record.uiState !== 'waiting_input') void props.controller.subscribe(record.jobId).catch((error: unknown) => report(error, '恢复任务订阅失败。'))
@@ -132,7 +135,9 @@ async function send(): Promise<void> {
     if (!response.success || !response.job_id || !response.status) throw new Error(response.error || '任务请求未被接受。')
     const job = jobs.startFromResponse(response.job_id, sessionId, response.status, resumeJob?.resumeEventId ?? 0)
     if (resumeJob) {
-      job.thinking = { ...job.thinking, status: 'active', waitingInput: null }
+      /* 追问开始新阶段：上一阶段的执行记录留在原来的用户消息上，运行态记录从空投影继续。 */
+      const frozen = jobs.startResume(job.jobId)
+      if (frozen) sessions.freezeThinking(job.jobId, frozen)
     }
     const stillInSubmittedSession = sessions.currentId === sessionId
     if (stillInSubmittedSession) {

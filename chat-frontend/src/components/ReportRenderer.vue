@@ -41,11 +41,7 @@ const evidenceById = computed(() => new Map(
   gap: var(--report-block-gap, 18px);
   width: 100%;
   max-width: 100%;
-  padding: 20px 24px;
   overflow-wrap: anywhere;
-  background: var(--report-background, #f7f8fa);
-  border: 1px solid var(--report-border, #e2e5e9);
-  border-radius: var(--report-radius, 10px);
   color: var(--report-text, #1f2937);
 }
 

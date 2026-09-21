@@ -68,6 +68,15 @@ EXPECTED_COLUMNS = {
         "input_user_file_id", "input_object_id", "input_file_hash",
         "input_filename", "current_question_id", "current_waiting_prompt",
         "cancel_idempotency_key", "cancel_request_fingerprint",
+        "analysis_context_id",
+    },
+    "analysis_contexts": {
+        "analysis_context_id", "session_id", "user_id", "status",
+        "input_user_file_id", "file_object_id", "file_hash", "filename",
+        "target", "treatment", "analysis_question", "latest_algorithm_summary",
+        "latest_rag_evidence", "latest_web_evidence",
+        "latest_report_message_id", "latest_report_id",
+        "created_at", "updated_at",
     },
     "analysis_job_events": {
         "id", "job_id", "event_type", "event_key", "payload_json", "created_at",
@@ -75,7 +84,7 @@ EXPECTED_COLUMNS = {
     "analysis_job_inputs": {
         "input_id", "job_id", "sequence", "input_type", "input_text",
         "question_id", "idempotency_key", "request_fingerprint",
-        "chat_message_id", "created_at",
+        "chat_message_id", "created_at", "analysis_context_id",
     },
     "database_monitor_snapshots": {
         "snapshot_key", "payload_json", "observed_at",
@@ -107,13 +116,21 @@ EXPECTED_INDEXES = {
         "idx_analysis_jobs_admin_created",
         "idx_analysis_jobs_input_user_file_status",
         "idx_analysis_jobs_execution_state_heartbeat",
+        "idx_analysis_jobs_analysis_context",
         "uq_analysis_jobs_user_idempotency", "uq_analysis_jobs_cancel_idempotency",
+    },
+    "analysis_contexts": {
+        "PRIMARY",
+        "idx_analysis_contexts_session_updated",
+        "idx_analysis_contexts_user_session_status",
+        "idx_analysis_contexts_input_user_file",
     },
     "analysis_job_events": {"PRIMARY", "uq_analysis_job_events_event_key"},
     "analysis_job_inputs": {
         "PRIMARY",
         "uq_analysis_job_inputs_sequence",
         "uq_analysis_job_inputs_idempotency",
+        "idx_analysis_job_inputs_analysis_context",
     },
     "file_objects": {
         "PRIMARY", "uq_file_objects_owner_hash", "idx_file_objects_owner_created",
@@ -160,6 +177,12 @@ EXPECTED_FOREIGN_KEYS = {
     "fk_user_memory_cleanup_outbox_operation",
     "fk_admin_operations_actor",
     "fk_admin_operation_items_operation",
+    "fk_analysis_contexts_session",
+    "fk_analysis_contexts_user",
+    "fk_analysis_contexts_input_user_file",
+    "fk_analysis_contexts_file_object",
+    "fk_analysis_jobs_analysis_context",
+    "fk_analysis_job_inputs_analysis_context",
 }
 
 
