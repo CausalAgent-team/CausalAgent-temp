@@ -84,17 +84,18 @@ function focusEvidence(blockIds: string[]) {
           <div class="report-source-heading">
             <a v-if="group.source.url" :href="group.source.url" target="_blank" rel="noopener noreferrer">{{ group.source.title }}</a>
             <span v-else class="report-source-title">{{ group.source.title }}</span>
-            <button
-              v-if="group.collapsible && group.items.length"
-              type="button"
-              class="report-evidence-toggle"
-              :aria-expanded="isSourceExpanded(group.source.source_id)"
-              :aria-controls="sourceEvidencePanelId(group.source.source_id)"
-              @click="toggleSource(group.source.source_id)"
-            >
-              {{ isSourceExpanded(group.source.source_id) ? '收起引用' : `展开引用（${group.items.length}）` }}
-            </button>
           </div>
+          <button
+            v-if="group.collapsible && group.items.length"
+            type="button"
+            class="report-evidence-toggle"
+            :aria-expanded="isSourceExpanded(group.source.source_id)"
+            :aria-label="isSourceExpanded(group.source.source_id) ? '收起知识库引用' : '展开知识库引用'"
+            :aria-controls="sourceEvidencePanelId(group.source.source_id)"
+            @click="toggleSource(group.source.source_id)"
+          >
+            引用 {{ group.items.length }} 条
+          </button>
           <ul
             v-if="group.items.length && (!group.collapsible || isSourceExpanded(group.source.source_id))"
             :id="group.collapsible ? sourceEvidencePanelId(group.source.source_id) : undefined"
@@ -210,20 +211,41 @@ function focusEvidence(blockIds: string[]) {
 }
 
 .report-evidence-toggle {
-  flex: none;
-  padding: 1px 5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: min(100%, 240px);
+  padding: 4px 0 5px;
+  margin-top: 2px;
   font: inherit;
   font-size: 12px;
-  line-height: 1.4;
-  color: var(--report-accent, #0067c0);
+  line-height: 1.35;
+  text-align: left;
+  color: var(--color-text-muted, #6b7280);
   background: transparent;
-  border: 1px solid var(--report-border, #d7dce2);
-  border-radius: 4px;
+  border: 0;
+  border-bottom: 1px solid var(--report-border, #d7dce2);
   cursor: pointer;
 }
 
+.report-evidence-toggle::after {
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  content: '';
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform 160ms ease;
+}
+
+.report-evidence-toggle[aria-expanded='true']::after {
+  margin-top: 3px;
+  transform: rotate(225deg);
+}
+
 .report-evidence-toggle:hover {
-  background: var(--report-muted-background, #f3f5f7);
+  color: var(--report-accent, #0067c0);
 }
 
 .report-document :deep(.is-cited-target) {
