@@ -19,7 +19,6 @@ from Agent.deep_agent_tools.models import (
 from Agent.deep_agent.prompts import (
     ANALYSIS_ROUTE,
     MANDATORY_ALGORITHM_INSTRUCTION,
-    MANDATORY_RAG_INSTRUCTION,
     MANDATORY_WEB_INSTRUCTION,
 )
 
@@ -230,7 +229,6 @@ def to_deep_agent_input(
         messages = [
             *messages,
             {"role": "system", "content": MANDATORY_ALGORITHM_INSTRUCTION},
-            {"role": "system", "content": MANDATORY_RAG_INSTRUCTION},
         ]
         if parent_state.get("web_search_enabled") is True:
             messages = [

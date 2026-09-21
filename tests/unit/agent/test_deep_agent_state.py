@@ -13,7 +13,6 @@ from Agent.deep_agent.state import (
 from Agent.deep_agent_tools.models import DataProfile
 from Agent.deep_agent.prompts import (
     MANDATORY_ALGORITHM_INSTRUCTION,
-    MANDATORY_RAG_INSTRUCTION,
     MANDATORY_WEB_INSTRUCTION,
 )
 
@@ -26,17 +25,18 @@ ANALYSIS_PARENT = {
 }
 
 
-def test_analysis_route_requires_an_algorithm_call() -> None:
-    """进入 Deep Agent 的运行都是分析运行，必须按运行注入“至少调用一次算法”的约束。"""
+def test_analysis_route_requires_algorithm_but_leaves_rag_optional() -> None:
+    """分析运行强制算法调用，但知识库检索仍由 Agent 自主判断。"""
 
     projected = to_deep_agent_input({**ANALYSIS_PARENT, "route_decision": "fold"})
 
     assert MANDATORY_ALGORITHM_INSTRUCTION in [
         message["content"] for message in projected["messages"]
     ]
-    assert MANDATORY_RAG_INSTRUCTION in [
-        message["content"] for message in projected["messages"]
-    ]
+    assert all(
+        "必须至少调用一次 rag_evidence_search" not in message["content"]
+        for message in projected["messages"]
+    )
 
 
 def test_non_analysis_route_has_no_algorithm_requirement() -> None:
@@ -47,9 +47,6 @@ def test_non_analysis_route_has_no_algorithm_requirement() -> None:
     )
 
     assert MANDATORY_ALGORITHM_INSTRUCTION not in [
-        message["content"] for message in projected["messages"]
-    ]
-    assert MANDATORY_RAG_INSTRUCTION not in [
         message["content"] for message in projected["messages"]
     ]
 

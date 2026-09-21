@@ -30,11 +30,11 @@
 - 原来的 `web_search_enabled` 只负责在 `web_evidence_search` 真正执行时决定是否触网；它没有成为模型提示中的必选调用合同，也没有被 FinalizationGate 用来拒绝零 Web 调用。
 - RAG 也曾存在同样缺口：模型可以直接产出结构化终态，`evidence_only` 又没有算法调用门禁，因此“开启能力”可能表现为“从未调用”。
 
-## 当前工作树的修复合同
+## 当前工作树的工具选择合同
 
-- 分析路由始终注入算法与 RAG 的运行级约束；`FinalizationGate` 要求当前 Job attempt 至少有一个算法结果和一次 `rag_evidence_search` terminal ledger。无相关证据或 RAG 不可用仍需保留真实 terminal 状态。
+- 分析路由始终注入算法运行级约束；`FinalizationGate` 要求当前 Job attempt 至少有一个算法结果。RAG 不再注入强制调用提示，也不因零次 RAG 调用拒绝终态；如果 Agent 选择调用，仍需保留真实 terminal 状态。
 - `web_search_enabled=true` 时额外注入一次 `web_evidence_search` 约束；Gate 按相同的 Job、attempt、lease、worker 和输入身份检查 Web terminal ledger。关闭时不强制联网，工具自身仍保持不触网。
-- 约束不写入 worker 级静态 system prompt，而是在父图把可信运行上下文投影给 Deep Agent 时按 Job 注入，避免不同 Job 的联网选项互相污染。
+- 约束不写入 worker 级静态 system prompt，而是在父图把可信运行上下文投影给 Deep Agent 时按 Job 注入，避免不同 Job 的联网选项互相污染；RAG 的可选性也按当前工具契约保留。
 
 实现位置：
 

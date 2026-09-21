@@ -134,10 +134,6 @@ def _evidence_only_decision():
     )
 
 
-def _rag_ledger(identity):
-    return _evidence_ledger(identity, tool_name="rag_evidence_search")
-
-
 def _web_ledger(identity, *, final_status="succeeded", attempt_status="succeeded"):
     return _evidence_ledger(
         identity,
@@ -216,7 +212,6 @@ def test_finalization_gate_allows_discarded_result_on_analysis_route() -> None:
     """算法确实跑过（哪怕结果被丢弃）时不触发“必须调用算法”规则。"""
 
     identity, registry, result, ledger = _algorithm_execution()
-    rag_ledger = _rag_ledger(identity)
     decision = validate_structured_response(
         {
             **_decision(),
@@ -237,7 +232,6 @@ def test_finalization_gate_allows_discarded_result_on_analysis_route() -> None:
         algorithm_results={result.result_ref: result},
         action_ledger={
             ledger.invocation_id: ledger,
-            rag_ledger.invocation_id: rag_ledger,
         },
         trusted_identity=identity,
         route_decision="fold",
@@ -245,7 +239,7 @@ def test_finalization_gate_allows_discarded_result_on_analysis_route() -> None:
     assert accepted.outcome == "evidence_only"
 
 
-def test_finalization_gate_requires_rag_retrieval_on_analysis_route() -> None:
+def test_finalization_gate_allows_analysis_without_rag_retrieval() -> None:
     identity, registry, result, ledger = _algorithm_execution()
     decision = validate_structured_response(
         {
@@ -261,26 +255,10 @@ def test_finalization_gate_requires_rag_retrieval_on_analysis_route() -> None:
         }
     )
 
-    with pytest.raises(
-        StructuredResponseError,
-        match="requires at least one rag evidence invocation",
-    ):
-        FinalizationGate(registry=registry).validate(
-            decision=decision,
-            algorithm_results={result.result_ref: result},
-            action_ledger={ledger.invocation_id: ledger},
-            trusted_identity=identity,
-            route_decision="fold",
-        )
-
-    rag_ledger = _rag_ledger(identity)
     accepted = FinalizationGate(registry=registry).validate(
         decision=decision,
         algorithm_results={result.result_ref: result},
-        action_ledger={
-            ledger.invocation_id: ledger,
-            rag_ledger.invocation_id: rag_ledger,
-        },
+        action_ledger={ledger.invocation_id: ledger},
         trusted_identity=identity,
         route_decision="fold",
     )
@@ -289,7 +267,6 @@ def test_finalization_gate_requires_rag_retrieval_on_analysis_route() -> None:
 
 def test_finalization_gate_rejects_nonterminal_evidence_ledger() -> None:
     identity, registry, result, ledger = _algorithm_execution()
-    rag_ledger = _rag_ledger(identity)
     web_ledger = _web_ledger(
         identity,
         final_status="succeeded",
@@ -318,7 +295,6 @@ def test_finalization_gate_rejects_nonterminal_evidence_ledger() -> None:
             algorithm_results={result.result_ref: result},
             action_ledger={
                 ledger.invocation_id: ledger,
-                rag_ledger.invocation_id: rag_ledger,
                 web_ledger.invocation_id: web_ledger,
             },
             trusted_identity=identity,
@@ -329,7 +305,6 @@ def test_finalization_gate_rejects_nonterminal_evidence_ledger() -> None:
 
 def test_finalization_gate_requires_enabled_web_search_on_analysis_route() -> None:
     identity, registry, result, ledger = _algorithm_execution()
-    rag_ledger = _rag_ledger(identity)
     decision = validate_structured_response(
         {
             **_decision(),
@@ -351,7 +326,7 @@ def test_finalization_gate_requires_enabled_web_search_on_analysis_route() -> No
         FinalizationGate(registry=registry).validate(
             decision=decision,
             algorithm_results={result.result_ref: result},
-            action_ledger={ledger.invocation_id: ledger, rag_ledger.invocation_id: rag_ledger},
+            action_ledger={ledger.invocation_id: ledger},
             trusted_identity=identity,
             route_decision="fold",
             web_search_enabled=True,
@@ -363,7 +338,6 @@ def test_finalization_gate_requires_enabled_web_search_on_analysis_route() -> No
         algorithm_results={result.result_ref: result},
         action_ledger={
             ledger.invocation_id: ledger,
-            rag_ledger.invocation_id: rag_ledger,
             web_ledger.invocation_id: web_ledger,
         },
         trusted_identity=identity,

@@ -70,7 +70,7 @@ CDFM v0.1 在 runner 内保持 `directed_graph` 和输入列顺序，按 `adjace
 
 ## RAG 与 Web evidence
 
-`rag_evidence_search` 调用 `RagService.get_evidence()`，不调用旧 RAG answer model。进入因果分析的运行始终至少调用一次该 Tool；有相关证据、无相关证据或检索不可用都必须保留真实的 terminal Action Ledger 状态，不能因模型没有主动选 Tool 而直接完成。worker 启动只校验 active release，不加载 Chroma、BM25 或 embedding；第一次真实查询时才在进程内初始化 RAG runtime。结果以受控 evidence reference、snippet、来源定位、分数、release 和状态写入子图 State，再投影为 report formatter 使用的引用摘要。知识库证据的来源展示名由 release manifest 的 `document_id → relative_path` 解析，manifest 未覆盖时才回退到检索块元数据；`asset_uri` 是内部资源路径，不充当 URL。RAG 的排名编号和 Web 的相关性分数都属于单次查询，因此写入 State 和 ToolMessage 前会用稳定 invocation id 限定 evidence reference；同一调用重放保持幂等，不同并行查询即使都返回 `E1` 或同一来源也不会占用同一个 reducer key。
+`rag_evidence_search` 调用 `RagService.get_evidence()`，不调用旧 RAG answer model。知识库证据工具由 Agent 根据当前问题自主判断是否调用；未调用不构成终态校验失败，实际调用后仍必须保留真实的 terminal Action Ledger 状态，不能伪造证据或结果。worker 启动只校验 active release，不加载 Chroma、BM25 或 embedding；第一次真实查询时才在进程内初始化 RAG runtime。结果以受控 evidence reference、snippet、来源定位、分数、release 和状态写入子图 State，再投影为 report formatter 使用的引用摘要。知识库证据的来源展示名由 release manifest 的 `document_id → relative_path` 解析，manifest 未覆盖时才回退到检索块元数据；`asset_uri` 是内部资源路径，不充当 URL。RAG 的排名编号和 Web 的相关性分数都属于单次查询，因此写入 State 和 ToolMessage 前会用稳定 invocation id 限定 evidence reference；同一调用重放保持幂等，不同并行查询即使都返回 `E1` 或同一来源也不会占用同一个 reducer key。
 
 `web_evidence_search` 返回 SearXNG 学术结果的 snippet 与来源元数据，不抓取网页正文。每次调用读取 `AgentRunContext.web_search_enabled`；关闭时返回 `WEB_SEARCH_DISABLED` 且不触网。分析运行在 `web_search_enabled=true` 时按运行注入“至少调用一次 Web evidence”约束，并由 `FinalizationGate` 校验当前 Job attempt 的 terminal Action Ledger；未开启时不强制联网。RAG/Web 的异常只转换为受控状态和安全错误码，不把异常正文、查询参数或 provider 数据带入公共事件。
 
@@ -85,11 +85,11 @@ Deep Agent 使用 `ToolStrategy(FinalAnalysisDecision)` 生成 `structured_respo
 - provenance 属于当前 Job、attempt、lease、worker 与冻结输入；
 - 每个有效算法结果都有唯一取舍，主结果满足 outcome 约束。
 - 分析运行（父图 `route_decision=fold`，含 `context_switch` 之后的 fold）在没有任何算法结果时，不得提交 `evidence_only` 或 `no_valid_algorithm`。
-- 分析运行始终至少有一次 `rag_evidence_search` terminal 调用；`web_search_enabled=true` 时还必须有一次 `web_evidence_search` terminal 调用；两者都允许真实返回无证据/不可用状态，但不能零调用完成。
+- `web_search_enabled=true` 时，分析运行必须有一次 `web_evidence_search` terminal 调用；允许真实返回无结果/不可用状态，但不能零调用完成。RAG 是否调用由 Agent 自主决策。
 
-进入 Deep Agent 的运行都是分析运行：`agent` 的 `start_analysis`/`rerun_analysis` 直接路由到 `fold`，`context_switch` 也会把 `route_decision` 改写成后续节点名。因此父图投影时按运行追加“必须至少调用一个算法工具”和“必须至少调用一次 `rag_evidence_search`”两条系统约束；当本 Job 开启联网搜索时再追加“必须至少调用一次 `web_evidence_search`”，它们不写进 worker 级系统提示词。
+进入 Deep Agent 的运行都是分析运行：`agent` 的 `start_analysis`/`rerun_analysis` 直接路由到 `fold`，`context_switch` 也会把 `route_decision` 改写成后续节点名。因此父图投影时按运行追加“必须至少调用一个算法工具”这一条系统约束；当本 Job 开启联网搜索时再追加“必须至少调用一次 `web_evidence_search`”，RAG 不追加强制调用约束，所有约束都不写进 worker 级系统提示词。
 
-最终决策的两套引用命名空间不混用：`result_assessments`、`primary_result_ref`、`conflicts.result_refs` 与 `revision_proposals.result_ref` 只接受本次运行返回的算法结果引用；RAG/Web 证据引用只能出现在 `revision_proposals.evidence_refs`。该分工以及“必须实际完成一次 RAG 检索、开启联网搜索时必须实际完成一次 Web 检索”的要求同时写在按运行提示和 Gate 校验中，避免模型把“证据不采用”写进算法结果取舍。
+最终决策的两套引用命名空间不混用：`result_assessments`、`primary_result_ref`、`conflicts.result_refs` 与 `revision_proposals.result_ref` 只接受本次运行返回的算法结果引用；RAG/Web 证据引用只能出现在 `revision_proposals.evidence_refs`。该分工以及“开启联网搜索时必须实际完成一次 Web 检索”的要求同时写在按运行提示和 Gate 校验中，RAG 是否检索由 Agent 自主判断，避免模型把“证据不采用”写进算法结果取舍。
 
 第一次校验失败时，父图把失败映射为稳定的规则码，再生成一条脱敏修正指令（包含被违反的具体引用规则）交回同一个 Deep Agent 子图；第二次仍失败则设置 `finalization_status=degraded` 并生成安全报告。身份、账本或状态一致性问题不带规则码，修正指令保持通用措辞，不把内部问题包装成模型可修正的指令。每次 Gate 拒绝都会发布一条 `progress` 阶段说明：可修正时挂在 `finalization_gate` 阶段并给出同一份修正要求，降级时说明本次仅基于已验证输入生成报告；第二次 Deep Agent 启动修正时，新阶段同样收到一条 `progress` 说明，指出该阶段沿用已有工具结果、不重复调用工具。`degraded` 不公开未经验证的主图或最终选择，但报告成功时 Job 仍以 `succeeded` 收敛。校验通过时设置 `finalization_status=valid`，并把内部结果引用转换为公开算法名称后发布最终决策说明。
 

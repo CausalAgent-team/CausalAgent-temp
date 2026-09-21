@@ -461,20 +461,6 @@ class FinalizationGate:
                 rule="analysis_route_without_algorithm_result",
             )
 
-        if route_decision == ANALYSIS_ROUTE and not self._has_current_terminal_tool_invocation(
-            ledger,
-            tool_name="rag_evidence_search",
-            job_id=job_id,
-            attempt_count=current_attempt,
-            lease_epoch=current_lease,
-            worker_id=current_worker,
-            input_identity=current_input,
-        ):
-            raise StructuredResponseError(
-                "analysis route requires at least one rag evidence invocation",
-                rule="analysis_route_without_rag_invocation",
-            )
-
         if (
             route_decision == ANALYSIS_ROUTE
             and web_search_enabled is True
@@ -568,10 +554,6 @@ FINALIZATION_RETRY_HINTS: dict[str, str] = {
         "本次运行要求执行因果分析，但还没有任何算法调用结果。请至少调用一个算法工具"
         "（例如 causal_pc 或 causal_direct_lingam），并在 result_assessments 中给出它的"
         "取舍；如果算法工具返回未就绪或失败，按它的真实状态提交 outcome。"
-    ),
-    "analysis_route_without_rag_invocation": (
-        "本次运行要求始终检索知识库。请先调用一次 rag_evidence_search 并等待真实返回，"
-        "即使知识库无相关证据或暂不可用，也要保留该真实状态后再提交最终决策。"
     ),
     "analysis_route_without_web_invocation": (
         "本次运行已开启联网搜索。请先调用一次 web_evidence_search 并等待真实返回，"

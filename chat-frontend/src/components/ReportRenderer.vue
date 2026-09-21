@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
   collectEvidenceUsage,
   evidencePage,
@@ -11,6 +11,12 @@ import ReportBlockView from './ReportBlockView.vue'
 
 const props = defineProps<{ document: unknown }>()
 const parsed = computed(() => parseReportDocument(props.document))
+const expandedSourceIds = ref<Set<string>>(new Set())
+
+// 每次生成/切换报告都从收起状态开始，避免沿用上一份报告的展开状态。
+watch(() => props.document, () => {
+  expandedSourceIds.value = new Set()
+})
 
 /*
  * 来源导航：正文只保留文字，知识库与联网证据统一收进页脚，按来源分组；
@@ -25,6 +31,7 @@ const sourceGroups = computed(() => {
   )
   return report.sources.map((source) => ({
     source,
+    collapsible: source.kind === 'knowledge_base',
     items: report.evidenceRefs
       .filter((evidence) => (evidence.source_ids ?? []).includes(source.source_id))
       .map((evidence) => ({
@@ -35,6 +42,21 @@ const sourceGroups = computed(() => {
       })),
   }))
 })
+
+function isSourceExpanded(sourceId: string): boolean {
+  return expandedSourceIds.value.has(sourceId)
+}
+
+function toggleSource(sourceId: string) {
+  const next = new Set(expandedSourceIds.value)
+  if (next.has(sourceId)) next.delete(sourceId)
+  else next.add(sourceId)
+  expandedSourceIds.value = next
+}
+
+function sourceEvidencePanelId(sourceId: string): string {
+  return `report-source-evidence-${sourceId}`
+}
 
 function focusEvidence(blockIds: string[]) {
   const target = blockIds[0]
@@ -59,9 +81,25 @@ function focusEvidence(blockIds: string[]) {
       <h2 class="report-sources-title">来源</h2>
       <ul class="report-sources-list">
         <li v-for="group in sourceGroups" :key="group.source.source_id" class="report-source-item">
-          <a v-if="group.source.url" :href="group.source.url" target="_blank" rel="noopener noreferrer">{{ group.source.title }}</a>
-          <span v-else class="report-source-title">{{ group.source.title }}</span>
-          <ul v-if="group.items.length" class="report-source-evidence">
+          <div class="report-source-heading">
+            <a v-if="group.source.url" :href="group.source.url" target="_blank" rel="noopener noreferrer">{{ group.source.title }}</a>
+            <span v-else class="report-source-title">{{ group.source.title }}</span>
+            <button
+              v-if="group.collapsible && group.items.length"
+              type="button"
+              class="report-evidence-toggle"
+              :aria-expanded="isSourceExpanded(group.source.source_id)"
+              :aria-controls="sourceEvidencePanelId(group.source.source_id)"
+              @click="toggleSource(group.source.source_id)"
+            >
+              {{ isSourceExpanded(group.source.source_id) ? '收起引用' : `展开引用（${group.items.length}）` }}
+            </button>
+          </div>
+          <ul
+            v-if="group.items.length && (!group.collapsible || isSourceExpanded(group.source.source_id))"
+            :id="group.collapsible ? sourceEvidencePanelId(group.source.source_id) : undefined"
+            class="report-source-evidence"
+          >
             <li v-for="item in group.items" :key="item.evidenceId" class="report-source-evidence-item">
               <span class="report-evidence-text">{{ item.text }}</span>
               <span v-if="item.page" class="report-evidence-page">第 {{ item.page }} 页</span>
@@ -132,6 +170,13 @@ function focusEvidence(blockIds: string[]) {
   margin-bottom: 6px;
 }
 
+.report-source-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
 .report-source-evidence {
   margin: 4px 0 0;
   padding-left: 16px;
@@ -162,6 +207,23 @@ function focusEvidence(blockIds: string[]) {
   background: none;
   border: 0;
   cursor: pointer;
+}
+
+.report-evidence-toggle {
+  flex: none;
+  padding: 1px 5px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--report-accent, #0067c0);
+  background: transparent;
+  border: 1px solid var(--report-border, #d7dce2);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.report-evidence-toggle:hover {
+  background: var(--report-muted-background, #f3f5f7);
 }
 
 .report-document :deep(.is-cited-target) {
