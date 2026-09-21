@@ -88,14 +88,19 @@ describe('ReportRenderer', () => {
     })
 
     expect(wrapper.get('.report-sources').text()).toContain('Pearl_2009_Causality.pdf')
-    expect(wrapper.get('.report-evidence-toggle').text()).toBe('展开引用（1）')
+    expect(wrapper.get('.report-evidence-toggle').text()).toBe('')
+    expect(wrapper.find('.report-evidence-toggle-icon').exists()).toBe(true)
+    expect(wrapper.get('.report-evidence-toggle').attributes('aria-label')).toBe('展开知识库引用')
+    expect(wrapper.get('.report-evidence-toggle').attributes('aria-expanded')).toBe('false')
     expect(wrapper.find('.report-evidence-text').exists()).toBe(false)
 
     await wrapper.get('.report-evidence-toggle').trigger('click')
 
     expect(wrapper.get('.report-evidence-page').text()).toBe('第 372 页')
     expect(wrapper.get('.report-evidence-text').text()).toBe('倾向得分方法可用于调整估计量。')
-    expect(wrapper.get('.report-evidence-toggle').text()).toBe('收起引用')
+    expect(wrapper.get('.report-evidence-toggle').text()).toBe('')
+    expect(wrapper.get('.report-evidence-toggle').attributes('aria-label')).toBe('收起知识库引用')
+    expect(wrapper.get('.report-evidence-toggle').attributes('aria-expanded')).toBe('true')
   })
 
   it('recovers a jump target when the model wrote an evidence id in markdown content', () => {

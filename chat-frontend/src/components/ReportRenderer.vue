@@ -89,10 +89,11 @@ function focusEvidence(blockIds: string[]) {
               type="button"
               class="report-evidence-toggle"
               :aria-expanded="isSourceExpanded(group.source.source_id)"
+              :aria-label="isSourceExpanded(group.source.source_id) ? '收起知识库引用' : '展开知识库引用'"
               :aria-controls="sourceEvidencePanelId(group.source.source_id)"
               @click="toggleSource(group.source.source_id)"
             >
-              {{ isSourceExpanded(group.source.source_id) ? '收起引用' : `展开引用（${group.items.length}）` }}
+              <span class="report-evidence-toggle-icon" aria-hidden="true"></span>
             </button>
           </div>
           <ul
@@ -174,7 +175,7 @@ function focusEvidence(blockIds: string[]) {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 6px;
+  gap: 3px;
 }
 
 .report-source-evidence {
@@ -210,20 +211,36 @@ function focusEvidence(blockIds: string[]) {
 }
 
 .report-evidence-toggle {
-  flex: none;
-  padding: 1px 5px;
-  font: inherit;
-  font-size: 12px;
-  line-height: 1.4;
-  color: var(--report-accent, #0067c0);
-  background: transparent;
-  border: 1px solid var(--report-border, #d7dce2);
-  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  margin: 0;
+  color: var(--color-text-muted, #6b7280);
+  background: none;
+  border: 0;
   cursor: pointer;
 }
 
+.report-evidence-toggle-icon {
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform 160ms ease;
+}
+
+.report-evidence-toggle[aria-expanded='true'] .report-evidence-toggle-icon {
+  margin-top: 3px;
+  transform: rotate(225deg);
+}
+
 .report-evidence-toggle:hover {
-  background: var(--report-muted-background, #f3f5f7);
+  color: var(--report-accent, #0067c0);
 }
 
 .report-document :deep(.is-cited-target) {
