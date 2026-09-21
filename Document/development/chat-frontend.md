@@ -51,7 +51,7 @@ JobController 为每个 Job 管理订阅 generation，切换 Session、取消、
 
 ## 结构化报告渲染
 
-报告终态由 `type=report`、`render_mode=structured` 和 `document` 组成，`MessageBody.vue` 把它交给 `ReportRenderer.vue`；报告块的 HTML 不在 `MessageBody.vue` 里拼接。渲染器按块类型分发到 `ReportSection.vue`、`MarkdownBlock.vue`、`ChartBlock.vue` 和 `CausalGraphBlock.vue`：章节递归渲染子块，Markdown 块继续调用 `renderers/markdown-adapter.ts`，因此列表、标题、表格、引用、代码块和链接与普通聊天共用同一套解析。来源页脚按来源分组展示证据，知识库来源的长引用默认收起，可通过类似 Codex 的低干扰摘要行（引用数量、箭头和底部分隔线）展开或收起；证据被正文块引用时提供“定位正文”按钮并滚动到对应块；前端也兼容历史报告正文中已存在但未填入结构化字段的合法 `ev_...` ID。报告文档在渲染前由 `renderers/report-document.ts` 用 Zod 防御性解析一次：未知块类型降级成占位块，缺失或非法的图表、因果图资源引用降级成受控提示，顶层载荷不合法时显示报告不可用提示，都不能让整页崩溃。
+报告终态由 `type=report`、`render_mode=structured` 和 `document` 组成，`MessageBody.vue` 把它交给 `ReportRenderer.vue`；报告块的 HTML 不在 `MessageBody.vue` 里拼接。渲染器按块类型分发到 `ReportSection.vue`、`MarkdownBlock.vue`、`ChartBlock.vue` 和 `CausalGraphBlock.vue`：章节递归渲染子块，Markdown 块继续调用 `renderers/markdown-adapter.ts`，因此列表、标题、表格、引用、代码块和链接与普通聊天共用同一套解析。来源页脚按来源分组展示证据，知识库来源的长引用默认收起，可通过小按钮展开或收起；证据被正文块引用时提供“定位正文”按钮并滚动到对应块；前端也兼容历史报告正文中已存在但未填入结构化字段的合法 `ev_...` ID。报告文档在渲染前由 `renderers/report-document.ts` 用 Zod 防御性解析一次：未知块类型降级成占位块，缺失或非法的图表、因果图资源引用降级成受控提示，顶层载荷不合法时显示报告不可用提示，都不能让整页崩溃。
 
 图表只读取经过校验的资源数据，使用 SVG 和 CSS 绘制直方图、分类柱状图和相关性热力图，第一阶段不引入第三方图表库，也不支持缩放、拖拽和导出。因果图只接受业务模型，由 `projectCausalGraphForVis()` 投影成 vis-network 载荷；`CausalGraph.vue` 支持 `view` 和 `select` 两种模式，数据变化时原地更新 `setData`，卸载时销毁实例，`select` 模式下向上抛出 `selectNode`/`selectEdge`。图形库仍然动态加载，初始入口不静态包含 vis-network。报告正文与普通聊天和追问消息共用同一条消息盒子，`.report-document` 只保留块间距与文字颜色，不再自带底色、边框和内边距；图表和因果图块仍各自使用白色卡片。报告的颜色、间距、标题层级、表格和移动端布局由 `.report-document` 上的 CSS 变量与各组件作用域样式控制，LLM 不返回类名或样式。
 
