@@ -13,6 +13,7 @@ interface MockOptions {
   loggedIn?: boolean
   sessions?: ReadonlyArray<[string, { preview: string; last_time: string }]>
   sessionMessages?: ReadonlyArray<Record<string, unknown>>
+  files?: ReadonlyArray<Record<string, unknown>>
 }
 
 async function installApiMocks(page: Page, options: MockOptions = {}): Promise<RecordedTraffic> {
@@ -56,7 +57,7 @@ async function installApiMocks(page: Page, options: MockOptions = {}): Promise<R
       return
     }
     if (url.pathname === '/api/files') {
-      await route.fulfill({ ...json([]) })
+      await route.fulfill({ ...json(options.files ?? []) })
       return
     }
     if (url.pathname === '/api/agent/jobs/active') {
@@ -153,6 +154,39 @@ test('会话详情地址会加载对应会话', async ({ page }) => {
 
   await expect(page.getByText('历史消息正文')).toBeVisible()
   await expect(page.locator('.session-item.selected')).toContainText('历史会话')
+})
+
+test('文件列表超过三个 CSV 时每个文件卡片保持完整高度并可滚动', async ({ page }) => {
+  await installApiMocks(page, {
+    files: Array.from({ length: 4 }, (_, index) => ({
+      id: index + 1,
+      user_file_id: index + 1,
+      filename: `report-${index + 1}.csv`,
+      mime_type: 'text/csv',
+      file_size: 128,
+      uploaded_at: `2026-09-${String(21 - index).padStart(2, '0')}T09:00:00Z`,
+      last_accessed_at: null,
+      access_count: 0,
+    })),
+  })
+
+  await page.setViewportSize({ width: 449, height: 382 })
+  await page.goto('/')
+  await page.getByRole('button', { name: '打开菜单' }).click()
+
+  const fileItems = page.locator('.file-item')
+  await expect(fileItems).toHaveCount(4)
+  await expect(fileItems.nth(3)).toContainText('report-4.csv')
+
+  const heights = await fileItems.evaluateAll((items) => items.map((item) => item.getBoundingClientRect().height))
+  expect(heights.every((height) => height >= 70)).toBe(true)
+  const filesSection = page.locator('.files-section')
+  await expect(filesSection).toHaveCSS('overflow-y', 'auto')
+  const scrollMetrics = await filesSection.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }))
+  expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight)
 })
 
 test('退出登录后回到官网首页', async ({ page }) => {
