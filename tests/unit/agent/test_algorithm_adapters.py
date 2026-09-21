@@ -472,6 +472,47 @@ def test_adapter_normalizes_legacy_runner_payload_in_execution_path() -> None:
     assert result.provenance.algorithm_runner_version == "legacy-1"
 
 
+def test_adapter_normalizes_legacy_runner_diagnostics_keys() -> None:
+    from Agent.deep_agent_tools.adapters.base import AdapterInput
+
+    class LegacyCdfmExecutor:
+        async def execute(self, command, context):
+            return {
+                "success": True,
+                "runner_version": "cdfm-runner-v1",
+                "data": {
+                    "nodes": [{"id": "x"}, {"id": "y"}],
+                    "edges": [{"from": "x", "to": "y", "arrows": "to"}],
+                },
+                "diagnostics": {
+                    "n_samples": 120,
+                    "n_features": 2,
+                    "missing_values": 3,
+                    "runtime_sec": 0.5,
+                },
+            }
+
+    result = asyncio.run(
+        CDFMAdapter(executor=LegacyCdfmExecutor()).run(
+            parameters={},
+            adapter_input=AdapterInput(
+                data_profile=_profile(rows=2),
+                input_identity="input-sha",
+                dataset_csv="x,y\n1,2\n3,4\n",
+            ),
+            trusted_context=IDENTITY,
+            provider_call_id="legacy-cdfm",
+            response_identity="response-1",
+        )
+    )
+    assert result.status == "valid"
+    assert result.diagnostics.sample_count == 120
+    assert result.diagnostics.variable_count == 2
+    assert result.diagnostics.metrics["n_samples"] == 120
+    assert result.diagnostics.metrics["missing_values"] == 3
+    assert result.diagnostics.metrics["runtime_sec"] == 0.5
+
+
 def test_job_revocation_is_not_converted_to_failed_algorithm_result() -> None:
     class RevokingExecutor:
         async def execute(self, command, context):

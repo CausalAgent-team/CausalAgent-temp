@@ -62,7 +62,7 @@ agent → fold → preprocess → deep_agent → finalization_gate → report
 
 `causal-mcp` 是私网 Streamable HTTP/HTTP/1.1 服务。服务端以 MySQL primary strong read 校验 Job、attempt、lease 和 worker 身份，再使用有界队列及独立算法子进程运行 capability。MCP session 不保存 Job、checkpoint 或 Action Ledger。
 
-CDFM v0.1 在 runner 内保持 `directed_graph` 和输入列顺序，按 `adjacency[i,j]` 生成 `column_i → column_j`，不做 `remove_cycles()`；当前生产图也不因此承诺自动环路修复。该接入只证明工程调用链和私有结果保存，不证明因果发现准确率。
+CDFM v0.1 在 runner 内保持 `directed_graph` 和输入列顺序，按 `adjacency[i,j]` 生成 `column_i → column_j`，不做 `remove_cycles()`；当前生产图也不因此承诺自动环路修复。它的预训练数据包含潜在混杂，对应真值形式是双向边，因此模型给出对称邻接时会被转成两条方向相反的边，这种形状不能直接读成互反因果。该接入只证明工程调用链和私有结果保存，不证明因果发现准确率。
 
 当 heartbeat 或取消使 `JobExecutionGuard` 撤销时，worker 中断本地等待，并通过独立 control lane 发送签名 `cancel_algorithm`。服务端按完整 invocation 身份取消排队任务或终止目标算法进程，不影响并行 sibling。重复取消返回稳定状态；客户端无法确认最终状态时使用 `unknown`，该值不能解释为远端一定未取消。取消属于控制流，不生成普通失败的 `AlgorithmResult`，也不进入算法重试或 FinalizationGate。
 

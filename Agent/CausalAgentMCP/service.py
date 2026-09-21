@@ -21,6 +21,7 @@ from Agent.deep_agent_tools.models import (
     GraphEdge,
     McpInvocationContext,
     StandardizedGraph,
+    build_diagnostics_from_runner_payload,
     canonical_json_bytes,
 )
 
@@ -172,23 +173,6 @@ def _standardized_graph(raw_result: Mapping[str, Any], capability_id: str) -> St
         graph_semantics=_graph_semantics(capability_id),
         nodes=nodes,
         edges=edges,
-    )
-
-
-def _diagnostics(raw_result: Mapping[str, Any]) -> Diagnostics:
-    raw = raw_result.get("diagnostics")
-    if not isinstance(raw, Mapping):
-        return Diagnostics()
-    metrics: dict[str, float | int | str | bool | None] = {}
-    for key, value in raw.items():
-        if isinstance(key, str) and (
-            isinstance(value, (float, int, str, bool)) or value is None
-        ):
-            metrics[key] = value
-    return Diagnostics(
-        sample_count=raw.get("n_samples") if isinstance(raw.get("n_samples"), int) else None,
-        variable_count=raw.get("n_features") if isinstance(raw.get("n_features"), int) else None,
-        metrics=metrics,
     )
 
 
@@ -685,7 +669,7 @@ class CausalMcpService:
                     status="valid",
                     standardized_graph=graph,
                     summary="算法调用完成。",
-                    diagnostics=_diagnostics(raw_result),
+                    diagnostics=build_diagnostics_from_runner_payload(raw_result),
                     input_identity=command.input_identity,
                     provenance=AlgorithmResultProvenance(
                         job_id=context.job_id,

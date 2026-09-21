@@ -110,7 +110,7 @@ sequenceDiagram
 
 服务端只从 MySQL primary strong read 读取冻结 CSV，不信任 Worker 直接提交文件正文。执行资格在读取输入、真正占用进程前、算法返回后三个边界核对，避免旧 Worker、旧 attempt 或失效 lease 的结果进入上层。
 
-成功 runner payload 中的 `raw_payload` 只存在于 Worker 与 causal-mcp 的私有 structured response；`McpAlgorithmExecutor` 将它封装为 `AlgorithmExecutionResponse`，由 Adapter 写入 `/raw_algorithm_results/...` 并回读校验。公开的 `AlgorithmResult` 只保留标准化图、诊断和 raw artifact 元数据，不携带 logits、probabilities 或其他 runner 原始字段。
+成功 runner payload 中的 `raw_payload` 只存在于 Worker 与 causal-mcp 的私有 structured response；`McpAlgorithmExecutor` 将它封装为 `AlgorithmExecutionResponse`，由 Adapter 写入 `/raw_algorithm_results/...` 并回读校验。公开的 `AlgorithmResult` 只保留标准化图、诊断和 raw artifact 元数据，不携带 logits、probabilities 或其他 runner 原始字段。runner 用 `n_samples`、`n_features` 等自有键名描述诊断，causal-mcp 与 Worker 侧统一通过 `build_diagnostics_from_runner_payload()` 映射为 `sample_count`、`variable_count` 和只含标量的 `metrics`；两侧不得各写一套键名白名单，否则诊断会在一侧静默丢失。
 
 ### 服务端算法执行池
 

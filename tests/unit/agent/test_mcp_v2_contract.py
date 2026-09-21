@@ -180,6 +180,9 @@ def test_service_returns_normalized_result_without_raw_runner_text() -> None:
     assert payload["ok"] is True
     assert payload["result"]["status"] == "valid"
     assert payload["result"]["standardized_graph"]["edges"][0]["source"] == "A"
+    assert payload["result"]["diagnostics"]["sample_count"] == 10
+    assert payload["result"]["diagnostics"]["variable_count"] == 2
+    assert payload["result"]["diagnostics"]["metrics"]["n_features"] == 2
     assert "runner" not in payload["result"]
     assert payload["raw_payload"]["data"]["edges"][0]["from"] == "A"
     assert "raw_payload" not in payload["result"]

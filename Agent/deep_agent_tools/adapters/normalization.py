@@ -14,6 +14,7 @@ from ..models import (
     GraphEdge,
     McpInvocationContext,
     StandardizedGraph,
+    build_diagnostics_from_runner_payload,
 )
 
 
@@ -179,15 +180,6 @@ def result_from_runner_payload(
             ),
         )
 
-    diagnostics_payload = payload.get("diagnostics")
-    diagnostics = Diagnostics()
-    if isinstance(diagnostics_payload, Mapping):
-        safe = {
-            key: diagnostics_payload[key]
-            for key in ("summary", "sample_count", "variable_count", "assumptions_checked", "metrics")
-            if key in diagnostics_payload
-        }
-        diagnostics = Diagnostics.model_validate(safe)
     return AlgorithmResult(
         result_ref=f"{command.invocation_id}:{command.result_index}",
         invocation_id=command.invocation_id,
@@ -196,7 +188,7 @@ def result_from_runner_payload(
         capability_version=capability_version,
         status="valid",
         standardized_graph=graph,
-        diagnostics=diagnostics,
+        diagnostics=build_diagnostics_from_runner_payload(payload),
         provenance=AlgorithmResultProvenance(
             job_id=context.job_id,
             attempt_count=context.attempt_count,

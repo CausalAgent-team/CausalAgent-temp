@@ -1550,3 +1550,11 @@
   - 【报告节点流式边界】：报告节点改用非流式模型生成报告草稿，其空闲超时从 60 秒放宽到 120 秒，以容纳只在调用开始和结束时刷新计时的非流式长响应；普通问答和报告追问继续使用流式模型。
   - 【测试补充】：`tests/unit/agent/test_structured_output_runtime.py` 覆盖原因分类、单次重试、重试成功恢复、模型异常不重试和撤销时停止重试；`tests/unit/agent/test_execution_guard.py` 覆盖降级日志新字段与脱敏边界；`tests/unit/agent/test_graph_llm_streaming_scope.py` 约束报告节点绑定非流式模型与新的空闲超时。
   - 【文档】：`Document/architecture/agent-runtime.md`、`Document/development/observability.md` 和 `Document/api/agent-jobs.md` 同步原因代码、重试约定、日志字段和报告节点的文字增量边界。
+- 【CDFM 工具描述改为选择依据】
+  - 【描述改写】：`CDFM_SPEC.description` 不再只写“零样本推断 + 免责声明”，改为说明单次调用返回整张候选有向图、同一个 checkpoint 覆盖线性与非线性、异方差、有序或离散观测、测量误差和潜在混杂等多类机制，因此机制未知或明显非线性时比依赖单一假设的工具更合适，也可与 PC、DirectLiNGAM 的结果并行对照；同时写明不传 `threshold` 时由服务端按模型自带校准器自动决定判决边界、缺失值按 NaN/±Inf 掩码传递、当前只接受连续数值列，以及输出只有边及其方向，方向可能随阈值变化、不可识别场景下方向证据不足、两条相反方向的边也可能对应潜在混杂。
+  - 【参数与元数据】：`CausalCdfmInput.threshold` 增加字段说明，模型在 schema 中即可读到自动校准语义；`description_source` 改为覆盖机制覆盖、阈值与自动校准和结果解读，`assumptions` 增补“零样本识别以预训练机制覆盖当前数据分布为前提”。
+  - 【文档与快照】：`README.md` 与 `README_EN.md` 的 CDFM 条目同步为新描述；`Document/architecture/agent-runtime.md` 补充对称邻接对应潜在混杂的读法；`tests/unit/agent/snapshots/` 的 Tool schema 固定快照按新描述与新的 `spec_digest` 重新生成。
+- 【runner 诊断映射统一】
+  - 【共享映射】：新增 `build_diagnostics_from_runner_payload()`，把 runner 的 `n_samples`、`n_features` 和其余标量诊断统一映射为 `sample_count`、`variable_count` 与受限 `metrics`；worker 侧的 `result_from_runner_payload()` 与 causal-mcp 的 `service` 改用它，删掉服务端本地的重复实现，避免一侧白名单与 runner 键名不一致时诊断被静默丢弃。
+  - 【文档】：`Document/architecture/mcp-runtime.md` 记录 runner 诊断的共享映射函数，并明确两侧不得各写一套键名白名单。
+  - 【测试补充】：`tests/unit/agent/test_algorithm_adapters.py` 新增 legacy runner payload 的诊断映射用例；`tests/unit/agent/test_mcp_v2_contract.py` 的成功路径断言补充 `sample_count`、`variable_count` 与 `metrics` 映射结果。

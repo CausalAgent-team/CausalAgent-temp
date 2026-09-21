@@ -698,6 +698,52 @@ def build_raw_result_metadata(
     )
 
 
+def build_diagnostics_from_runner_payload(
+    payload: Mapping[str, Any] | None,
+) -> Diagnostics:
+    """把 runner payload 的 diagnostics 映射到统一 ``Diagnostics``。
+
+    runner 使用 ``n_samples``/``n_features`` 这类自有键名，worker 与 causal-mcp
+    必须按同一规则映射，否则诊断字段会在一侧静默丢失。只接受标量，runner 的
+    原始 payload 内容不会进入 ``Diagnostics``。
+    """
+
+    if not isinstance(payload, Mapping):
+        return Diagnostics()
+    raw = payload.get("diagnostics")
+    if not isinstance(raw, Mapping):
+        return Diagnostics()
+
+    def _count(*keys: str) -> int | None:
+        for key in keys:
+            value = raw.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value
+        return None
+
+    summary = raw.get("summary")
+    assumptions = raw.get("assumptions_checked")
+    if not isinstance(assumptions, (list, tuple)) or isinstance(assumptions, str):
+        checked: list[str] = []
+    else:
+        checked = [
+            item for item in assumptions if isinstance(item, str) and item.strip()
+        ]
+
+    return Diagnostics(
+        summary=summary.strip() if isinstance(summary, str) and summary.strip() else None,
+        sample_count=_count("n_samples", "sample_count"),
+        variable_count=_count("n_features", "variable_count"),
+        assumptions_checked=checked,
+        metrics={
+            key: value
+            for key, value in raw.items()
+            if isinstance(key, str)
+            and (value is None or isinstance(value, (float, int, str, bool)))
+        },
+    )
+
+
 class ReducerConflictError(ValueError):
     """同一不可变 key/revision 收到不同内容时抛出。"""
 

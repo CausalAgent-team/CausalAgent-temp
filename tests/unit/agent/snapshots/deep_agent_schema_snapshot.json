@@ -367,8 +367,8 @@
   "tools": [
     {
       "capability_id": "causal.cdfm",
-      "schema_sha256": "684fcb15ec6310c65e8cea153a45be5b53336bb468cf1ce85fa2490fce7f5e89",
-      "spec_digest": "ae915de1dbfe74816396de781c0d024ce0eb040531dd8d4616685e2bb7d9762c",
+      "schema_sha256": "751074663c761fd14ce1d755a2e8ec3a0f3fcb8820649f936ecd0c4a9ec3d583",
+      "spec_digest": "8fdd047d486462685aa0f7c94ffbc851e74a5d41dd06575f1b6ab1281f90fbec",
       "tool_name": "causal_cdfm"
     },
     {

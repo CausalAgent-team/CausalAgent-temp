@@ -68,7 +68,14 @@ class CausalDirectLiNGAMInput(ContractModel):
 class CausalCdfmInput(ContractModel):
     """CDFM 唯一公开的科学参数；模型路径和预处理策略由服务端固定。"""
 
-    threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    threshold: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "边概率的判决阈值；不传时由服务端使用模型自带校准器自动决定判决边界。"
+        ),
+    )
 
     @field_validator("threshold", mode="before")
     @classmethod
@@ -287,15 +294,22 @@ CDFM_SPEC = AlgorithmSpec(
     tool_name="causal_cdfm",
     public_name="CDFM 因果发现",
     description=(
-        "在连续数值表格数据上使用 CDFM 进行零样本因果图推断。"
-        "缺失值由服务端按 CDFM missing mask 规则传递；不接受分类变量，"
-        "结果仅表示本次模型推断，不构成准确率或生产能力证明。"
+        "用预训练因果发现基础模型 CDFM 在连续数值表格数据上做零样本图推断，"
+        "一次调用返回整张候选有向图。同一个 checkpoint 已覆盖线性、非线性、异方差、"
+        "有序或离散观测、测量误差与潜在混杂等多类机制，因此机制未知或明显非线性时，"
+        "比依赖单一假设的工具更合适，也可以与 PC、DirectLiNGAM 的结果并行对照。"
+        "不传 threshold 时由服务端按模型自带校准器自动决定判决边界，传入 0 到 1 的数值可覆盖它。"
+        "缺失值按 NaN/±Inf 掩码传递给模型；当前只接受连续数值列，不接受分类变量。"
+        "输出只有边及其方向，不包含权重和置信度：方向可能随阈值变化，"
+        "不可识别场景下方向证据不足，两条相反方向的边也可能对应潜在混杂，"
+        "结果不构成准确率或生产能力证明。"
     ),
     model_input_schema=CausalCdfmInput,
     requires=frozenset({"continuous_tabular_dataset"}),
     produces=frozenset({"standardized_graph", "diagnostics"}),
     assumptions=(
         "输入为连续数值变量",
+        "零样本识别以预训练机制覆盖当前数据分布为前提",
         "变量名、样本顺序和冻结输入身份由外层准入固定",
         "CDFM checkpoint 可由 causal-mcp 服务端加载",
     ),
@@ -304,7 +318,14 @@ CDFM_SPEC = AlgorithmSpec(
     concurrency_key="causal_cdfm",
     default_concurrency=1,
     analysis_goal="在连续观测数据上生成 CDFM 的有向图推断结果",
-    description_source=("用途", "连续数值要求", "缺失值掩码", "能力边界"),
+    description_source=(
+        "用途",
+        "机制覆盖",
+        "阈值与自动校准",
+        "缺失值掩码",
+        "结果解读",
+        "能力边界",
+    ),
     data_requirements=(
         "continuous_tabular_dataset",
         "至少 2 行数据",
