@@ -232,6 +232,7 @@ admin-frontend/playwright-report/
 .playwright-cli/
 .playwright-mcp/
 app/rag_eval/frontend/node_modules/
+packages/design-system/node_modules/
 website-frontend/node_modules/
 website-frontend/dist/
 website-frontend/*.tsbuildinfo

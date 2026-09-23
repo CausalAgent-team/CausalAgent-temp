@@ -46,6 +46,14 @@
 - [`development/agent-tool-routing-history.md`](development/agent-tool-routing-history.md)：因果 MCP、RAG 与联网搜索从旧父图到 Deep Agent 的工具选择契约历史与调研结论。
 - [`documentation.md`](documentation.md)：文档归属、维护、链接和日志规则。
 
+### 前端设计系统
+
+- [`design-system/README.md`](design-system/README.md)：共享设计系统的文档入口、代码位置和归属原则。
+- [`design-system/design-decision.md`](design-system/design-decision.md)：已确认的视觉方向、对比度边界、字体与动效规则，以及各端允许保留的差异。
+- [`design-system/tokens.md`](design-system/tokens.md)：token 的命名、数值、与官网原型变量的对应关系和使用规则。
+- [`design-system/components.md`](design-system/components.md)：共享组件的属性、变体、状态要求和使用边界。
+- [`design-system/current-state.md`](design-system/current-state.md)：四个前端改造前的样式现状和迁移顺序。
+
 ### RAG、联网搜索与评测
 
 - RAG 查询、Web Search 子图及其运行期降级的唯一技术说明在 [`architecture/agent-runtime.md`](architecture/agent-runtime.md)；本入口只提供导航，不复制实现细节。

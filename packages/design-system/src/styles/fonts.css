@@ -1,0 +1,12 @@
+/* CausalAgent 设计系统：品牌字体
+
+   Geist Sans 400 拉丁字形，SIL Open Font License 1.1，文件取自官网原型使用的
+   @fontsource/geist-sans 子集。中文没有随包字体，回退到系统无衬线，
+   完整字体栈见 --ca-font-sans。 */
+@font-face {
+  font-family: "Geist Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../fonts/geist-sans-latin-400-normal.woff2") format("woff2");
+}

@@ -1,6 +1,6 @@
 # 开发环境
 
-文档职责：记录当前仓库的本地、Docker、四个前端开发服务器和数据库初始化入口。
+文档职责：记录当前仓库的本地、Docker、四个前端开发服务器、共享设计系统包和数据库初始化入口。
 
 适用范围：首次配置开发环境、切换运行方式或修改启动入口时使用；服务拓扑与镜像发布见 [`deployment.md`](deployment.md)，测试命令见 [`testing.md`](testing.md)。
 
@@ -118,6 +118,22 @@ $env:CAUSALAGENT_DESKTOP_URL = "http://127.0.0.1:5001/dashboard"
 | `rag` | `app/rag_eval/frontend/` | 5176 | `http://localhost:5176/rag-eval/` |
 
 端口上已经有服务在监听时，该前端会被跳过；工程缺少 `node_modules` 时会提示先安装依赖并跳过；脚本结束时打印已启动的地址与进程号，以及被跳过的前端和原因。脚本不设置 `*_VITE_DEV_SERVER_URL`，Flask 是否把页面交给 Vite 仍由 `.env` 决定。PowerShell 执行策略阻止运行脚本时，改用 `powershell -ExecutionPolicy Bypass -File scripts\dev_frontends.ps1 <参数>`。
+
+## 前端共享设计系统
+
+四个前端共用的品牌基础和基础组件位于 `packages/design-system/`，它以源码形式参与各前端的构建，不单独产出构建产物。视觉决策、token 和组件契约的记录在 `Document/design-system/`，接入方式和改动约束见 `packages/design-system/README.md`。
+
+本包目前还没有被任何前端接入，因此不启动开发服务器。改动后执行自检：
+
+```powershell
+Push-Location packages/design-system
+npm ci
+npm run typecheck
+npm run test:unit
+Pop-Location
+```
+
+安装依赖必须使用 `npm ci`：本目录的 `.npmrc` 固定 `legacy-peer-deps`，与 `website-frontend/` 的处理方式一致。
 
 ## 普通用户应用前端开发
 
