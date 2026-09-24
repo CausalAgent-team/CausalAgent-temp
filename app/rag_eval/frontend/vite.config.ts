@@ -9,9 +9,16 @@ function filePathFromUrl(url: URL): string {
 
 const frontendRoot = filePathFromUrl(new URL(".", import.meta.url));
 const designSystemRoot = filePathFromUrl(new URL("../../../packages/design-system/src", import.meta.url));
+const designSystemStyles = filePathFromUrl(new URL("../../../packages/design-system/src/styles/index.css", import.meta.url));
 
 export default defineConfig({
   plugins: [vue(), fontLicenseFiles()],
+  resolve: {
+    alias: [
+      { find: "@causalagent/design-system/styles.css", replacement: designSystemStyles },
+      { find: "@causalagent/design-system", replacement: designSystemRoot },
+    ],
+  },
   base: "/rag-eval/",
   server: {
     fs: { allow: [frontendRoot, designSystemRoot] },

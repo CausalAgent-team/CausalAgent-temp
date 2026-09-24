@@ -123,7 +123,7 @@ $env:CAUSALAGENT_DESKTOP_URL = "http://127.0.0.1:5001/dashboard"
 
 四个前端共用的品牌基础和基础组件位于 `packages/design-system/`，它以源码形式参与各前端的构建，不单独产出构建产物。视觉决策、token 和组件契约的记录在 `Document/design-system/`，接入方式和改动约束见 `packages/design-system/README.md`。
 
-本包目前还没有被任何前端接入，因此不启动开发服务器。改动后执行自检：
+RAG 评测台已接入本包的品牌基础、token 和 `CaPageHeader`、`CaBadge`、`CaButton`、`CaTabs`；其他三个前端仍按迁移顺序逐页接入。本包不启动独立开发服务器，改动后执行自检：
 
 ```powershell
 Push-Location packages/design-system

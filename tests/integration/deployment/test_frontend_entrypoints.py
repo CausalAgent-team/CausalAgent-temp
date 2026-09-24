@@ -401,6 +401,7 @@ class FrontendDeploymentTests(unittest.TestCase):
                 "website-frontend/node_modules/",
                 "website-frontend/dist/",
                 "app/rag_eval/frontend/node_modules/",
+                "packages/design-system/node_modules/",
             ):
                 with self.subTest(entry=entry):
                     self.assertIn(entry, text)
