@@ -176,6 +176,7 @@
 
 .file-item {
   flex: 0 0 auto;
+  min-height: 70px;
 }
 
 .sidebar-item.selected {
@@ -1499,6 +1500,10 @@ textarea:focus-visible {
   border: 1px solid transparent;
   border-radius: 8px;
   transition: background-color var(--motion-duration) ease, border-color var(--motion-duration) ease;
+}
+
+.files-section .file-item {
+  min-height: 70px;
 }
 
 .session-item {

@@ -1,4 +1,6 @@
 import { createApp } from 'vue'
+import '../../packages/design-system/src/styles/fonts.css'
+import '../../packages/design-system/src/styles/tokens/typography.css'
 import {
   ElAlert,
   ElButton,

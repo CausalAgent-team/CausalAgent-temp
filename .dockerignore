@@ -43,6 +43,7 @@ test_*.py
 !requirements.txt
 !requirements-base.txt
 !requirements-test.txt
+!packages/design-system/src/fonts/licenses/*.txt
 !tests/
 tests/*
 !tests/smoke/
@@ -85,6 +86,8 @@ chat-frontend/playwright-report/
 website-frontend/node_modules/
 website-frontend/dist/
 app/rag_eval/frontend/node_modules/
+app/rag_eval/frontend_dist/
+packages/design-system/node_modules/
 
 
 # --- 数据文件和大文件 ---

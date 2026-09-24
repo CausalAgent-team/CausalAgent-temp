@@ -39,6 +39,7 @@ COPY admin-frontend/package.json admin-frontend/package-lock.json ./
 RUN npm ci
 
 COPY admin-frontend/ ./
+COPY packages/design-system/ /packages/design-system/
 RUN npm run build
 
 
@@ -50,6 +51,7 @@ COPY chat-frontend/package.json chat-frontend/package-lock.json ./
 RUN npm ci
 
 COPY chat-frontend/ ./
+COPY packages/design-system/ /packages/design-system/
 RUN npm run build
 
 
@@ -61,6 +63,7 @@ COPY website-frontend/package.json website-frontend/package-lock.json website-fr
 RUN npm ci
 
 COPY website-frontend/ ./
+COPY packages/design-system/ /packages/design-system/
 RUN npm run build
 
 
@@ -72,6 +75,7 @@ COPY app/rag_eval/frontend/package.json app/rag_eval/frontend/package-lock.json 
 RUN npm ci
 
 COPY app/rag_eval/frontend/ ./
+COPY packages/design-system/ /workspace/packages/design-system/
 RUN npm run build
 
 

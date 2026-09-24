@@ -20,7 +20,6 @@ const html = computed(() => renderMarkdown(props.content))
   min-width: 0;
   font-size: var(--report-text-size, 15px);
   line-height: 1.65;
-  letter-spacing: 0.01em;
 }
 
 .report-markdown :deep(.markdown-content) {

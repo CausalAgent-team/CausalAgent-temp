@@ -59,15 +59,19 @@ C:\Users\FLYINGPIG\AppData\Roaming\Open Design\namespaces\release-stable-win\dat
 
 ## 字体规则
 
-全站只使用一个无衬线家族和一个字重：
+全站使用同一套品牌无衬线字体栈和一个字重：
 
 ```text
-字体家族：Geist Sans（拉丁字形随包提供）
-中文回退：Noto Sans SC、HarmonyOS Sans SC、Microsoft YaHei UI、PingFang SC，最后回落到系统无衬线
+品牌字体栈：Geist Sans 400（拉丁及其实际字形范围）+ Noto Sans SC 400（中文及其余字形范围）
+系统回退：仅用于品牌字体文件未覆盖的字符
 字重：400
 ```
 
-字体包只提供 Geist Sans 400 的拉丁字形，因此页面和组件都不得要求其它字重。要求更粗的字重时浏览器会合成粗体，字形和字距都会偏离方向，这是不允许的。
+Geist Sans 本身是拉丁字形子集，不能单独绘制中文。项目把 Geist Sans 和 Noto Sans SC 的 WOFF2 子集随前端发布，并通过 unicode-range 让浏览器按字符选择字形：拉丁字符、数字和英文标点使用 Geist Sans；汉字、CJK 标点和全角字符使用 Noto Sans SC。Geist Sans 的范围必须排除 CJK 标点，防止窄拉丁字形抢先绘制中文全角标点。两个字体文件共同组成 `--ca-font-sans`，页面不得自行换成系统中文字体栈。两种字体均使用 SIL Open Font License 1.1；项目保留各自的许可文本，并将它们复制到构建产物中随字体发布。
+
+中文正文必须使用对应的全角标点，例如 ，。！？：；（）。字体规则不会把 ASCII 半角逗号、冒号或括号自动转换为中文标点。
+
+两个字体只随包提供 400 字重，因此页面和组件都不得要求其它字重。
 
 层级区分只靠字号、颜色深浅和留白，不靠加粗。标题、表格头、标签和正文全部使用同一个字重，表格头的层级由字号和颜色表达。
 

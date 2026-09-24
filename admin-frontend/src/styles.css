@@ -1,4 +1,5 @@
 :root {
+  --el-font-family: var(--ca-font-sans);
   color-scheme: light;
   --ca-blue: #2563eb;
   --ca-blue-hover: #1d4ed8;
@@ -10,7 +11,7 @@
   --ca-muted: #667085;
   --ca-line: #e5e7eb;
   --ca-line-strong: #d0d5dd;
-  font-family: Inter, "Microsoft YaHei", "PingFang SC", system-ui, -apple-system, sans-serif;
+  font-family: var(--ca-font-sans);
   color: var(--ca-text);
   background: #fff;
 }

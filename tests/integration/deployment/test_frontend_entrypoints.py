@@ -339,6 +339,8 @@ class FrontendDeploymentTests(unittest.TestCase):
             "FROM node:24-alpine AS chat-builder",
             "FROM node:24-alpine AS website-builder",
             "FROM node:24-alpine AS rag-eval-builder",
+            "COPY packages/design-system/ /packages/design-system/",
+            "COPY packages/design-system/ /workspace/packages/design-system/",
             "COPY --from=admin-builder /frontend/dist /opt/causalagent-admin",
             "COPY --from=chat-builder /frontend/dist /opt/causalagent-chat",
             "COPY --from=website-builder /frontend/dist /opt/causalagent-website",
@@ -348,6 +350,7 @@ class FrontendDeploymentTests(unittest.TestCase):
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, dockerfile)
+        self.assertEqual(dockerfile.count("COPY packages/design-system/ /packages/design-system/"), 3)
 
         runtime_stage = dockerfile.split("FROM python-deps AS runtime", 1)[1]
         self.assertNotIn("npm ", runtime_stage)
@@ -404,6 +407,9 @@ class FrontendDeploymentTests(unittest.TestCase):
 
         self.assertIn("app/rag_eval/frontend_dist/", gitignore)
         self.assertNotIn("app/static/rag_eval_app/", gitignore)
+        self.assertIn("app/rag_eval/frontend_dist/", dockerignore)
+        self.assertIn("packages/design-system/node_modules/", dockerignore)
+        self.assertIn("!packages/design-system/src/fonts/licenses/*.txt", dockerignore)
 
     def test_frontend_configs_use_their_own_asset_base(self):
         expectations = {

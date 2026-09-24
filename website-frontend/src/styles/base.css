@@ -31,7 +31,7 @@ body {
 body {
   background: var(--surface);
   color: var(--ink-900);
-  font-family: 'Inter', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  font-family: var(--ca-font-sans);
   font-size: 16px;
   line-height: 1.7;
   -webkit-font-smoothing: antialiased;

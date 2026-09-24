@@ -1,11 +1,3 @@
-@font-face {
-  font-family: "Geist Sans";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("/dashboard-assets/fonts/geist-sans-latin-400-normal.woff2") format("woff2");
-}
-
 :root {
   --color-page: #ffffff;
   --color-surface: #ffffff;
@@ -27,5 +19,5 @@
   --app-graph-line: 0.05;
   --app-graph-node: 0.05;
   --app-graph-dot: 0.1;
-  --font-sans: "Geist Sans", "Noto Sans SC", "HarmonyOS Sans SC", "Microsoft YaHei UI", "PingFang SC", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--ca-font-sans);
 }
