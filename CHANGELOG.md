@@ -1564,3 +1564,14 @@
   - 【品牌基础与字体】：品牌基础只包含字体、字重、焦点环、文字链接和减少动态规则，不重置外边距、不改变布局结构，因此可以按前端逐个页面引入；随包提供 Geist Sans 400 拉丁字形，中文回退系统无衬线。
   - 【共享组件】：`packages/design-system/src/components/` 提供 CaButton、CaCard、CaBadge、CaPageHeader、CaTabs、CaInput、CaEmptyState、CaLoadingState 和 CaErrorState 九个基础组件，只开放受控变体，不接受自定义颜色、圆角或投影；标签页自带方向键与首尾跳转，输入控件自带标签绑定和错误描述关联。
   - 【自检与开发入口】：`packages/design-system` 是独立 npm 工程，`npm run check` 执行类型检查和组件行为测试（变体类名、禁用与加载状态、键盘操作、无障碍关联和加载进度声明），`.npmrc` 固定 `legacy-peer-deps`，`node_modules` 进入忽略规则；`Document/development/setup.md` 与 `testing.md` 增加该包的开发入口和验证矩阵条目。四个前端尚未接入共享包。
+
+---
+2026.9.23
+- 【数据集线性度信号接入 Deep Agent】
+  - 【指标】：新增 `Agent/Processing/nonlinearity.py`，`measure_nonlinearity()` 按 `S = mean(η²−r²)`（`η²` 为按秩分 10 等量箱后的组间方差占比）衡量变量间非线性，噪声上限 `null_p99` 由各列独立打乱重算 1000 次取 99 分位，`ratio = S / null_p99 ≥ 1` 判为非线性主导。阈值比较落在代码里（`verdict` 字段），`ratio < 1` 只表示未检出超过噪声的非线性结构、不等于线性。候选列取 `continuous` 且非 `possible_id`，列数上限 12、行数钳在 1000（`null_p99` 随 n 骤降，必须按数据集现算），列不足或行少于 100 判 `insufficient`。
+  - 【载荷】：写入 `analysis_parameters["nonlinearity"]` 的只有 `{ratio, verdict, n_vars, n_rows, sampled, reason}`；`S` 与 `null_p99` 只对人有价值，不进 prompt。
+  - 【故障边界与注入】：`measure_nonlinearity` 内部全兜、不抛异常，调用点放在 `Agent/causal_agent/nodes.py` 的 `fold_node` 里 `get_data_summary` 之后、且在该 `try` 块之外——该块异常分支会走 `interrupt()` 挂起等用户输入。结果随 `analysis_parameters` 自动流向预处理报告与 Deep Agent 子图两处消费端。
+  - 【消费端 prompt】：预处理报告任务清单加第 5 条「线性/非线性说明」；`MANDATORY_ALGORITHM_INSTRUCTION` 追加一句解释 `ratio` 含义。刻意不点具体算法名，算法仍由模型从既有 spec 自主选择，以免把自主决策变成照令执行、使后续召回提升无法归因。
+  - 【preprocess_summary 送达 Deep Agent】：此前预处理报告跑在 Deep Agent 之前却从不进入它，现由 `to_deep_agent_input` 把父图的 `preprocess_summary` 显式写进子图那条 system message 的 JSON；报告不投影进子图 state（无代码消费它，投影只多占 checkpoint），`ParentStateUpdate` / `from_deep_agent_output` 的回写白名单不动。
+  - 【测试与验证】：新增 `tests/unit/agent/test_nonlinearity.py`，断言本体在模块自检 `_self_check()` 里（`python -m Agent.Processing.nonlinearity` 可直跑）；`test_deep_agent_state.py` 新增用例锁住 `nonlinearity` 与 `preprocess_summary` 出现在那条 system message 里。25 个 d5 数据集复现归档倍率最大偏差 0.0049，λ=0 误报 0/5、λ=1.0 漏报 0/5，`pytest tests/unit` 全绿。
+  - 【已知边界】：序数程度而非刻度，同一强度 p=5 读 3.29~12.27、p=12 掉一半，故只保留 `ratio = 1` 一条判据线、不做强度分档。
