@@ -1564,7 +1564,6 @@
   - 【品牌基础与字体】：品牌基础只包含字体、字重、焦点环、文字链接和减少动态规则，不重置外边距、不改变布局结构，因此可以按前端逐个页面引入；随包提供 Geist Sans 400 拉丁字形，中文回退系统无衬线。
   - 【共享组件】：`packages/design-system/src/components/` 提供 CaButton、CaCard、CaBadge、CaPageHeader、CaTabs、CaInput、CaEmptyState、CaLoadingState 和 CaErrorState 九个基础组件，只开放受控变体，不接受自定义颜色、圆角或投影；标签页自带方向键与首尾跳转，输入控件自带标签绑定和错误描述关联。
   - 【自检与开发入口】：`packages/design-system` 是独立 npm 工程，`npm run check` 执行类型检查和组件行为测试（变体类名、禁用与加载状态、键盘操作、无障碍关联和加载进度声明），`.npmrc` 固定 `legacy-peer-deps`，`node_modules` 进入忽略规则；`Document/development/setup.md` 与 `testing.md` 增加该包的开发入口和验证矩阵条目。四个前端尚未接入共享包。
-
 ---
 2026.9.23
 - 【普通用户聊天工作区视觉重建】
@@ -1615,3 +1614,11 @@
   - 【矢量与位图资源】：新增 CausalAgent 无文字标志的透明 SVG、白底实体 SVG、maskable SVG，以及 1024 像素透明、实体和 maskable PNG；同步生成 favicon、Apple 主屏幕图标、PWA 图标和 Web App Manifest 资源。
   - 【前端资源目录】：将品牌资源保留在共享设计系统和官网、普通用户应用、管理员端、RAG 评测台的前端资源目录中，保留原有 PNG 参考文件。
   - 【入口接入】：四个网页入口增加 favicon、Apple 主屏幕图标和主题色；三个应用入口增加 Web App Manifest 引用。
+---
+2026.9.25
+- 【管理员后台设计统一】
+  - 【共享组件接入】：管理员后台 8 个页面、应用外壳和 4 个局部组件接入共享设计系统；Element Plus 复杂控件使用共享 token 适配。
+  - 【品牌标识】：侧栏和移动端改用共享 CausalAgent 图标，展开侧栏显示品牌名与“管理后台”，移除旧 logo 裁切显示。
+  - 【视觉收尾】：统一次要说明文字、普通错误内容入口及局部加载进度表现，保留危险操作的警示样式。
+  - 【构建配置】：管理员 Vite 同时接入共享组件别名和字体许可证插件，保持字体许可文本进入构建产物。
+  - 【品牌资源托管】：新增管理员授权保护的品牌资源路由，为后台网页提供新 favicon、应用图标和 manifest。

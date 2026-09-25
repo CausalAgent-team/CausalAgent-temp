@@ -135,7 +135,7 @@ powershell -ExecutionPolicy Bypass -File .\windows-client\build.ps1 `
 
 ## 管理员产物
 
-本地非 Docker 发布前必须在 `admin-frontend/` 执行 typecheck、unit、Mock E2E 和 build。未设置 `ADMIN_VITE_DEV_SERVER_URL` 时，Flask 从 `admin-frontend/dist/`（或 `ADMIN_FRONTEND_DIST_DIR` 指定目录）提供 `/admin/`；目录缺少 `index.html` 时返回带 request ID 的 503 和 `admin_frontend_missing`。Docker 运行镜像从 `/opt/causalagent-admin` 提供构建结果。
+本地非 Docker 发布前必须在 `admin-frontend/` 执行 typecheck、unit 和 build。管理员端构建通过 Vite/TypeScript 别名读取 `packages/design-system/src`，Docker `admin-builder` 在安装 npm 依赖前复制共享包源码。未设置 `ADMIN_VITE_DEV_SERVER_URL` 时，Flask 从 `admin-frontend/dist/`（或 `ADMIN_FRONTEND_DIST_DIR` 指定目录）提供 `/admin/`；目录缺少 `index.html` 时返回带 request ID 的 503 和 `admin_frontend_missing`。Docker 运行镜像从 `/opt/causalagent-admin` 提供构建结果。
 
 官网、聊天端和管理员端的 `dist/` 由 `.gitignore` 与 `.dockerignore` 排除。RAG 评测台的 `app/rag_eval/frontend_dist/` 通过 `.gitignore` 的显式例外保留在版本库，供本地 Flask 静态页面和入口契约使用；Docker 构建上下文排除这份副本，并由 `rag-eval-builder` 从当前源码生成部署产物。开发热更新才显式启动 Vite，生产不要把 Vite 端口作为后端依赖。
 

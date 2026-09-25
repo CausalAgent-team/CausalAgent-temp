@@ -35,8 +35,10 @@ FROM node:24-alpine AS admin-builder
 
 WORKDIR /frontend
 
+COPY packages/design-system/src/ /packages/design-system/src/
 COPY admin-frontend/package.json admin-frontend/package-lock.json ./
-RUN npm ci
+RUN npm ci \
+    && ln -s /frontend/node_modules /packages/design-system/node_modules
 
 COPY admin-frontend/ ./
 COPY packages/design-system/ /packages/design-system/
